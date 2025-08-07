@@ -1,0 +1,172 @@
+version: '3.8'
+
+services:
+  kong-database:
+    image: postgres:15-alpine
+    hostname: kong-database
+    environment:
+      POSTGRES_DB: kong
+      POSTGRES_USER: kong
+      POSTGRES_PASSWORD: kongpassword
+      POSTGRES_HOST_AUTH_METHOD: trust
+    ports:
+      - "5433:5432"
+    volumes:
+      - kong_postgres_data:/var/lib/postgresql/data
+    networks:
+      - kong-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kong -d kong"]
+      interval: 10s
+      retries: 5
+      start_period: 30s
+
+  kong-migrations:
+    image: kong/kong-gateway:3.8.0.0
+    depends_on:
+      kong-database:
+        condition: service_healthy
+    environment:
+      KONG_DATABASE: postgres
+      KONG_PG_HOST: kong-database
+      KONG_PG_PORT: 5432
+      KONG_PG_USER: kong
+      KONG_PG_PASSWORD: kongpassword
+      KONG_PG_DATABASE: kong
+    command: kong migrations bootstrap
+    networks:
+      - kong-net
+
+  kong-gateway:
+    image: kong/kong-gateway:3.8.0.0
+    hostname: kong-gateway
+    depends_on:
+      kong-database:
+        condition: service_healthy
+      kong-migrations:
+        condition: service_completed_successfully
+    environment:
+      # Database
+      KONG_DATABASE: postgres
+      KONG_PG_HOST: kong-database
+      KONG_PG_PORT: 5432
+      KONG_PG_USER: kong
+      KONG_PG_PASSWORD: kongpassword
+      KONG_PG_DATABASE: kong
+      
+      # Network & Proxy
+      KONG_PROXY_ACCESS_LOG: /dev/stdout
+      KONG_ADMIN_ACCESS_LOG: /dev/stdout
+      KONG_PROXY_ERROR_LOG: /dev/stderr
+      KONG_ADMIN_ERROR_LOG: /dev/stderr
+      
+      # Admin API
+      KONG_ADMIN_LISTEN: 0.0.0.0:8001
+      KONG_ADMIN_GUI_LISTEN: 0.0.0.0:8002
+      KONG_ADMIN_GUI_URL: http://localhost:8002
+      
+      # Proxy
+      KONG_PROXY_LISTEN: 0.0.0.0:8000, 0.0.0.0:8443 ssl http2
+      
+      # Security
+      KONG_SSL_CERT: /opt/kong/ssl/kong.crt
+      KONG_SSL_CERT_KEY: /opt/kong/ssl/kong.key
+      
+      # Plugins
+      KONG_PLUGINS: bundled,jwt,oauth2,rate-limiting,prometheus,correlation-id,request-transformer,response-transformer,cors,basic-auth,key-auth
+      
+      # Performance
+      KONG_NGINX_WORKER_PROCESSES: auto
+      KONG_NGINX_PROXY_WORKER_CONNECTIONS: 4096
+      
+      # Logging & Monitoring
+      KONG_LOG_LEVEL: info
+      KONG_STATUS_LISTEN: 0.0.0.0:8100
+      
+      # Feature flags
+      KONG_ANONYMOUS_REPORTS: "off"
+      
+    ports:
+      - "8000:8000"  # Proxy HTTP
+      - "8443:8443"  # Proxy HTTPS
+      - "8001:8001"  # Admin API
+      - "8002:8002"  # Admin GUI
+      - "8100:8100"  # Status/Health
+    volumes:
+      - kong_prefix_vol:/var/lib/kong
+      - kong_tmp_vol:/tmp
+      - ./ssl:/opt/kong/ssl:ro
+      - ./config:/opt/kong/config:ro
+    networks:
+      - kong-net
+    healthcheck:
+      test: ["CMD", "kong", "health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  kong-deck:
+    image: kong/deck:v1.38.1
+    depends_on:
+      kong-gateway:
+        condition: service_healthy
+    volumes:
+      - ./deck:/deck
+    environment:
+      DECK_KONG_ADDR: http://kong-gateway:8001
+    networks:
+      - kong-net
+    command: ["deck", "sync", "--config", "/deck/kong.yaml"]
+
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+    networks:
+      - kong-net
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3001:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards
+    networks:
+      - kong-net
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
+    networks:
+      - kong-net
+
+volumes:
+  kong_postgres_data:
+  kong_prefix_vol:
+  kong_tmp_vol:
+  prometheus_data:
+  grafana_data:
+  redis_data:
+
+networks:
+  kong-net:
+    driver: bridge

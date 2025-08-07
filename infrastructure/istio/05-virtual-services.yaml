@@ -1,0 +1,238 @@
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: backstage-virtual-service
+  namespace: developer-portal
+spec:
+  hosts:
+  - backstage.local
+  - "*.backstage.local"
+  gateways:
+  - backstage-gateway
+  - mesh
+  http:
+  # API routes with enhanced load balancing
+  - match:
+    - uri:
+        prefix: /api/
+    route:
+    - destination:
+        host: backstage-backend.developer-portal.svc.cluster.local
+        port:
+          number: 7007
+        subset: stable
+      weight: 90
+    - destination:
+        host: backstage-backend.developer-portal.svc.cluster.local
+        port:
+          number: 7007
+        subset: canary
+      weight: 10
+    timeout: 30s
+    retries:
+      attempts: 3
+      perTryTimeout: 10s
+      retryOn: 5xx,reset,connect-failure,refused-stream
+      retryRemoteLocalities: true
+    fault:
+      delay:
+        percentage:
+          value: 0.1
+        fixedDelay: 100ms
+  # WebSocket connections for real-time features
+  - match:
+    - uri:
+        prefix: /ws
+    - headers:
+        upgrade:
+          exact: websocket
+    route:
+    - destination:
+        host: backstage-websocket.developer-portal.svc.cluster.local
+        port:
+          number: 3001
+    timeout: 3600s # 1 hour for WebSocket connections
+  # Static assets with caching
+  - match:
+    - uri:
+        prefix: /static/
+    - uri:
+        prefix: /assets/
+    - uri:
+        regex: ".*\\.(css|js|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$"
+    route:
+    - destination:
+        host: backstage-frontend.developer-portal.svc.cluster.local
+        port:
+          number: 3000
+    headers:
+      response:
+        add:
+          cache-control: "public, max-age=31536000, immutable"
+          x-served-by: "istio-mesh"
+  # Documentation routes
+  - match:
+    - uri:
+        prefix: /docs/
+    - uri:
+        prefix: /catalog-info.yaml
+    route:
+    - destination:
+        host: backstage-docs.developer-portal.svc.cluster.local
+        port:
+          number: 3000
+        subset: stable
+    timeout: 15s
+    retries:
+      attempts: 2
+      perTryTimeout: 5s
+  # Plugin marketplace
+  - match:
+    - uri:
+        prefix: /marketplace/
+    route:
+    - destination:
+        host: backstage-marketplace.developer-portal.svc.cluster.local
+        port:
+          number: 8080
+    timeout: 20s
+    retries:
+      attempts: 3
+      perTryTimeout: 7s
+  # Default route to frontend
+  - match:
+    - uri:
+        prefix: /
+    route:
+    - destination:
+        host: backstage-frontend.developer-portal.svc.cluster.local
+        port:
+          number: 3000
+        subset: stable
+      weight: 95
+    - destination:
+        host: backstage-frontend.developer-portal.svc.cluster.local
+        port:
+          number: 3000
+        subset: canary
+      weight: 5
+    timeout: 15s
+    retries:
+      attempts: 2
+      perTryTimeout: 5s
+    headers:
+      request:
+        add:
+          x-forwarded-proto: https
+          x-forwarded-host: backstage.local
+      response:
+        add:
+          x-content-type-options: nosniff
+          x-frame-options: DENY
+          x-xss-protection: "1; mode=block"
+          strict-transport-security: "max-age=31536000; includeSubDomains"
+---
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: backstage-staging-virtual-service
+  namespace: developer-portal-staging
+spec:
+  hosts:
+  - staging.backstage.local
+  - "*.staging.backstage.local"
+  gateways:
+  - backstage-gateway-staging
+  - mesh
+  http:
+  # Staging routes with different timeout and retry policies
+  - match:
+    - uri:
+        prefix: /api/
+    route:
+    - destination:
+        host: backstage-backend.developer-portal-staging.svc.cluster.local
+        port:
+          number: 7007
+    timeout: 60s # Longer timeout for staging/testing
+    retries:
+      attempts: 5
+      perTryTimeout: 15s
+      retryOn: 5xx,reset,connect-failure,refused-stream
+    headers:
+      request:
+        add:
+          x-environment: staging
+          x-debug: "true"
+  - match:
+    - uri:
+        prefix: /
+    route:
+    - destination:
+        host: backstage-frontend.developer-portal-staging.svc.cluster.local
+        port:
+          number: 3000
+    timeout: 30s
+    headers:
+      request:
+        add:
+          x-environment: staging
+          x-forwarded-proto: https
+      response:
+        add:
+          x-content-type-options: nosniff
+          x-frame-options: SAMEORIGIN
+          cache-control: "no-cache, no-store, must-revalidate"
+---
+# Admin Virtual Service
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: admin-virtual-service
+  namespace: istio-system
+spec:
+  hosts:
+  - admin.backstage.local
+  gateways:
+  - admin-gateway
+  http:
+  # Kiali dashboard
+  - match:
+    - uri:
+        prefix: /kiali/
+    route:
+    - destination:
+        host: kiali.istio-system.svc.cluster.local
+        port:
+          number: 20001
+    timeout: 30s
+  # Jaeger UI
+  - match:
+    - uri:
+        prefix: /jaeger/
+    route:
+    - destination:
+        host: jaeger-query.istio-system.svc.cluster.local
+        port:
+          number: 16686
+    timeout: 30s
+  # Prometheus UI
+  - match:
+    - uri:
+        prefix: /prometheus/
+    route:
+    - destination:
+        host: prometheus.istio-system.svc.cluster.local
+        port:
+          number: 9090
+    timeout: 30s
+  # Grafana dashboard
+  - match:
+    - uri:
+        prefix: /grafana/
+    route:
+    - destination:
+        host: grafana.istio-system.svc.cluster.local
+        port:
+          number: 3000
+    timeout: 30s

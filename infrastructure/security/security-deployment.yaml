@@ -1,0 +1,729 @@
+# Production Security Infrastructure Deployment
+# Complete Kubernetes configuration for enterprise security framework
+
+---
+# Namespace for security components
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: security-system
+  labels:
+    name: security-system
+    security.portal.com/classification: restricted
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+  annotations:
+    security.portal.com/description: "Core security infrastructure namespace"
+
+---
+# Plugin sandbox namespace
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: plugin-sandbox
+  labels:
+    name: plugin-sandbox
+    security.portal.com/classification: restricted
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+  annotations:
+    security.portal.com/description: "Isolated namespace for plugin execution"
+
+---
+# Security system service account
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: security-system
+  namespace: security-system
+  labels:
+    app: security-system
+  annotations:
+    security.portal.com/description: "Service account for security components"
+automountServiceAccountToken: false
+
+---
+# Plugin sandbox service account
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: plugin-sandbox
+  namespace: plugin-sandbox
+  labels:
+    app: plugin-sandbox
+  annotations:
+    security.portal.com/description: "Service account for plugin sandboxes"
+automountServiceAccountToken: false
+
+---
+# RBAC for security system
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: security-system
+rules:
+- apiGroups: [""]
+  resources: ["pods", "services", "endpoints", "namespaces"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: ["apps"]
+  resources: ["deployments", "replicasets"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: ["networking.k8s.io"]
+  resources: ["networkpolicies"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: ["policy"]
+  resources: ["podsecuritypolicies"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: ["admissionregistration.k8s.io"]
+  resources: ["validatingadmissionwebhooks", "mutatingadmissionwebhooks"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: security-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: security-system
+subjects:
+- kind: ServiceAccount
+  name: security-system
+  namespace: security-system
+
+---
+# Pod Security Policy for plugin sandboxes
+apiVersion: policy/v1beta1
+kind: PodSecurityPolicy
+metadata:
+  name: plugin-sandbox-psp
+  labels:
+    app: plugin-sandbox
+spec:
+  privileged: false
+  allowPrivilegeEscalation: false
+  requiredDropCapabilities:
+    - ALL
+  allowedCapabilities: []
+  volumes:
+    - 'emptyDir'
+    - 'configMap'
+    - 'secret'
+    - 'projected'
+  hostNetwork: false
+  hostIPC: false
+  hostPID: false
+  runAsUser:
+    rule: 'MustRunAsNonRoot'
+  supplementalGroups:
+    rule: 'MustRunAs'
+    ranges:
+      - min: 1000
+        max: 65535
+  fsGroup:
+    rule: 'MustRunAs'
+    ranges:
+      - min: 1000
+        max: 65535
+  readOnlyRootFilesystem: true
+  seLinux:
+    rule: 'RunAsAny'
+  seccompProfile:
+    type: 'RuntimeDefault'
+
+---
+# Network Policy for plugin isolation
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: plugin-sandbox-isolation
+  namespace: plugin-sandbox
+spec:
+  podSelector:
+    matchLabels:
+      app: plugin-sandbox
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: portal-system
+    ports:
+    - protocol: TCP
+      port: 8080
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: security-system
+  egress:
+  # Allow DNS
+  - to: []
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+  # Allow HTTPS to specific services
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: api-services
+    ports:
+    - protocol: TCP
+      port: 443
+  # Block all other egress
+  - to: []
+    ports: []
+
+---
+# Network Policy for security system
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: security-system-policy
+  namespace: security-system
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: portal-system
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: plugin-sandbox
+  egress:
+  # Allow all egress for security monitoring
+  - {}
+
+---
+# Security scanner deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: security-scanner
+  namespace: security-system
+  labels:
+    app: security-scanner
+    component: security
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: security-scanner
+  template:
+    metadata:
+      labels:
+        app: security-scanner
+        component: security
+      annotations:
+        security.portal.com/scan-schedule: "0 2 * * *"
+    spec:
+      serviceAccountName: security-system
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        fsGroup: 65534
+      containers:
+      - name: security-scanner
+        image: portal/security-scanner:latest
+        ports:
+        - containerPort: 8080
+          name: http
+        env:
+        - name: NODE_ENV
+          value: production
+        - name: LOG_LEVEL
+          value: info
+        - name: SCAN_SCHEDULE
+          value: "0 2 * * *"
+        resources:
+          limits:
+            cpu: 1000m
+            memory: 2Gi
+          requests:
+            cpu: 500m
+            memory: 1Gi
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        volumeMounts:
+        - name: tmp
+          mountPath: /tmp
+        - name: cache
+          mountPath: /cache
+      volumes:
+      - name: tmp
+        emptyDir:
+          medium: Memory
+          sizeLimit: 100Mi
+      - name: cache
+        emptyDir:
+          sizeLimit: 500Mi
+      nodeSelector:
+        security.portal.com/node-type: security
+      tolerations:
+      - key: security-workload
+        operator: Equal
+        value: "true"
+        effect: NoSchedule
+
+---
+# Threat detector deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: threat-detector
+  namespace: security-system
+  labels:
+    app: threat-detector
+    component: security
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: threat-detector
+  template:
+    metadata:
+      labels:
+        app: threat-detector
+        component: security
+    spec:
+      serviceAccountName: security-system
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        fsGroup: 65534
+      containers:
+      - name: threat-detector
+        image: portal/threat-detector:latest
+        ports:
+        - containerPort: 8080
+          name: http
+        env:
+        - name: NODE_ENV
+          value: production
+        - name: THREAT_INTEL_FEEDS
+          valueFrom:
+            secretKeyRef:
+              name: threat-intel-config
+              key: feeds
+        - name: ML_MODEL_PATH
+          value: /models/threat-detection.pb
+        resources:
+          limits:
+            cpu: 2000m
+            memory: 4Gi
+          requests:
+            cpu: 1000m
+            memory: 2Gi
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+        volumeMounts:
+        - name: tmp
+          mountPath: /tmp
+        - name: models
+          mountPath: /models
+          readOnly: true
+      volumes:
+      - name: tmp
+        emptyDir:
+          medium: Memory
+          sizeLimit: 200Mi
+      - name: models
+        configMap:
+          name: ml-models
+      nodeSelector:
+        security.portal.com/node-type: security
+      tolerations:
+      - key: security-workload
+        operator: Equal
+        value: "true"
+        effect: NoSchedule
+
+---
+# Secret manager deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: secret-manager
+  namespace: security-system
+  labels:
+    app: secret-manager
+    component: security
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: secret-manager
+  template:
+    metadata:
+      labels:
+        app: secret-manager
+        component: security
+    spec:
+      serviceAccountName: security-system
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        fsGroup: 65534
+      containers:
+      - name: secret-manager
+        image: portal/secret-manager:latest
+        ports:
+        - containerPort: 8080
+          name: http
+        env:
+        - name: NODE_ENV
+          value: production
+        - name: VAULT_URL
+          valueFrom:
+            secretKeyRef:
+              name: vault-config
+              key: url
+        - name: VAULT_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: vault-config
+              key: token
+        - name: ENCRYPTION_KEY
+          valueFrom:
+            secretKeyRef:
+              name: encryption-keys
+              key: master-key
+        resources:
+          limits:
+            cpu: 1000m
+            memory: 2Gi
+          requests:
+            cpu: 500m
+            memory: 1Gi
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+        volumeMounts:
+        - name: tmp
+          mountPath: /tmp
+      volumes:
+      - name: tmp
+        emptyDir:
+          medium: Memory
+          sizeLimit: 100Mi
+      nodeSelector:
+        security.portal.com/node-type: security
+      tolerations:
+      - key: security-workload
+        operator: Equal
+        value: "true"
+        effect: NoSchedule
+
+---
+# Audit logger deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: audit-logger
+  namespace: security-system
+  labels:
+    app: audit-logger
+    component: security
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: audit-logger
+  template:
+    metadata:
+      labels:
+        app: audit-logger
+        component: security
+    spec:
+      serviceAccountName: security-system
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        fsGroup: 65534
+      containers:
+      - name: audit-logger
+        image: portal/audit-logger:latest
+        ports:
+        - containerPort: 8080
+          name: http
+        env:
+        - name: NODE_ENV
+          value: production
+        - name: LOG_ENCRYPTION_KEY
+          valueFrom:
+            secretKeyRef:
+              name: encryption-keys
+              key: log-encryption-key
+        - name: SIEM_ENDPOINT
+          valueFrom:
+            secretKeyRef:
+              name: siem-config
+              key: endpoint
+        resources:
+          limits:
+            cpu: 500m
+            memory: 1Gi
+          requests:
+            cpu: 250m
+            memory: 512Mi
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+        volumeMounts:
+        - name: audit-logs
+          mountPath: /audit-logs
+      volumes:
+      - name: audit-logs
+        persistentVolumeClaim:
+          claimName: audit-logs-pvc
+      nodeSelector:
+        security.portal.com/node-type: security
+
+---
+# Services for security components
+apiVersion: v1
+kind: Service
+metadata:
+  name: security-scanner
+  namespace: security-system
+  labels:
+    app: security-scanner
+spec:
+  selector:
+    app: security-scanner
+  ports:
+  - port: 80
+    targetPort: 8080
+    name: http
+  type: ClusterIP
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: threat-detector
+  namespace: security-system
+  labels:
+    app: threat-detector
+spec:
+  selector:
+    app: threat-detector
+  ports:
+  - port: 80
+    targetPort: 8080
+    name: http
+  type: ClusterIP
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: secret-manager
+  namespace: security-system
+  labels:
+    app: secret-manager
+spec:
+  selector:
+    app: secret-manager
+  ports:
+  - port: 80
+    targetPort: 8080
+    name: http
+  type: ClusterIP
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: audit-logger
+  namespace: security-system
+  labels:
+    app: audit-logger
+spec:
+  selector:
+    app: audit-logger
+  ports:
+  - port: 80
+    targetPort: 8080
+    name: http
+  type: ClusterIP
+
+---
+# Persistent volume for audit logs
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: audit-logs-pvc
+  namespace: security-system
+  labels:
+    app: audit-logger
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 100Gi
+  storageClassName: fast-ssd
+  volumeMode: Filesystem
+
+---
+# ConfigMap for security configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: security-config
+  namespace: security-system
+data:
+  config.yaml: |
+    environment: production
+    sandbox:
+      defaultIsolationLevel: strict
+      maxConcurrentSandboxes: 500
+    scanning:
+      scheduledScans: true
+      realTimeScanning: true
+      vulnerabilityThresholds:
+        critical: 0
+        high: 0
+        medium: 5
+        low: 20
+    threatDetection:
+      enabled: true
+      realTimeAnalysis: true
+      behaviorAnalysis: true
+    audit:
+      enabled: true
+      encryptLogs: true
+      retentionPeriod: 2555
+    compliance:
+      enabled: true
+      frameworks:
+        - SOC2
+        - GDPR
+        - ISO27001
+
+---
+# Admission Controller Webhook
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionWebhook
+metadata:
+  name: plugin-security-validator
+webhooks:
+- name: plugin-security.portal.com
+  clientConfig:
+    service:
+      name: security-scanner
+      namespace: security-system
+      path: "/validate"
+  rules:
+  - operations: ["CREATE", "UPDATE"]
+    apiGroups: ["apps"]
+    apiVersions: ["v1"]
+    resources: ["deployments"]
+  namespaceSelector:
+    matchLabels:
+      name: plugin-sandbox
+  admissionReviewVersions: ["v1", "v1beta1"]
+  sideEffects: None
+  failurePolicy: Fail
+
+---
+# Horizontal Pod Autoscaler for threat detector
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: threat-detector-hpa
+  namespace: security-system
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: threat-detector
+  minReplicas: 3
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+
+---
+# Pod Disruption Budget for security components
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: security-system-pdb
+  namespace: security-system
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      component: security
+
+---
+# Security monitoring ServiceMonitor for Prometheus
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: security-metrics
+  namespace: security-system
+  labels:
+    app: security-system
+spec:
+  selector:
+    matchLabels:
+      component: security
+  endpoints:
+  - port: http
+    path: /metrics
+    interval: 30s
+    scrapeTimeout: 10s

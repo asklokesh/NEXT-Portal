@@ -1,0 +1,841 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dr-monitoring-config
+  namespace: developer-portal
+  labels:
+    app: dr-monitoring
+    component: disaster-recovery
+data:
+  monitoring-config.yaml: |
+    # Disaster Recovery Monitoring and Alerting Configuration
+    apiVersion: monitoring.portal.dev/v1
+    kind: DRMonitoringConfiguration
+    metadata:
+      name: plugin-ecosystem-monitoring
+      version: "2.0"
+      created: "2025-01-07T10:00:00Z"
+    
+    # Monitoring targets
+    targets:
+      backup_operations:
+        metrics:
+          - name: backup_job_duration_seconds
+            description: "Duration of backup jobs in seconds"
+            type: "histogram"
+            labels: ["job_type", "strategy", "status"]
+            
+          - name: backup_job_success_rate
+            description: "Success rate of backup jobs"
+            type: "gauge"
+            labels: ["job_type", "strategy"]
+            
+          - name: backup_size_bytes
+            description: "Size of backup data in bytes"
+            type: "gauge" 
+            labels: ["job_type", "component", "storage_tier"]
+            
+          - name: backup_storage_utilization_percent
+            description: "Storage utilization percentage by tier"
+            type: "gauge"
+            labels: ["storage_tier", "region"]
+            
+          - name: backup_validation_failures_total
+            description: "Total number of backup validation failures"
+            type: "counter"
+            labels: ["validation_type", "component"]
+            
+        thresholds:
+          backup_job_duration_critical: "14400s"  # 4 hours
+          backup_job_duration_warning: "7200s"   # 2 hours
+          backup_success_rate_critical: "90%"
+          backup_success_rate_warning: "95%"
+          storage_utilization_critical: "90%"
+          storage_utilization_warning: "80%"
+          
+      disaster_recovery:
+        metrics:
+          - name: dr_failover_duration_seconds
+            description: "Duration of DR failover operations"
+            type: "histogram"
+            labels: ["from_site", "to_site", "trigger_type"]
+            
+          - name: dr_rto_seconds
+            description: "Actual Recovery Time Objective"
+            type: "gauge"
+            labels: ["service_tier", "site"]
+            
+          - name: dr_rpo_seconds
+            description: "Actual Recovery Point Objective"
+            type: "gauge"
+            labels: ["service_tier", "component"]
+            
+          - name: dr_test_success_rate
+            description: "DR test success rate"
+            type: "gauge"
+            labels: ["test_type", "scope"]
+            
+          - name: replication_lag_seconds
+            description: "Database replication lag in seconds"
+            type: "gauge"
+            labels: ["source_region", "target_region", "database"]
+            
+        thresholds:
+          failover_duration_critical: "14400s"   # 4 hours
+          failover_duration_warning: "7200s"    # 2 hours
+          rto_violation_critical: "target_rto * 1.5"
+          rpo_violation_critical: "target_rpo * 2"
+          replication_lag_critical: "300s"      # 5 minutes
+          replication_lag_warning: "60s"        # 1 minute
+          
+      business_continuity:
+        metrics:
+          - name: incident_response_time_seconds
+            description: "Time to initial incident response"
+            type: "histogram"
+            labels: ["severity", "service_tier"]
+            
+          - name: sla_availability_percent
+            description: "Service availability percentage"
+            type: "gauge"
+            labels: ["service", "tier"]
+            
+          - name: sla_response_time_milliseconds
+            description: "Service response time in milliseconds"
+            type: "histogram"
+            labels: ["service", "endpoint"]
+            
+          - name: runbook_execution_success_rate
+            description: "Automated runbook execution success rate"
+            type: "gauge"
+            labels: ["runbook", "trigger_type"]
+            
+          - name: active_incidents_count
+            description: "Number of active incidents"
+            type: "gauge"
+            labels: ["severity", "status"]
+            
+        thresholds:
+          incident_response_critical: "1800s"    # 30 minutes
+          incident_response_warning: "600s"      # 10 minutes
+          sla_availability_critical: "99.5%"
+          sla_availability_warning: "99.9%"
+          sla_response_time_critical: "1000ms"
+          sla_response_time_warning: "500ms"
+          
+      point_in_time_recovery:
+        metrics:
+          - name: recovery_point_count
+            description: "Number of available recovery points"
+            type: "gauge"
+            labels: ["recovery_type", "age_bucket"]
+            
+          - name: recovery_timeline_confidence_score
+            description: "Confidence score for recovery timeline"
+            type: "gauge"
+            labels: ["time_range"]
+            
+          - name: recovery_validation_duration_seconds
+            description: "Duration of recovery validation"
+            type: "histogram"
+            labels: ["recovery_type", "component"]
+            
+          - name: recovery_success_rate
+            description: "Point-in-time recovery success rate"
+            type: "gauge"
+            labels: ["recovery_type", "target_age"]
+            
+        thresholds:
+          recovery_point_gap_critical: "3600s"   # 1 hour gap
+          timeline_confidence_warning: "80"
+          timeline_confidence_critical: "60"
+          recovery_validation_critical: "1800s"  # 30 minutes
+    
+    # Alert routing and escalation
+    alert_routing:
+      routes:
+        - name: "critical_backup_failures"
+          matchers:
+            - severity="critical"
+            - component="backup"
+          group_by: ["job_type", "component"]
+          group_wait: "30s"
+          group_interval: "5m"
+          repeat_interval: "1h"
+          receiver: "backup_team_pager"
+          
+        - name: "dr_failover_alerts"
+          matchers:
+            - severity=~"critical|high"
+            - component="disaster_recovery"
+          group_by: ["site", "trigger_type"]
+          group_wait: "0s"
+          group_interval: "2m"
+          repeat_interval: "30m"
+          receiver: "dr_team_pager"
+          
+        - name: "sla_violations"
+          matchers:
+            - alert_type="sla_violation"
+          group_by: ["service", "violation_type"]
+          group_wait: "1m"
+          group_interval: "5m"
+          repeat_interval: "2h"
+          receiver: "business_continuity_team"
+          
+        - name: "business_continuity_incidents"
+          matchers:
+            - severity=~"critical|high"
+            - component="business_continuity"
+          group_by: ["incident_type"]
+          group_wait: "0s"
+          group_interval: "1m"
+          repeat_interval: "15m"
+          receiver: "incident_commander"
+          
+        - name: "recovery_issues"
+          matchers:
+            - component="point_in_time_recovery"
+            - severity=~"warning|critical"
+          group_by: ["recovery_type"]
+          group_wait: "2m"
+          group_interval: "10m"
+          repeat_interval: "4h"
+          receiver: "platform_team"
+    
+    # Notification channels
+    receivers:
+      backup_team_pager:
+        channels:
+          - type: "pagerduty"
+            service_key: "${PAGERDUTY_BACKUP_SERVICE_KEY}"
+            severity_mapping:
+              critical: "error"
+              high: "error"
+              medium: "warning"
+              low: "info"
+          - type: "slack"
+            webhook_url: "${SLACK_BACKUP_WEBHOOK}"
+            channel: "#backup-alerts"
+            
+      dr_team_pager:
+        channels:
+          - type: "pagerduty"
+            service_key: "${PAGERDUTY_DR_SERVICE_KEY}"
+            severity_mapping:
+              critical: "error"
+              high: "error"
+          - type: "slack"
+            webhook_url: "${SLACK_DR_WEBHOOK}"
+            channel: "#disaster-recovery"
+          - type: "email"
+            smtp_server: "${SMTP_SERVER}"
+            recipients: ["dr-team@company.com"]
+            
+      business_continuity_team:
+        channels:
+          - type: "slack"
+            webhook_url: "${SLACK_BCP_WEBHOOK}"
+            channel: "#business-continuity"
+          - type: "email"
+            smtp_server: "${SMTP_SERVER}"
+            recipients: ["bcp-team@company.com"]
+          - type: "webhook"
+            url: "${BCP_WEBHOOK_URL}"
+            
+      incident_commander:
+        channels:
+          - type: "pagerduty"
+            service_key: "${PAGERDUTY_INCIDENT_SERVICE_KEY}"
+          - type: "phone"
+            numbers: ["${INCIDENT_COMMANDER_PHONE}"]
+          - type: "sms"
+            numbers: ["${INCIDENT_COMMANDER_SMS}"]
+          - type: "slack"
+            webhook_url: "${SLACK_INCIDENT_WEBHOOK}"
+            channel: "#incident-response"
+            
+      platform_team:
+        channels:
+          - type: "slack"
+            webhook_url: "${SLACK_PLATFORM_WEBHOOK}"
+            channel: "#platform-alerts"
+          - type: "email"
+            smtp_server: "${SMTP_SERVER}"
+            recipients: ["platform-team@company.com"]
+    
+    # Alert rules and conditions
+    alert_rules:
+      backup_failures:
+        - name: "BackupJobFailure"
+          condition: "backup_job_success_rate < 0.9"
+          for: "5m"
+          severity: "critical"
+          labels:
+            component: "backup"
+            runbook: "backup-job-failure"
+          annotations:
+            summary: "Backup job failure rate is high"
+            description: "Backup success rate for {{ $labels.job_type }} is {{ $value }}%"
+            
+        - name: "BackupStorageFull"
+          condition: "backup_storage_utilization_percent > 90"
+          for: "5m"
+          severity: "critical"
+          labels:
+            component: "backup"
+            runbook: "backup-storage-full"
+          annotations:
+            summary: "Backup storage is almost full"
+            description: "Storage utilization in {{ $labels.storage_tier }} is {{ $value }}%"
+            
+        - name: "BackupValidationFailure"
+          condition: "increase(backup_validation_failures_total[1h]) > 0"
+          for: "1m"
+          severity: "high"
+          labels:
+            component: "backup"
+          annotations:
+            summary: "Backup validation failures detected"
+            description: "{{ $value }} backup validation failures in the last hour"
+            
+      disaster_recovery_failures:
+        - name: "DRFailoverTimeout"
+          condition: "dr_failover_duration_seconds > 14400"
+          for: "1m"
+          severity: "critical"
+          labels:
+            component: "disaster_recovery"
+            runbook: "dr-failover-timeout"
+          annotations:
+            summary: "DR failover is taking too long"
+            description: "Failover from {{ $labels.from_site }} to {{ $labels.to_site }} has exceeded 4 hours"
+            
+        - name: "ReplicationLagHigh"
+          condition: "replication_lag_seconds > 300"
+          for: "5m"
+          severity: "critical"
+          labels:
+            component: "disaster_recovery"
+          annotations:
+            summary: "Database replication lag is high"
+            description: "Replication lag is {{ $value }} seconds for {{ $labels.database }}"
+            
+        - name: "RTOViolation"
+          condition: "dr_rto_seconds > on(service_tier) group_left() (target_rto_seconds * 1.5)"
+          for: "1m"
+          severity: "critical"
+          labels:
+            component: "disaster_recovery"
+          annotations:
+            summary: "RTO violation detected"
+            description: "Actual RTO ({{ $value }}s) exceeds target by 50% for {{ $labels.service_tier }}"
+            
+        - name: "RPOViolation"
+          condition: "dr_rpo_seconds > on(service_tier) group_left() (target_rpo_seconds * 2)"
+          for: "1m"
+          severity: "critical"
+          labels:
+            component: "disaster_recovery"
+          annotations:
+            summary: "RPO violation detected"
+            description: "Actual RPO ({{ $value }}s) exceeds target by 100% for {{ $labels.service_tier }}"
+            
+      business_continuity_issues:
+        - name: "IncidentResponseDelayed"
+          condition: "incident_response_time_seconds > 1800"
+          for: "1m"
+          severity: "critical"
+          labels:
+            component: "business_continuity"
+            runbook: "incident-response-delayed"
+          annotations:
+            summary: "Incident response is delayed"
+            description: "Response time ({{ $value }}s) exceeded 30 minutes for {{ $labels.severity }} incident"
+            
+        - name: "SLAAvailabilityBreach"
+          condition: "sla_availability_percent < 99.5"
+          for: "5m"
+          severity: "critical"
+          labels:
+            component: "business_continuity"
+            alert_type: "sla_violation"
+          annotations:
+            summary: "SLA availability breach"
+            description: "{{ $labels.service }} availability ({{ $value }}%) is below SLA"
+            
+        - name: "SLAResponseTimeBreach"
+          condition: "histogram_quantile(0.95, sla_response_time_milliseconds) > 1000"
+          for: "10m"
+          severity: "high"
+          labels:
+            component: "business_continuity"
+            alert_type: "sla_violation"
+          annotations:
+            summary: "SLA response time breach"
+            description: "{{ $labels.service }} 95th percentile response time ({{ $value }}ms) exceeds SLA"
+            
+        - name: "RunbookExecutionFailure"
+          condition: "runbook_execution_success_rate < 0.8"
+          for: "5m"
+          severity: "high"
+          labels:
+            component: "business_continuity"
+          annotations:
+            summary: "Runbook execution success rate is low"
+            description: "{{ $labels.runbook }} success rate ({{ $value }}%) is below 80%"
+            
+      recovery_system_issues:
+        - name: "RecoveryTimelineGap"
+          condition: "recovery_point_count{age_bucket=\"0-1h\"} == 0"
+          for: "15m"
+          severity: "high"
+          labels:
+            component: "point_in_time_recovery"
+          annotations:
+            summary: "Recovery timeline gap detected"
+            description: "No recent recovery points available for {{ $labels.recovery_type }}"
+            
+        - name: "RecoveryConfidenceLow"
+          condition: "recovery_timeline_confidence_score < 60"
+          for: "30m"
+          severity: "critical"
+          labels:
+            component: "point_in_time_recovery"
+          annotations:
+            summary: "Recovery timeline confidence is low"
+            description: "Timeline confidence score ({{ $value }}) is critically low"
+            
+        - name: "RecoveryValidationSlow"
+          condition: "histogram_quantile(0.95, recovery_validation_duration_seconds) > 1800"
+          for: "10m"
+          severity: "warning"
+          labels:
+            component: "point_in_time_recovery"
+          annotations:
+            summary: "Recovery validation is slow"
+            description: "95th percentile validation time ({{ $value }}s) exceeds 30 minutes"
+    
+    # Dashboard configurations
+    dashboards:
+      disaster_recovery_overview:
+        title: "Disaster Recovery Overview"
+        panels:
+          - title: "Backup Success Rate"
+            type: "stat"
+            query: "backup_job_success_rate"
+            unit: "percent"
+            thresholds: [95, 90]
+            
+          - title: "Active DR Tests"
+            type: "stat"
+            query: "sum(dr_test_active)"
+            
+          - title: "Replication Lag"
+            type: "graph"
+            query: "replication_lag_seconds"
+            unit: "seconds"
+            
+          - title: "Storage Utilization"
+            type: "graph"
+            query: "backup_storage_utilization_percent"
+            unit: "percent"
+            
+          - title: "Incident Response Time"
+            type: "heatmap"
+            query: "incident_response_time_seconds"
+            
+      backup_operations:
+        title: "Backup Operations Dashboard"
+        panels:
+          - title: "Backup Job Status"
+            type: "table"
+            query: "backup_job_info"
+            
+          - title: "Backup Duration Trends"
+            type: "graph"
+            query: "backup_job_duration_seconds"
+            
+          - title: "Backup Size Over Time"
+            type: "graph"
+            query: "backup_size_bytes"
+            unit: "bytes"
+            
+          - title: "Storage Tier Distribution"
+            type: "pie"
+            query: "sum by (storage_tier) (backup_size_bytes)"
+            
+      business_continuity:
+        title: "Business Continuity Dashboard"
+        panels:
+          - title: "SLA Compliance"
+            type: "gauge"
+            query: "sla_availability_percent"
+            unit: "percent"
+            
+          - title: "Active Incidents"
+            type: "stat"
+            query: "sum by (severity) (active_incidents_count)"
+            
+          - title: "Runbook Execution Rate"
+            type: "graph"
+            query: "runbook_execution_success_rate"
+            
+          - title: "Service Health Map"
+            type: "status_map"
+            query: "service_health_status"
+    
+    # Reporting configuration
+    reporting:
+      scheduled_reports:
+        - name: "weekly_dr_summary"
+          schedule: "0 9 * * 1"  # Monday 9 AM
+          recipients: ["dr-team@company.com", "management@company.com"]
+          format: "pdf"
+          content:
+            - backup_success_metrics
+            - dr_test_results
+            - sla_compliance_summary
+            - incident_summary
+            
+        - name: "monthly_compliance_report"
+          schedule: "0 10 1 * *"  # First day of month 10 AM
+          recipients: ["compliance@company.com", "audit@company.com"]
+          format: "pdf"
+          content:
+            - comprehensive_backup_audit
+            - dr_readiness_assessment
+            - sla_compliance_detailed
+            - regulatory_compliance_status
+            
+        - name: "daily_operational_summary"
+          schedule: "0 8 * * 1-5"  # Weekdays 8 AM
+          recipients: ["ops-team@company.com"]
+          format: "email"
+          content:
+            - overnight_backup_status
+            - system_health_summary
+            - active_alerts_summary
+            - upcoming_maintenance
+    
+    # Integration configurations
+    integrations:
+      prometheus:
+        endpoint: "http://prometheus:9090"
+        scrape_configs:
+          - job_name: "backup-orchestrator"
+            static_configs:
+              - targets: ["backup-orchestrator:8081"]
+          - job_name: "dr-orchestrator"
+            static_configs:
+              - targets: ["dr-orchestrator:8081"]
+          - job_name: "business-continuity-manager"
+            static_configs:
+              - targets: ["business-continuity-manager:8081"]
+              
+      grafana:
+        endpoint: "http://grafana:3000"
+        api_key: "${GRAFANA_API_KEY}"
+        organization_id: 1
+        
+      alertmanager:
+        endpoint: "http://alertmanager:9093"
+        config_reload_url: "http://alertmanager:9093/-/reload"
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dr-monitoring-system
+  namespace: developer-portal
+  labels:
+    app: dr-monitoring-system
+    component: disaster-recovery
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: dr-monitoring-system
+  template:
+    metadata:
+      labels:
+        app: dr-monitoring-system
+        component: disaster-recovery
+    spec:
+      serviceAccountName: dr-monitoring-system
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1003
+        fsGroup: 1003
+      containers:
+        - name: monitoring-collector
+          image: portal.local:5000/dr-monitoring-system:v2.0
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8080
+              name: http
+            - containerPort: 8081
+              name: metrics
+            - containerPort: 9090
+              name: webhook
+          env:
+            - name: LOG_LEVEL
+              value: "INFO"
+            - name: MONITORING_CONFIG_PATH
+              value: "/config/monitoring-config.yaml"
+            - name: PROMETHEUS_ENDPOINT
+              value: "http://prometheus:9090"
+            - name: ALERTMANAGER_ENDPOINT
+              value: "http://alertmanager:9093"
+            - name: GRAFANA_ENDPOINT
+              value: "http://grafana:3000"
+            - name: GRAFANA_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: monitoring-secrets
+                  key: GRAFANA_API_KEY
+            - name: PAGERDUTY_BACKUP_SERVICE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: alerting-secrets
+                  key: PAGERDUTY_BACKUP_SERVICE_KEY
+            - name: PAGERDUTY_DR_SERVICE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: alerting-secrets
+                  key: PAGERDUTY_DR_SERVICE_KEY
+            - name: SLACK_BACKUP_WEBHOOK
+              valueFrom:
+                secretKeyRef:
+                  name: alerting-secrets
+                  key: SLACK_BACKUP_WEBHOOK
+            - name: SMTP_SERVER
+              valueFrom:
+                secretKeyRef:
+                  name: email-secrets
+                  key: SMTP_SERVER
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "250m"
+            limits:
+              memory: "1Gi"
+              cpu: "500m"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          volumeMounts:
+            - name: config
+              mountPath: /config
+              readOnly: true
+            - name: alert-rules
+              mountPath: /alert-rules
+              readOnly: true
+            - name: monitoring-data
+              mountPath: /data
+      volumes:
+        - name: config
+          configMap:
+            name: dr-monitoring-config
+        - name: alert-rules
+          configMap:
+            name: dr-alert-rules
+        - name: monitoring-data
+          persistentVolumeClaim:
+            claimName: monitoring-data-pvc
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: dr-monitoring-system
+  namespace: developer-portal
+  labels:
+    app: dr-monitoring-system
+    component: disaster-recovery
+spec:
+  type: ClusterIP
+  ports:
+    - port: 8080
+      targetPort: http
+      name: http
+    - port: 8081
+      targetPort: metrics
+      name: metrics
+    - port: 9090
+      targetPort: webhook
+      name: webhook
+  selector:
+    app: dr-monitoring-system
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: dr-monitoring-system
+  namespace: developer-portal
+  labels:
+    app: dr-monitoring-system
+    component: disaster-recovery
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: dr-monitoring-system
+  labels:
+    app: dr-monitoring-system
+    component: disaster-recovery
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "services", "endpoints", "nodes", "events"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "replicasets", "daemonsets", "statefulsets"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["monitoring.coreos.com"]
+    resources: ["servicemonitors", "prometheusrules", "podmonitors"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["monitoring.portal.dev"]
+    resources: ["*"]
+    verbs: ["*"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: dr-monitoring-system
+  labels:
+    app: dr-monitoring-system
+    component: disaster-recovery
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: dr-monitoring-system
+subjects:
+  - kind: ServiceAccount
+    name: dr-monitoring-system
+    namespace: developer-portal
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: monitoring-data-pvc
+  namespace: developer-portal
+  labels:
+    app: dr-monitoring-system
+    component: disaster-recovery
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: "20Gi"
+  storageClassName: "standard"
+
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: dr-monitoring-system
+  namespace: developer-portal
+  labels:
+    app: dr-monitoring-system
+    component: disaster-recovery
+spec:
+  selector:
+    matchLabels:
+      app: dr-monitoring-system
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: 30s
+
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: dr-metrics-cleanup
+  namespace: developer-portal
+  labels:
+    app: dr-monitoring-system
+    component: disaster-recovery
+spec:
+  schedule: "0 2 * * 0"  # Weekly Sunday 2 AM
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        spec:
+          serviceAccountName: dr-monitoring-system
+          restartPolicy: OnFailure
+          containers:
+            - name: metrics-cleanup
+              image: portal.local:5000/dr-monitoring-system:v2.0
+              command: ["/app/cleanup-old-metrics.sh"]
+              env:
+                - name: RETENTION_DAYS
+                  value: "90"
+                - name: PROMETHEUS_ENDPOINT
+                  value: "http://prometheus:9090"
+              resources:
+                requests:
+                  memory: "128Mi"
+                  cpu: "100m"
+                limits:
+                  memory: "256Mi"
+                  cpu: "200m"
+
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: dr-dashboard-sync
+  namespace: developer-portal
+  labels:
+    app: dr-monitoring-system
+    component: disaster-recovery
+spec:
+  schedule: "*/30 * * * *"  # Every 30 minutes
+  successfulJobsHistoryLimit: 5
+  failedJobsHistoryLimit: 3
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        spec:
+          serviceAccountName: dr-monitoring-system
+          restartPolicy: OnFailure
+          containers:
+            - name: dashboard-sync
+              image: portal.local:5000/dr-monitoring-system:v2.0
+              command: ["/app/sync-grafana-dashboards.sh"]
+              env:
+                - name: GRAFANA_ENDPOINT
+                  value: "http://grafana:3000"
+                - name: GRAFANA_API_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: monitoring-secrets
+                      key: GRAFANA_API_KEY
+              resources:
+                requests:
+                  memory: "64Mi"
+                  cpu: "50m"
+                limits:
+                  memory: "128Mi"
+                  cpu: "100m"

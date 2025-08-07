@@ -1,0 +1,369 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: plugin-pipeline-orchestrator-monitor
+  namespace: plugin-pipeline
+  labels:
+    app: plugin-pipeline-orchestrator
+    app.kubernetes.io/name: plugin-pipeline-orchestrator-monitor
+    app.kubernetes.io/component: monitoring
+    app.kubernetes.io/part-of: plugin-pipeline
+    prometheus: kube-prometheus
+  annotations:
+    plugin-pipeline/description: "ServiceMonitor for plugin pipeline orchestrator metrics"
+spec:
+  selector:
+    matchLabels:
+      app: plugin-pipeline-orchestrator
+  endpoints:
+    - port: metrics
+      interval: 30s
+      path: /metrics
+      honorLabels: true
+      relabelings:
+        - sourceLabels: [__meta_kubernetes_pod_name]
+          targetLabel: pod_name
+        - sourceLabels: [__meta_kubernetes_namespace]
+          targetLabel: kubernetes_namespace
+        - sourceLabels: [__meta_kubernetes_service_name]
+          targetLabel: kubernetes_service_name
+  namespaceSelector:
+    matchNames:
+      - plugin-pipeline
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: plugin-pipeline-alerts
+  namespace: plugin-pipeline
+  labels:
+    app: plugin-pipeline-orchestrator
+    app.kubernetes.io/name: plugin-pipeline-alerts
+    app.kubernetes.io/component: monitoring
+    app.kubernetes.io/part-of: plugin-pipeline
+    prometheus: kube-prometheus
+  annotations:
+    plugin-pipeline/description: "Prometheus alerting rules for plugin pipeline"
+spec:
+  groups:
+    - name: plugin-pipeline.rules
+      interval: 30s
+      rules:
+        # Infrastructure health alerts
+        - alert: PluginPipelineOrchestratorDown
+          expr: up{job="plugin-pipeline-orchestrator"} == 0
+          for: 1m
+          labels:
+            severity: critical
+            component: orchestrator
+            team: platform
+          annotations:
+            summary: "Plugin pipeline orchestrator is down"
+            description: "Plugin pipeline orchestrator has been down for more than 1 minute."
+            runbook_url: "https://runbook.example.com/plugin-pipeline-down"
+        
+        - alert: PluginPipelineHighErrorRate
+          expr: |
+            (
+              sum(rate(http_requests_total{job="plugin-pipeline-orchestrator",status=~"5.."}[5m])) /
+              sum(rate(http_requests_total{job="plugin-pipeline-orchestrator"}[5m]))
+            ) > 0.05
+          for: 5m
+          labels:
+            severity: warning
+            component: orchestrator
+            team: platform
+          annotations:
+            summary: "High error rate in plugin pipeline orchestrator"
+            description: "Plugin pipeline orchestrator error rate is above 5% for 5 minutes."
+        
+        # Installation performance alerts
+        - alert: PluginInstallationDurationHigh
+          expr: |
+            histogram_quantile(0.95, 
+              rate(plugin_installation_duration_seconds_bucket[10m])
+            ) > 1800
+          for: 5m
+          labels:
+            severity: warning
+            component: installation
+            team: platform
+          annotations:
+            summary: "Plugin installation taking too long"
+            description: "95th percentile plugin installation duration is above 30 minutes."
+        
+        - alert: PluginInstallationFailureRate
+          expr: |
+            (
+              sum(rate(plugin_installation_failures_total[10m])) /
+              sum(rate(plugin_installation_attempts_total[10m]))
+            ) > 0.2
+          for: 5m
+          labels:
+            severity: warning
+            component: installation
+            team: platform
+          annotations:
+            summary: "High plugin installation failure rate"
+            description: "Plugin installation failure rate is above 20% for 10 minutes."
+        
+        # Resource utilization alerts
+        - alert: PluginPipelineHighMemoryUsage
+          expr: |
+            (
+              container_memory_working_set_bytes{container="orchestrator",namespace="plugin-pipeline"} /
+              container_spec_memory_limit_bytes{container="orchestrator",namespace="plugin-pipeline"}
+            ) > 0.85
+          for: 10m
+          labels:
+            severity: warning
+            component: orchestrator
+            team: platform
+          annotations:
+            summary: "Plugin pipeline orchestrator high memory usage"
+            description: "Memory usage is above 85% for more than 10 minutes."
+        
+        - alert: PluginPipelineHighCPUUsage
+          expr: |
+            (
+              rate(container_cpu_usage_seconds_total{container="orchestrator",namespace="plugin-pipeline"}[5m]) /
+              container_spec_cpu_quota{container="orchestrator",namespace="plugin-pipeline"} * 100000
+            ) > 80
+          for: 10m
+          labels:
+            severity: warning
+            component: orchestrator
+            team: platform
+          annotations:
+            summary: "Plugin pipeline orchestrator high CPU usage"
+            description: "CPU usage is above 80% for more than 10 minutes."
+        
+        # Security alerts
+        - alert: PluginSecurityScanFailures
+          expr: increase(plugin_security_scan_failures_total[1h]) > 10
+          for: 0m
+          labels:
+            severity: high
+            component: security
+            team: security
+          annotations:
+            summary: "High number of plugin security scan failures"
+            description: "More than 10 plugin security scans have failed in the last hour."
+        
+        - alert: PluginCriticalVulnerabilityDetected
+          expr: increase(plugin_vulnerabilities_total{severity="critical"}[5m]) > 0
+          for: 0m
+          labels:
+            severity: critical
+            component: security
+            team: security
+          annotations:
+            summary: "Critical vulnerability detected in plugin"
+            description: "A critical severity vulnerability has been detected in a plugin."
+        
+        # Queue and capacity alerts
+        - alert: PluginInstallationQueueBacklog
+          expr: plugin_installation_queue_size > 50
+          for: 15m
+          labels:
+            severity: warning
+            component: orchestrator
+            team: platform
+          annotations:
+            summary: "Plugin installation queue has large backlog"
+            description: "Plugin installation queue has more than 50 pending installations."
+        
+        - alert: PluginNamespaceResourceExhaustion
+          expr: |
+            (
+              kube_resourcequota{namespace=~"plugin-.*",resource="requests.memory",type="used"} /
+              kube_resourcequota{namespace=~"plugin-.*",resource="requests.memory",type="hard"}
+            ) > 0.9
+          for: 5m
+          labels:
+            severity: warning
+            component: resource-management
+            team: platform
+          annotations:
+            summary: "Plugin namespace approaching memory limit"
+            description: "Plugin namespace {{ $labels.namespace }} is using more than 90% of its memory quota."
+        
+        # Health check alerts
+        - alert: PluginHealthCheckFailures
+          expr: |
+            (
+              sum(rate(plugin_health_check_failures_total[10m])) /
+              sum(rate(plugin_health_checks_total[10m]))
+            ) > 0.3
+          for: 5m
+          labels:
+            severity: warning
+            component: monitoring
+            team: platform
+          annotations:
+            summary: "High plugin health check failure rate"
+            description: "Plugin health check failure rate is above 30% for 10 minutes."
+        
+        # Docker build alerts
+        - alert: DockerBuildFailures
+          expr: increase(docker_build_failures_total[30m]) > 5
+          for: 0m
+          labels:
+            severity: warning
+            component: docker-builder
+            team: platform
+          annotations:
+            summary: "High number of Docker build failures"
+            description: "More than 5 Docker builds have failed in the last 30 minutes."
+        
+        - alert: DockerBuildDurationHigh
+          expr: |
+            histogram_quantile(0.95, 
+              rate(docker_build_duration_seconds_bucket[15m])
+            ) > 600
+          for: 10m
+          labels:
+            severity: warning
+            component: docker-builder
+            team: platform
+          annotations:
+            summary: "Docker build taking too long"
+            description: "95th percentile Docker build duration is above 10 minutes."
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-plugin-pipeline-dashboard
+  namespace: monitoring
+  labels:
+    grafana_dashboard: "1"
+    app.kubernetes.io/name: grafana-plugin-pipeline-dashboard
+    app.kubernetes.io/component: monitoring
+    app.kubernetes.io/part-of: plugin-pipeline
+  annotations:
+    plugin-pipeline/description: "Grafana dashboard for plugin pipeline monitoring"
+data:
+  plugin-pipeline-dashboard.json: |
+    {
+      "dashboard": {
+        "id": null,
+        "title": "Plugin Pipeline Orchestrator",
+        "tags": ["plugin-pipeline", "backstage", "platform"],
+        "style": "dark",
+        "timezone": "browser",
+        "refresh": "30s",
+        "time": {
+          "from": "now-1h",
+          "to": "now"
+        },
+        "panels": [
+          {
+            "id": 1,
+            "title": "Plugin Installation Rate",
+            "type": "graph",
+            "targets": [
+              {
+                "expr": "rate(plugin_installation_attempts_total[5m])",
+                "legendFormat": "Installation Attempts"
+              },
+              {
+                "expr": "rate(plugin_installation_success_total[5m])",
+                "legendFormat": "Successful Installations"
+              },
+              {
+                "expr": "rate(plugin_installation_failures_total[5m])",
+                "legendFormat": "Failed Installations"
+              }
+            ],
+            "yAxes": [{"label": "Installations/sec"}],
+            "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0}
+          },
+          {
+            "id": 2,
+            "title": "Installation Duration",
+            "type": "graph",
+            "targets": [
+              {
+                "expr": "histogram_quantile(0.50, rate(plugin_installation_duration_seconds_bucket[5m]))",
+                "legendFormat": "p50"
+              },
+              {
+                "expr": "histogram_quantile(0.95, rate(plugin_installation_duration_seconds_bucket[5m]))",
+                "legendFormat": "p95"
+              },
+              {
+                "expr": "histogram_quantile(0.99, rate(plugin_installation_duration_seconds_bucket[5m]))",
+                "legendFormat": "p99"
+              }
+            ],
+            "yAxes": [{"label": "Duration (seconds)"}],
+            "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0}
+          },
+          {
+            "id": 3,
+            "title": "Active Plugins",
+            "type": "stat",
+            "targets": [
+              {
+                "expr": "plugin_active_count",
+                "legendFormat": "Active Plugins"
+              }
+            ],
+            "gridPos": {"h": 4, "w": 6, "x": 0, "y": 8}
+          },
+          {
+            "id": 4,
+            "title": "Installation Queue Size",
+            "type": "stat",
+            "targets": [
+              {
+                "expr": "plugin_installation_queue_size",
+                "legendFormat": "Queued Installations"
+              }
+            ],
+            "gridPos": {"h": 4, "w": 6, "x": 6, "y": 8}
+          },
+          {
+            "id": 5,
+            "title": "Security Scan Results",
+            "type": "pie",
+            "targets": [
+              {
+                "expr": "sum by (result) (plugin_security_scans_total)",
+                "legendFormat": "{{result}}"
+              }
+            ],
+            "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8}
+          },
+          {
+            "id": 6,
+            "title": "Resource Usage",
+            "type": "graph",
+            "targets": [
+              {
+                "expr": "container_memory_working_set_bytes{container='orchestrator',namespace='plugin-pipeline'} / 1024 / 1024",
+                "legendFormat": "Memory (MB)"
+              },
+              {
+                "expr": "rate(container_cpu_usage_seconds_total{container='orchestrator',namespace='plugin-pipeline'}[5m]) * 100",
+                "legendFormat": "CPU (%)"
+              }
+            ],
+            "yAxes": [{"label": "Usage"}],
+            "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16}
+          },
+          {
+            "id": 7,
+            "title": "Plugin Health Status",
+            "type": "table",
+            "targets": [
+              {
+                "expr": "plugin_health_status",
+                "legendFormat": "{{plugin_name}} - {{status}}"
+              }
+            ],
+            "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16}
+          }
+        ]
+      }
+    }

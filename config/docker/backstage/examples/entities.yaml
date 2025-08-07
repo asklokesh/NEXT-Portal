@@ -1,0 +1,70 @@
+---
+# https://backstage.io/docs/features/software-catalog/descriptor-format#kind-system
+apiVersion: backstage.io/v1alpha1
+kind: System
+metadata:
+  name: examples
+  description: Example system for the SaaS IDP
+spec:
+  owner: guests
+
+---
+# https://backstage.io/docs/features/software-catalog/descriptor-format#kind-component
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: example-website
+  description: An example of a Backstage application.
+  # Example of optional Backstage annotations
+  annotations:
+    # An annotation can be a single value or a list of values (either on
+    # separate lines or as a JSON array).
+    example.com/service-discovery: artistweb
+    example.com/build-tool: yarn workspace build
+  # Example of optional Backstage labels
+  labels:
+    example.com/tier: "1"
+  # Example of optional Backstage tags
+  tags:
+    - website
+  links:
+    - url: https://admin.example-org.com
+      title: Admin Dashboard
+      # Uncomment the following line to add an icon from the web
+      # icon: dashboard
+      type: admin-dashboard
+spec:
+  type: website
+  lifecycle: experimental
+  owner: guests
+  system: examples
+  providesApis:
+    - example-grpc-api
+---
+# https://backstage.io/docs/features/software-catalog/descriptor-format#kind-api
+apiVersion: backstage.io/v1alpha1
+kind: API
+metadata:
+  name: example-grpc-api
+  description: A gRPC API that serves artists and artist details
+spec:
+  type: grpc
+  lifecycle: experimental
+  owner: guests
+  system: examples
+  definition: |
+    syntax = "proto3";
+
+    service ArtistService {
+      rpc GetArtist(GetArtistRequest) returns (Artist);
+    }
+
+    message GetArtistRequest {
+      string artist_id = 1;
+    }
+
+    message Artist {
+      string artist_id = 1;
+      string name = 2;
+      string description = 3;
+    }

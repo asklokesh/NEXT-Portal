@@ -1,0 +1,27 @@
+---
+# https://backstage.io/docs/features/software-catalog/descriptor-format#kind-user
+apiVersion: backstage.io/v1alpha1
+kind: User
+metadata:
+  name: guest
+  description: Guest User
+spec:
+  profile:
+    displayName: Guest User
+    email: guest@example.com
+    picture: https://avatars.dicebear.com/api/avataaars/guest@example.com.svg?background=%23fff
+  memberOf: [guests]
+---
+# https://backstage.io/docs/features/software-catalog/descriptor-format#kind-group
+apiVersion: backstage.io/v1alpha1
+kind: Group
+metadata:
+  name: guests
+  description: Backstage example guest users
+spec:
+  type: team
+  profile:
+    displayName: Guest Users
+    email: guests@example.com
+    picture: https://avatars.dicebear.com/api/identicon/guests@example.com.svg?background=%23fff
+  children: []

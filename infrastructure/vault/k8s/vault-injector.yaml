@@ -1,0 +1,338 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: vault-injector
+  namespace: vault-system
+  labels:
+    app.kubernetes.io/name: vault-injector
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: vault-injector
+rules:
+- apiGroups: [""]
+  resources: ["pods", "secrets", "configmaps", "serviceaccounts"]
+  verbs: ["get", "list", "watch", "create", "update", "patch"]
+- apiGroups: ["apps"]
+  resources: ["deployments", "statefulsets", "daemonsets"]
+  verbs: ["get", "list", "watch", "update", "patch"]
+- apiGroups: ["batch"]
+  resources: ["jobs", "cronjobs"]
+  verbs: ["get", "list", "watch", "update", "patch"]
+- apiGroups: ["admissionregistration.k8s.io"]
+  resources: ["mutatingwebhookconfigurations"]
+  verbs: ["get", "list", "watch", "create", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: vault-injector
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: vault-injector
+subjects:
+- kind: ServiceAccount
+  name: vault-injector
+  namespace: vault-system
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vault-injector-config
+  namespace: vault-system
+data:
+  config.yaml: |
+    vault:
+      address: "https://vault.vault-system.svc.cluster.local:8200"
+      tls_skip_verify: false
+      ca_cert: "/vault/ssl/ca.crt"
+      client_cert: "/vault/ssl/client.crt"
+      client_key: "/vault/ssl/client.key"
+    
+    injector:
+      listen: "0.0.0.0:8080"
+      tls_cert_file: "/etc/tls/tls.crt"
+      tls_private_key_file: "/etc/tls/tls.key"
+      
+      # Default Vault agent configuration
+      vault_agent_config: |
+        auto_auth {
+          method "kubernetes" {
+            mount_path = "auth/kubernetes"
+            config = {
+              role = "secret-injector"
+              token_path = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+            }
+          }
+          sink "file" {
+            config = {
+              path = "/vault/secrets/.token"
+              mode = 0600
+            }
+          }
+        }
+        api_proxy {
+          use_auto_auth_token = true
+        }
+        listener "tcp" {
+          address = "127.0.0.1:8100"
+          tls_disable = true
+        }
+        vault {
+          address = "https://vault.vault-system.svc.cluster.local:8200"
+          ca_cert = "/vault/ssl/ca.crt"
+        }
+        template_config {
+          static_secret_render_interval = "10s"
+          exit_on_retry_failure = true
+        }
+      
+      # Annotation mappings
+      annotations:
+        secret_path: "vault.hashicorp.com/secret-path"
+        secret_template: "vault.hashicorp.com/secret-template"
+        secret_format: "vault.hashicorp.com/secret-format"
+        secret_destination: "vault.hashicorp.com/secret-destination"
+        agent_inject: "vault.hashicorp.com/agent-inject"
+        agent_init_first: "vault.hashicorp.com/agent-init-first"
+        agent_pre_populate: "vault.hashicorp.com/agent-pre-populate"
+        agent_pre_populate_only: "vault.hashicorp.com/agent-pre-populate-only"
+        role: "vault.hashicorp.com/role"
+        auth_path: "vault.hashicorp.com/auth-path"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vault-injector
+  namespace: vault-system
+  labels:
+    app.kubernetes.io/name: vault-injector
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: vault-injector
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: vault-injector
+    spec:
+      serviceAccountName: vault-injector
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchLabels:
+                app.kubernetes.io/name: vault-injector
+            topologyKey: kubernetes.io/hostname
+      containers:
+      - name: vault-injector
+        image: hashicorp/vault-k8s:1.4.1
+        imagePullPolicy: IfNotPresent
+        args:
+        - injector
+        - -config=/etc/config/config.yaml
+        - -log-level=info
+        - -log-format=json
+        ports:
+        - name: https
+          containerPort: 8080
+          protocol: TCP
+        env:
+        - name: AGENT_INJECT_VAULT_ADDR
+          value: https://vault.vault-system.svc.cluster.local:8200
+        - name: AGENT_INJECT_VAULT_AUTH_PATH
+          value: auth/kubernetes
+        - name: AGENT_INJECT_VAULT_IMAGE
+          value: hashicorp/vault:1.16.1
+        - name: AGENT_INJECT_TLS_AUTO
+          value: vault-injector-certs
+        - name: AGENT_INJECT_TLS_AUTO_HOSTS
+          value: vault-injector,vault-injector.vault-system,vault-injector.vault-system.svc,vault-injector.vault-system.svc.cluster.local
+        volumeMounts:
+        - name: config
+          mountPath: /etc/config
+          readOnly: true
+        - name: tls
+          mountPath: /etc/tls
+          readOnly: true
+        - name: vault-ssl
+          mountPath: /vault/ssl
+          readOnly: true
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /health/ready
+            port: 8080
+            scheme: HTTPS
+          initialDelaySeconds: 30
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /health/ready
+            port: 8080
+            scheme: HTTPS
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          runAsUser: 65534
+          capabilities:
+            drop:
+            - ALL
+      volumes:
+      - name: config
+        configMap:
+          name: vault-injector-config
+      - name: tls
+        secret:
+          secretName: vault-injector-certs
+      - name: vault-ssl
+        secret:
+          secretName: vault-tls
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vault-injector
+  namespace: vault-system
+  labels:
+    app.kubernetes.io/name: vault-injector
+spec:
+  type: ClusterIP
+  ports:
+  - name: https
+    port: 443
+    targetPort: 8080
+    protocol: TCP
+  selector:
+    app.kubernetes.io/name: vault-injector
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingAdmissionWebhook
+metadata:
+  name: vault-injector
+rules:
+- operations: ["CREATE", "UPDATE"]
+  apiGroups: [""]
+  apiVersions: ["v1"]
+  resources: ["pods"]
+- operations: ["CREATE", "UPDATE"]
+  apiGroups: ["apps"]
+  apiVersions: ["v1"]
+  resources: ["deployments", "statefulsets", "daemonsets"]
+- operations: ["CREATE", "UPDATE"]
+  apiGroups: ["batch"]
+  apiVersions: ["v1", "v1beta1"]
+  resources: ["jobs", "cronjobs"]
+webhooks:
+- name: vault.hashicorp.com
+  clientConfig:
+    service:
+      name: vault-injector
+      namespace: vault-system
+      path: /mutate
+    caBundle: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSURCekNDQWUrZ0F3SUJBZ0lKQUlzRjR2WnEwRThxTUEwR0NTcUdTSWIzRFFFQkN3VUFNQlF4RWpBUUJnTlYKQkFNTUNXeHZZMkZzYUc5emREQWVGdzB4T1RFMU1qVXhOVFV5TlROYUZ3MHlNREExTVRreE5UVXlOVE5hTUJReApFakFRQmdOVkJBTU1DV3h2WTJGc2FHOXpkRENDQVNJd0RRWUpLb1pJaHZjTkFRRUJCUUFEZ2dFUEFEQ0NBUW9DCmdnRUJBTUFFKzFqTWFCdTh0QzY4V3BVZjVLdGRiSEI3RzlhTXJIanNrWTJsWGxkTVVPRnpKTCtNSE9yTnhVNmsKZjBkNmlORHZIRkZ1S2FUOXVGcEFjUGttcWZzNmJJU0ZMMGgwSThMZEJMYWFQVDBqWEhIM3hpOVBiQlJGWFc2YwpKUk1LZFp6ZVZJdmt4VlZWaTU5a0dCOElLT3lGaGNmTXhSRENmQU14M2tCRHVrVSt2MmFXL1pOSTJ6VXZUYk0yClBDZk5FTkFGbG00ZXZOZ0d5aDJ3SHJ2SUxQSGRJMlJvVVlLYWtuNmt6MVpoa1hnZVdFZ1VJZUEvUW1pb2pLdDAKaFpNdmN0QjdmVml0ZmpqV3d3MVYvZFlmM3k3ZkhrcWdCdFVyVTRqVnZmM1FwRkdvLzZ3dVlOdW5XbnRJaHh2YQprSk5jYWNGb0RMdmZJQ3RxOVZSdjhYVUNBd0VBQWFObU1HUXdIUVlEVlIwT0JCWUVGQWNsNHJhbWpYeG5jdDV2ClFJSVM0T05qU0x3UE1COEdBMVVkSXdRWU1CYUFGQWNsNHJhbWpYeG5jdDV2UUlJUzRPTmpTTHdQTUF3R0ExVWQKRXdRRk1BTUJBZjh3RGdZRFZSMFBBUUgvQkFRREFnR0dNQTBHQ1NxR1NJYjNEUUVCQ3dVQUE0SUJBUUNSLzExeQptMVphWVNlKzFUK0xhQmp2N2xrSXJPU2R3dWpxbFJIZU9FRElFNGN0UzhJVXNEL3dOVGpHQ3E2N3p4TXJDZ0VOCmEvaDRJejJrTFg1MXQvSCtKT1UvV2Yvaklrb08wZmFxZzB3L2hrR1BxNm5uM2pEZXg5ckRFdVdYa3lOdnFpOW8KZFJ0a2grMVFZbGFFbGE5ak5SVDBibXJHdlNIS2swUlBtSGJPZXVOd0U2R2R3a0RZNXIvSGhxb1l3NGJscWFLcApIdE1aZ1MwclFjT0VEN1VpN2h2c284QVNwYWFWZTM4SG1HNklSYnArdnNvdk96bU0wWkY2bU9NMjZGWWpWUjNSCmRZdFYrc29tTGZDZXg1ZGxWdGF4S3R5Q3Y1TmQ3VjE0RUZqSjB0S24wZXlTdUQ1NmFNUmZpT3F2TTRaMWlRdjYKTW5LM0NXOGZNbFViCi0tLS0tRU5EIENFUlRJRklDQVRFLS0tLS0K
+  admissionReviewVersions: ["v1", "v1beta1"]
+  sideEffects: None
+  failurePolicy: Ignore
+  namespaceSelector:
+    matchExpressions:
+    - key: name
+      operator: NotIn
+      values: ["kube-system", "kube-public", "vault-system"]
+---
+# Example usage annotations for pods
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vault-injector-examples
+  namespace: vault-system
+data:
+  example-pod.yaml: |
+    apiVersion: v1
+    kind: Pod
+    metadata:
+      name: example-app
+      annotations:
+        vault.hashicorp.com/agent-inject: "true"
+        vault.hashicorp.com/role: "backstage"
+        vault.hashicorp.com/agent-inject-secret-database.json: "database/creds/readwrite"
+        vault.hashicorp.com/agent-inject-template-database.json: |
+          {
+            "username": "{{ with secret "database/creds/readwrite" }}{{ .Data.username }}{{ end }}",
+            "password": "{{ with secret "database/creds/readwrite" }}{{ .Data.password }}{{ end }}"
+          }
+    spec:
+      serviceAccountName: backstage
+      containers:
+      - name: app
+        image: backstage:latest
+        env:
+        - name: DATABASE_CONFIG
+          value: "/vault/secrets/database.json"
+        
+  example-deployment.yaml: |
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: backstage-app
+    spec:
+      replicas: 3
+      selector:
+        matchLabels:
+          app: backstage
+      template:
+        metadata:
+          labels:
+            app: backstage
+          annotations:
+            vault.hashicorp.com/agent-inject: "true"
+            vault.hashicorp.com/role: "backstage"
+            vault.hashicorp.com/agent-pre-populate-only: "true"
+            
+            # Database credentials
+            vault.hashicorp.com/agent-inject-secret-db: "database/creds/readwrite"
+            vault.hashicorp.com/agent-inject-template-db: |
+              export POSTGRES_USER="{{ with secret "database/creds/readwrite" }}{{ .Data.username }}{{ end }}"
+              export POSTGRES_PASSWORD="{{ with secret "database/creds/readwrite" }}{{ .Data.password }}{{ end }}"
+            
+            # Application secrets
+            vault.hashicorp.com/agent-inject-secret-app-config: "secret/data/backstage/config"
+            vault.hashicorp.com/agent-inject-template-app-config: |
+              export GITHUB_TOKEN="{{ with secret "secret/data/backstage/config" }}{{ .Data.data.github_token }}{{ end }}"
+              export AUTH_SECRET="{{ with secret "secret/data/backstage/config" }}{{ .Data.data.auth_secret }}{{ end }}"
+            
+            # TLS certificates
+            vault.hashicorp.com/agent-inject-secret-tls.crt: "pki_int/issue/backstage-dot-local"
+            vault.hashicorp.com/agent-inject-template-tls.crt: |
+              {{ with secret "pki_int/issue/backstage-dot-local" "common_name=backstage.local" }}{{ .Data.certificate }}{{ end }}
+            
+            vault.hashicorp.com/agent-inject-secret-tls.key: "pki_int/issue/backstage-dot-local"
+            vault.hashicorp.com/agent-inject-template-tls.key: |
+              {{ with secret "pki_int/issue/backstage-dot-local" "common_name=backstage.local" }}{{ .Data.private_key }}{{ end }}
+        spec:
+          serviceAccountName: backstage
+          containers:
+          - name: backstage
+            image: backstage:latest
+            command: ["/bin/sh"]
+            args: ["-c", "source /vault/secrets/db && source /vault/secrets/app-config && exec node packages/backend"]
+            ports:
+            - containerPort: 7007
+            volumeMounts:
+            - name: tls-certs
+              mountPath: /etc/ssl/certs
+            env:
+            - name: NODE_ENV
+              value: production

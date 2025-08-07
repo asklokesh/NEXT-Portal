@@ -1,0 +1,552 @@
+import { SlackChannelConfig } from '../types';
+
+interface SlackConfig {
+  enabled: boolean;
+  botToken: string;
+  channels: SlackChannelConfig[];
+}
+
+interface SlackMessage {
+  text?: string;
+  blocks?: any[];
+  channel?: string;
+  thread_ts?: string;
+  username?: string;
+  icon_emoji?: string;
+  attachments?: any[];
+}
+
+interface SlackChannel {
+  id: string;
+  name: string;
+  is_private: boolean;
+  is_archived: boolean;
+  is_general: boolean;
+  num_members: number;
+  topic: {
+    value: string;
+    creator: string;
+    last_set: number;
+  };
+  purpose: {
+    value: string;
+    creator: string;
+    last_set: number;
+  };
+}
+
+interface SlackUser {
+  id: string;
+  name: string;
+  real_name: string;
+  email: string;
+  is_bot: boolean;
+  is_admin: boolean;
+  is_owner: boolean;
+  profile: {
+    display_name: string;
+    real_name: string;
+    email: string;
+    image_24: string;
+    image_32: string;
+    image_48: string;
+    image_72: string;
+    image_192: string;
+    image_512: string;
+  };
+}
+
+export class SlackClient {
+  private config: SlackConfig;
+  private baseUrl = 'https://slack.com/api';
+
+  constructor(config: SlackConfig) {
+    this.config = config;
+  }
+
+  async sendMessage(channel: string, message: SlackMessage): Promise<any> {
+    if (!this.config.enabled) {
+      throw new Error('Slack integration is not enabled');
+    }
+
+    try {
+      const response = await fetch(`${this.baseUrl}/chat.postMessage`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${this.config.botToken}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          channel,
+          ...message
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(`Slack API error: ${response.status} ${response.statusText}`);
+      }
+
+      const result = await response.json();
+      
+      if (!result.ok) {
+        throw new Error(`Slack API error: ${result.error}`);
+      }
+
+      return result;
+
+    } catch (error) {
+      console.error('Failed to send Slack message:', error);
+      throw error;
+    }
+  }
+
+  async sendDirectMessage(userId: string, message: string): Promise<any> {
+    if (!this.config.enabled) {
+      throw new Error('Slack integration is not enabled');
+    }
+
+    try {
+      // Open DM channel
+      const dmResponse = await fetch(`${this.baseUrl}/conversations.open`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${this.config.botToken}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          users: userId
+        })
+      });
+
+      const dmResult = await dmResponse.json();
+      
+      if (!dmResult.ok) {
+        throw new Error(`Failed to open DM: ${dmResult.error}`);
+      }
+
+      // Send message
+      return this.sendMessage(dmResult.channel.id, { text: message });
+
+    } catch (error) {
+      console.error('Failed to send Slack DM:', error);
+      throw error;
+    }
+  }
+
+  async createChannel(name: string, incident: any): Promise<SlackChannel> {
+    if (!this.config.enabled) {
+      throw new Error('Slack integration is not enabled');
+    }
+
+    try {
+      const response = await fetch(`${this.baseUrl}/conversations.create`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${this.config.botToken}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          name,
+          is_private: false
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(`Slack API error: ${response.status} ${response.statusText}`);
+      }
+
+      const result = await response.json();
+      
+      if (!result.ok) {
+        throw new Error(`Slack API error: ${result.error}`);
+      }
+
+      // Set channel topic
+      await this.setChannelTopic(result.channel.id, `Incident: ${incident.title}`);
+      
+      // Send initial message
+      await this.sendMessage(result.channel.id, {
+        blocks: [
+          {
+            type: 'header',
+            text: {
+              type: 'plain_text',
+              text: `🚨 Incident: ${incident.title}`
+            }
+          },
+          {
+            type: 'section',
+            fields: [
+              {
+                type: 'mrkdwn',
+                text: `*Severity:* ${incident.severity.toUpperCase()}`
+              },
+              {
+                type: 'mrkdwn',
+                text: `*Priority:* ${incident.priority}`
+              },
+              {
+                type: 'mrkdwn',
+                text: `*Status:* ${incident.status}`
+              },
+              {
+                type: 'mrkdwn',
+                text: `*Commander:* ${incident.incidentCommander.name}`
+              }
+            ]
+          },
+          {
+            type: 'section',
+            text: {
+              type: 'mrkdwn',
+              text: `*Description:* ${incident.description}`
+            }
+          },
+          {
+            type: 'section',
+            text: {
+              type: 'mrkdwn',
+              text: `*Affected Services:* ${incident.affectedServices.join(', ')}`
+            }
+          },
+          {
+            type: 'actions',
+            elements: [
+              {
+                type: 'button',
+                text: {
+                  type: 'plain_text',
+                  text: 'View Incident'
+                },
+                url: `${process.env.NEXT_PUBLIC_APP_URL}/incidents/${incident.id}`,
+                style: 'primary'
+              }
+            ]
+          }
+        ]
+      });
+
+      return result.channel;
+
+    } catch (error) {
+      console.error('Failed to create Slack channel:', error);
+      throw error;
+    }
+  }
+
+  async inviteUsersToChannel(channelId: string, users: any[]): Promise<void> {
+    if (!this.config.enabled || users.length === 0) return;
+
+    try {
+      // In a real implementation, you'd need to map users to Slack user IDs
+      const userIds = users.map(user => user.slackId || user.email).filter(Boolean);
+      
+      if (userIds.length === 0) return;
+
+      const response = await fetch(`${this.baseUrl}/conversations.invite`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${this.config.botToken}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          channel: channelId,
+          users: userIds.join(',')
+        })
+      });
+
+      const result = await response.json();
+      
+      if (!result.ok) {
+        console.warn(`Failed to invite some users to channel: ${result.error}`);
+      }
+
+    } catch (error) {
+      console.error('Failed to invite users to Slack channel:', error);
+    }
+  }
+
+  async setChannelTopic(channelId: string, topic: string): Promise<void> {
+    if (!this.config.enabled) return;
+
+    try {
+      await fetch(`${this.baseUrl}/conversations.setTopic`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${this.config.botToken}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          channel: channelId,
+          topic
+        })
+      });
+
+    } catch (error) {
+      console.error('Failed to set Slack channel topic:', error);
+    }
+  }
+
+  async updateMessage(channel: string, timestamp: string, message: SlackMessage): Promise<any> {
+    if (!this.config.enabled) return;
+
+    try {
+      const response = await fetch(`${this.baseUrl}/chat.update`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${this.config.botToken}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          channel,
+          ts: timestamp,
+          ...message
+        })
+      });
+
+      const result = await response.json();
+      
+      if (!result.ok) {
+        throw new Error(`Slack API error: ${result.error}`);
+      }
+
+      return result;
+
+    } catch (error) {
+      console.error('Failed to update Slack message:', error);
+      throw error;
+    }
+  }
+
+  async deleteMessage(channel: string, timestamp: string): Promise<void> {
+    if (!this.config.enabled) return;
+
+    try {
+      await fetch(`${this.baseUrl}/chat.delete`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${this.config.botToken}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          channel,
+          ts: timestamp
+        })
+      });
+
+    } catch (error) {
+      console.error('Failed to delete Slack message:', error);
+    }
+  }
+
+  async getChannelInfo(channelId: string): Promise<SlackChannel | null> {
+    if (!this.config.enabled) return null;
+
+    try {
+      const response = await fetch(`${this.baseUrl}/conversations.info?channel=${channelId}`, {
+        headers: {
+          'Authorization': `Bearer ${this.config.botToken}`
+        }
+      });
+
+      const result = await response.json();
+      
+      if (!result.ok) {
+        throw new Error(`Slack API error: ${result.error}`);
+      }
+
+      return result.channel;
+
+    } catch (error) {
+      console.error('Failed to get Slack channel info:', error);
+      return null;
+    }
+  }
+
+  async getUserInfo(userId: string): Promise<SlackUser | null> {
+    if (!this.config.enabled) return null;
+
+    try {
+      const response = await fetch(`${this.baseUrl}/users.info?user=${userId}`, {
+        headers: {
+          'Authorization': `Bearer ${this.config.botToken}`
+        }
+      });
+
+      const result = await response.json();
+      
+      if (!result.ok) {
+        throw new Error(`Slack API error: ${result.error}`);
+      }
+
+      return result.user;
+
+    } catch (error) {
+      console.error('Failed to get Slack user info:', error);
+      return null;
+    }
+  }
+
+  async findUserByEmail(email: string): Promise<SlackUser | null> {
+    if (!this.config.enabled) return null;
+
+    try {
+      const response = await fetch(`${this.baseUrl}/users.lookupByEmail?email=${encodeURIComponent(email)}`, {
+        headers: {
+          'Authorization': `Bearer ${this.config.botToken}`
+        }
+      });
+
+      const result = await response.json();
+      
+      if (!result.ok) {
+        return null; // User not found
+      }
+
+      return result.user;
+
+    } catch (error) {
+      console.error('Failed to find Slack user by email:', error);
+      return null;
+    }
+  }
+
+  async listChannels(): Promise<SlackChannel[]> {
+    if (!this.config.enabled) return [];
+
+    try {
+      const response = await fetch(`${this.baseUrl}/conversations.list?types=public_channel,private_channel`, {
+        headers: {
+          'Authorization': `Bearer ${this.config.botToken}`
+        }
+      });
+
+      const result = await response.json();
+      
+      if (!result.ok) {
+        throw new Error(`Slack API error: ${result.error}`);
+      }
+
+      return result.channels || [];
+
+    } catch (error) {
+      console.error('Failed to list Slack channels:', error);
+      return [];
+    }
+  }
+
+  async archiveChannel(channelId: string): Promise<void> {
+    if (!this.config.enabled) return;
+
+    try {
+      await fetch(`${this.baseUrl}/conversations.archive`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${this.config.botToken}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          channel: channelId
+        })
+      });
+
+    } catch (error) {
+      console.error('Failed to archive Slack channel:', error);
+    }
+  }
+
+  // Utility methods for building rich messages
+  createIncidentMessage(incident: any, action?: string): SlackMessage {
+    const actionText = action ? ` - ${action}` : '';
+    const colorMap: Record<string, string> = {
+      critical: '#dc2626',
+      high: '#ea580c',
+      medium: '#ca8a04',
+      low: '#2563eb'
+    };
+
+    return {
+      text: `Incident ${incident.id}${actionText}`,
+      attachments: [
+        {
+          color: colorMap[incident.severity] || '#6b7280',
+          title: incident.title,
+          title_link: `${process.env.NEXT_PUBLIC_APP_URL}/incidents/${incident.id}`,
+          fields: [
+            {
+              title: 'Severity',
+              value: incident.severity.toUpperCase(),
+              short: true
+            },
+            {
+              title: 'Status',
+              value: incident.status,
+              short: true
+            },
+            {
+              title: 'Priority',
+              value: incident.priority,
+              short: true
+            },
+            {
+              title: 'Commander',
+              value: incident.incidentCommander.name,
+              short: true
+            },
+            {
+              title: 'Services',
+              value: incident.affectedServices.join(', '),
+              short: false
+            }
+          ],
+          ts: Math.floor(incident.createdAt.getTime() / 1000)
+        }
+      ]
+    };
+  }
+
+  createAlertMessage(alert: any): SlackMessage {
+    const colorMap: Record<string, string> = {
+      critical: '#dc2626',
+      warning: '#ca8a04',
+      info: '#2563eb'
+    };
+
+    return {
+      text: `Alert: ${alert.title}`,
+      attachments: [
+        {
+          color: colorMap[alert.severity] || '#6b7280',
+          title: alert.title,
+          fields: [
+            {
+              title: 'Severity',
+              value: alert.severity.toUpperCase(),
+              short: true
+            },
+            {
+              title: 'Source',
+              value: alert.source,
+              short: true
+            },
+            {
+              title: 'Status',
+              value: alert.status,
+              short: true
+            }
+          ],
+          text: alert.description,
+          ts: Math.floor(alert.timestamp.getTime() / 1000)
+        }
+      ]
+    };
+  }
+
+  isEnabled(): boolean {
+    return this.config.enabled && !!this.config.botToken;
+  }
+
+  getConfig(): SlackConfig {
+    return { ...this.config };
+  }
+}

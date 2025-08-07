@@ -1,0 +1,598 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-istio-config
+  namespace: istio-system
+  labels:
+    app: prometheus
+    component: server
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+      scrape_timeout: 10s
+      evaluation_interval: 15s
+      external_labels:
+        cluster: 'backstage-mesh'
+        region: 'us-west-2'
+        
+    # Alertmanager configuration
+    alerting:
+      alertmanagers:
+      - static_configs:
+        - targets:
+          - alertmanager.istio-system.svc.cluster.local:9093
+        scheme: http
+        timeout: 10s
+        api_version: v1
+        
+    # Rule files
+    rule_files:
+    - "/etc/prometheus/rules/*.yml"
+    
+    # Scrape configurations
+    scrape_configs:
+    
+    # Istio mesh scraping
+    - job_name: 'istio-mesh'
+      kubernetes_sd_configs:
+      - role: endpoints
+        namespaces:
+          names:
+          - istio-system
+          - developer-portal
+          - developer-portal-staging
+      relabel_configs:
+      - source_labels: [__meta_kubernetes_service_name, __meta_kubernetes_endpoint_port_name]
+        action: keep
+        regex: istio-proxy;http-monitoring
+      - source_labels: [__address__, __meta_kubernetes_endpoint_port]
+        action: replace
+        regex: ([^:]+)(?::\d+)?;(\d+)
+        replacement: $1:15090
+        target_label: __address__
+      - action: labelmap
+        regex: __meta_kubernetes_service_label_(.+)
+      - source_labels: [__meta_kubernetes_namespace]
+        action: replace
+        target_label: namespace
+      - source_labels: [__meta_kubernetes_service_name]
+        action: replace
+        target_label: service
+      metric_relabel_configs:
+      - source_labels: [__name__]
+        regex: 'istio_.*'
+        action: keep
+        
+    # Istio pilot scraping
+    - job_name: 'istio-pilot'
+      kubernetes_sd_configs:
+      - role: endpoints
+        namespaces:
+          names:
+          - istio-system
+      relabel_configs:
+      - source_labels: [__meta_kubernetes_service_name, __meta_kubernetes_endpoint_port_name]
+        action: keep
+        regex: istiod;http-monitoring
+      - source_labels: [__address__, __meta_kubernetes_endpoint_port]
+        action: replace
+        regex: ([^:]+)(?::\d+)?;(\d+)
+        replacement: $1:15014
+        target_label: __address__
+      - action: labelmap
+        regex: __meta_kubernetes_service_label_(.+)
+      - source_labels: [__meta_kubernetes_namespace]
+        action: replace
+        target_label: namespace
+      - source_labels: [__meta_kubernetes_service_name]
+        action: replace
+        target_label: service
+        
+    # Istio gateway scraping
+    - job_name: 'istio-gateway'
+      kubernetes_sd_configs:
+      - role: endpoints
+        namespaces:
+          names:
+          - istio-system
+      relabel_configs:
+      - source_labels: [__meta_kubernetes_service_name, __meta_kubernetes_endpoint_port_name]
+        action: keep
+        regex: istio-.*gateway;http-monitoring
+      - source_labels: [__address__, __meta_kubernetes_endpoint_port]
+        action: replace
+        regex: ([^:]+)(?::\d+)?;(\d+)
+        replacement: $1:15090
+        target_label: __address__
+      - action: labelmap
+        regex: __meta_kubernetes_service_label_(.+)
+      - source_labels: [__meta_kubernetes_namespace]
+        action: replace
+        target_label: namespace
+      - source_labels: [__meta_kubernetes_service_name]
+        action: replace
+        target_label: service
+        
+    # Backstage application scraping
+    - job_name: 'backstage-apps'
+      kubernetes_sd_configs:
+      - role: endpoints
+        namespaces:
+          names:
+          - developer-portal
+          - developer-portal-staging
+      relabel_configs:
+      - source_labels: [__meta_kubernetes_service_annotation_prometheus_io_scrape]
+        action: keep
+        regex: true
+      - source_labels: [__meta_kubernetes_service_annotation_prometheus_io_path]
+        action: replace
+        target_label: __metrics_path__
+        regex: (.+)
+      - source_labels: [__address__, __meta_kubernetes_service_annotation_prometheus_io_port]
+        action: replace
+        regex: ([^:]+)(?::\d+)?;(\d+)
+        replacement: $1:$2
+        target_label: __address__
+      - action: labelmap
+        regex: __meta_kubernetes_service_label_(.+)
+      - source_labels: [__meta_kubernetes_namespace]
+        action: replace
+        target_label: namespace
+      - source_labels: [__meta_kubernetes_service_name]
+        action: replace
+        target_label: service
+        
+    # Kubernetes API server
+    - job_name: 'kubernetes-apiservers'
+      kubernetes_sd_configs:
+      - role: endpoints
+      scheme: https
+      tls_config:
+        ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        insecure_skip_verify: true
+      bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+      relabel_configs:
+      - source_labels: [__meta_kubernetes_namespace, __meta_kubernetes_service_name, __meta_kubernetes_endpoint_port_name]
+        action: keep
+        regex: default;kubernetes;https
+        
+    # Kubernetes nodes
+    - job_name: 'kubernetes-nodes'
+      kubernetes_sd_configs:
+      - role: node
+      scheme: https
+      tls_config:
+        ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        insecure_skip_verify: true
+      bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+      relabel_configs:
+      - action: labelmap
+        regex: __meta_kubernetes_node_label_(.+)
+      - target_label: __address__
+        replacement: kubernetes.default.svc:443
+      - source_labels: [__meta_kubernetes_node_name]
+        regex: (.+)
+        target_label: __metrics_path__
+        replacement: /api/v1/nodes/${1}/proxy/metrics
+        
+    # Kubernetes pods
+    - job_name: 'kubernetes-pods'
+      kubernetes_sd_configs:
+      - role: pod
+        namespaces:
+          names:
+          - developer-portal
+          - developer-portal-staging
+          - istio-system
+      relabel_configs:
+      - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+        action: keep
+        regex: true
+      - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+        action: replace
+        target_label: __metrics_path__
+        regex: (.+)
+      - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+        action: replace
+        regex: ([^:]+)(?::\d+)?;(\d+)
+        replacement: $1:$2
+        target_label: __address__
+      - action: labelmap
+        regex: __meta_kubernetes_pod_label_(.+)
+      - source_labels: [__meta_kubernetes_namespace]
+        action: replace
+        target_label: kubernetes_namespace
+      - source_labels: [__meta_kubernetes_pod_name]
+        action: replace
+        target_label: kubernetes_pod_name
+        
+    # Certificate monitoring
+    - job_name: 'certificate-exporter'
+      static_configs:
+      - targets: ['certificate-exporter.istio-system.svc.cluster.local:9090']
+      scrape_interval: 60s
+      
+    # Jaeger monitoring
+    - job_name: 'jaeger'
+      static_configs:
+      - targets: ['jaeger-query.istio-system.svc.cluster.local:16687']
+      scrape_interval: 30s
+      
+    # Kiali monitoring
+    - job_name: 'kiali'
+      static_configs:
+      - targets: ['kiali.istio-system.svc.cluster.local:9090']
+      scrape_interval: 30s
+      
+  # Istio recording rules
+  istio-recording-rules.yml: |
+    groups:
+    - name: istio.recording_rules
+      interval: 30s
+      rules:
+      # Request rate
+      - record: istio:request_total_rate5m
+        expr: |
+          sum(rate(istio_requests_total[5m]))
+          by (
+            source_cluster,
+            source_workload_namespace,
+            source_workload,
+            source_app,
+            destination_cluster,
+            destination_workload_namespace,
+            destination_workload,
+            destination_app
+          )
+          
+      # Error rate
+      - record: istio:request_error_rate5m
+        expr: |
+          sum(rate(istio_requests_total{response_code!~"2.."}[5m]))
+          by (
+            source_cluster,
+            source_workload_namespace, 
+            source_workload,
+            source_app,
+            destination_cluster,
+            destination_workload_namespace,
+            destination_workload,
+            destination_app
+          )
+          
+      # Request duration
+      - record: istio:request_duration_milliseconds_p99
+        expr: |
+          histogram_quantile(0.99,
+            sum(rate(istio_request_duration_milliseconds_bucket[5m]))
+            by (
+              source_cluster,
+              source_workload_namespace,
+              source_workload,
+              source_app,
+              destination_cluster,
+              destination_workload_namespace,
+              destination_workload,
+              destination_app,
+              le
+            )
+          )
+          
+      - record: istio:request_duration_milliseconds_p95
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(istio_request_duration_milliseconds_bucket[5m]))
+            by (
+              source_cluster,
+              source_workload_namespace,
+              source_workload,
+              source_app,
+              destination_cluster,
+              destination_workload_namespace,
+              destination_workload,
+              destination_app,
+              le
+            )
+          )
+          
+      - record: istio:request_duration_milliseconds_p50
+        expr: |
+          histogram_quantile(0.50,
+            sum(rate(istio_request_duration_milliseconds_bucket[5m]))
+            by (
+              source_cluster,
+              source_workload_namespace,
+              source_workload,
+              source_app,
+              destination_cluster,
+              destination_workload_namespace,
+              destination_workload,
+              destination_app,
+              le
+            )
+          )
+          
+  # Istio alerting rules
+  istio-alerting-rules.yml: |
+    groups:
+    - name: istio.alerting_rules
+      rules:
+      # Service mesh health
+      - alert: IstioMeshHighErrorRate
+        expr: |
+          (
+            sum(rate(istio_requests_total{response_code!~"2.."}[5m]))
+            /
+            sum(rate(istio_requests_total[5m]))
+          ) * 100 > 5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High error rate in service mesh"
+          description: "Error rate is {{ $value }}% for the service mesh."
+          
+      - alert: IstioMeshHighLatency
+        expr: |
+          histogram_quantile(0.99,
+            sum(rate(istio_request_duration_milliseconds_bucket[5m]))
+            by (le)
+          ) > 2000
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High latency in service mesh"
+          description: "99th percentile latency is {{ $value }}ms."
+          
+      # Pilot health
+      - alert: IstioPilotDown
+        expr: up{job="istio-pilot"} == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Istio Pilot is down"
+          description: "Istio Pilot has been down for more than 5 minutes."
+          
+      - alert: IstioPilotHighMemory
+        expr: |
+          (
+            container_memory_usage_bytes{container="discovery"}
+            /
+            container_spec_memory_limit_bytes{container="discovery"}
+          ) * 100 > 80
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Istio Pilot high memory usage"
+          description: "Istio Pilot memory usage is {{ $value }}%."
+          
+      # Gateway health
+      - alert: IstioGatewayDown
+        expr: up{job="istio-gateway"} == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Istio Gateway is down"
+          description: "Istio Gateway has been down for more than 5 minutes."
+          
+      # Certificate expiry
+      - alert: IstioCertificateExpiryWarning
+        expr: |
+          (
+            x509_cert_not_after - time()
+          ) / 86400 < 30
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: "Istio certificate expiring soon"
+          description: "Istio certificate will expire in {{ $value }} days."
+          
+      - alert: IstioCertificateExpiryCritical
+        expr: |
+          (
+            x509_cert_not_after - time()
+          ) / 86400 < 7
+        for: 30m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Istio certificate expiring very soon"
+          description: "Istio certificate will expire in {{ $value }} days."
+          
+      # Backstage specific alerts
+      - alert: BackstageHighErrorRate
+        expr: |
+          (
+            sum(rate(istio_requests_total{destination_app="backstage",response_code!~"2.."}[5m]))
+            /
+            sum(rate(istio_requests_total{destination_app="backstage"}[5m]))
+          ) * 100 > 5
+        for: 5m
+        labels:
+          severity: warning
+          service: backstage
+        annotations:
+          summary: "High error rate for Backstage"
+          description: "Backstage error rate is {{ $value }}%."
+          
+      - alert: BackstageHighLatency
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(istio_request_duration_milliseconds_bucket{destination_app="backstage"}[5m]))
+            by (le)
+          ) > 5000
+        for: 10m
+        labels:
+          severity: warning
+          service: backstage
+        annotations:
+          summary: "High latency for Backstage"
+          description: "Backstage 95th percentile latency is {{ $value }}ms."
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus
+  namespace: istio-system
+  labels:
+    app: prometheus
+    component: server
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: prometheus
+      component: server
+  template:
+    metadata:
+      labels:
+        app: prometheus
+        component: server
+        version: v2.45.0
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+    spec:
+      serviceAccountName: prometheus
+      securityContext:
+        runAsUser: 65534
+        runAsNonRoot: true
+        fsGroup: 65534
+      containers:
+      - name: prometheus
+        image: prom/prometheus:v2.45.0
+        args:
+        - '--config.file=/etc/prometheus/prometheus.yml'
+        - '--storage.tsdb.path=/prometheus/'
+        - '--storage.tsdb.retention.time=30d'
+        - '--storage.tsdb.retention.size=50GB'
+        - '--web.console.libraries=/etc/prometheus/console_libraries'
+        - '--web.console.templates=/etc/prometheus/consoles'
+        - '--web.enable-lifecycle'
+        - '--web.enable-admin-api'
+        - '--web.route-prefix=/prometheus'
+        - '--web.external-url=https://admin.backstage.local/prometheus'
+        - '--storage.tsdb.min-block-duration=2h'
+        - '--storage.tsdb.max-block-duration=2h'
+        - '--storage.tsdb.wal-compression'
+        ports:
+        - containerPort: 9090
+          name: http
+        resources:
+          requests:
+            memory: "2Gi"
+            cpu: "500m"
+          limits:
+            memory: "4Gi"
+            cpu: "1000m"
+        volumeMounts:
+        - name: config-volume
+          mountPath: /etc/prometheus
+        - name: storage-volume
+          mountPath: /prometheus
+        livenessProbe:
+          httpGet:
+            path: /prometheus/-/healthy
+            port: 9090
+          initialDelaySeconds: 30
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /prometheus/-/ready
+            port: 9090
+          initialDelaySeconds: 5
+          periodSeconds: 5
+      volumes:
+      - name: config-volume
+        configMap:
+          name: prometheus-istio-config
+      - name: storage-volume
+        persistentVolumeClaim:
+          claimName: prometheus-storage
+      nodeSelector:
+        kubernetes.io/arch: amd64
+      tolerations:
+      - key: "dedicated"
+        operator: "Equal"
+        value: "monitoring"
+        effect: "NoSchedule"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus
+  namespace: istio-system
+  labels:
+    app: prometheus
+    component: server
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "9090"
+spec:
+  selector:
+    app: prometheus
+    component: server
+  ports:
+  - name: http
+    port: 9090
+    targetPort: 9090
+  type: ClusterIP
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: prometheus-storage
+  namespace: istio-system
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 100Gi
+  storageClassName: fast-ssd
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: prometheus
+  namespace: istio-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: prometheus
+rules:
+- apiGroups: [""]
+  resources:
+  - nodes
+  - nodes/metrics
+  - services
+  - endpoints
+  - pods
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources:
+  - configmaps
+  verbs: ["get"]
+- nonResourceURLs: ["/metrics"]
+  verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: prometheus
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: prometheus
+subjects:
+- kind: ServiceAccount
+  name: prometheus
+  namespace: istio-system

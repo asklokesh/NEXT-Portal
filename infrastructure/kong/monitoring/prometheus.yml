@@ -1,0 +1,65 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: 'kong-gateway'
+    environment: 'development'
+
+rule_files:
+  - "kong_rules.yml"
+  - "alert_rules.yml"
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+          - alertmanager:9093
+
+scrape_configs:
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+    scrape_interval: 15s
+    metrics_path: /metrics
+
+  - job_name: 'kong'
+    static_configs:
+      - targets: ['kong-gateway:8100']
+    scrape_interval: 15s
+    metrics_path: /status/ready
+    scrape_timeout: 10s
+
+  - job_name: 'kong-prometheus'
+    static_configs:
+      - targets: ['kong-gateway:8001']
+    scrape_interval: 15s
+    metrics_path: /metrics
+    scrape_timeout: 10s
+
+  - job_name: 'backstage-api'
+    static_configs:
+      - targets: ['host.docker.internal:7007']
+    scrape_interval: 30s
+    metrics_path: /metrics
+    scrape_timeout: 10s
+
+  - job_name: 'next-portal'
+    static_configs:
+      - targets: ['host.docker.internal:4400']
+    scrape_interval: 30s
+    metrics_path: /api/metrics
+    scrape_timeout: 10s
+
+  - job_name: 'postgres'
+    static_configs:
+      - targets: ['kong-database:5432']
+    scrape_interval: 30s
+    metrics_path: /metrics
+    scrape_timeout: 10s
+
+  - job_name: 'redis'
+    static_configs:
+      - targets: ['redis:6379']
+    scrape_interval: 30s
+    metrics_path: /metrics
+    scrape_timeout: 10s

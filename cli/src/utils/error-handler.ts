@@ -1,0 +1,202 @@
+import chalk from 'chalk';
+import { Logger } from './logger';
+
+export class ErrorHandler {
+  private static instance: ErrorHandler;
+  private logger: Logger;
+
+  private constructor() {
+    this.logger = Logger.getInstance();
+  }
+
+  public static getInstance(): ErrorHandler {
+    if (!ErrorHandler.instance) {
+      ErrorHandler.instance = new ErrorHandler();
+    }
+    return ErrorHandler.instance;
+  }
+
+  public handleError(error: any): void {
+    // Log full error to file
+    this.logger.debug('Full error details:', {
+      message: error.message,
+      stack: error.stack,
+      name: error.name,
+      code: error.code,
+      status: error.status
+    });
+
+    // Display user-friendly error message
+    if (error.code === 'ENOTFOUND' || error.code === 'ECONNREFUSED') {
+      console.error(chalk.red('✗ Connection Error'));
+      console.error(chalk.gray('Could not connect to the Backstage portal.'));
+      console.error(chalk.gray('Please check:'));
+      console.error(chalk.gray('  • Your internet connection'));
+      console.error(chalk.gray('  • The portal URL in your configuration'));
+      console.error(chalk.gray('  • That the portal is running and accessible'));
+    } else if (error.status === 401 || error.code === 'AUTH_ERROR') {
+      console.error(chalk.red('✗ Authentication Error'));
+      console.error(chalk.gray('Your authentication credentials are invalid or expired.'));
+      console.error(chalk.gray('Please run:'));
+      console.error(chalk.cyan('  backstage-cli auth login'));
+    } else if (error.status === 403 || error.code === 'AUTHORIZATION_ERROR') {
+      console.error(chalk.red('✗ Authorization Error'));
+      console.error(chalk.gray('You do not have permission to perform this operation.'));
+      console.error(chalk.gray('Please contact your portal administrator.'));
+    } else if (error.status === 404 || error.code === 'NOT_FOUND') {
+      console.error(chalk.red('✗ Not Found'));
+      console.error(chalk.gray('The requested resource was not found.'));
+    } else if (error.status === 429 || error.code === 'RATE_LIMIT_ERROR') {
+      console.error(chalk.red('✗ Rate Limit Exceeded'));
+      console.error(chalk.gray('Too many requests. Please wait and try again.'));
+    } else if (error.code === 'TIMEOUT_ERROR') {
+      console.error(chalk.red('✗ Request Timeout'));
+      console.error(chalk.gray('The request timed out. The server might be busy.'));
+      console.error(chalk.gray('You can increase the timeout with:'));
+      console.error(chalk.cyan('  backstage-cli config set timeout 60000'));
+    } else if (error.code === 'CONFIG_ERROR') {
+      console.error(chalk.red('✗ Configuration Error'));
+      console.error(chalk.gray(error.message));
+      console.error(chalk.gray('Run the following to fix configuration:'));
+      console.error(chalk.cyan('  backstage-cli init'));
+    } else if (error.code === 'VALIDATION_ERROR') {
+      console.error(chalk.red('✗ Validation Error'));
+      console.error(chalk.gray(error.message));
+      if (error.details) {
+        console.error(chalk.gray('Details:'));
+        if (Array.isArray(error.details)) {
+          error.details.forEach(detail => {
+            console.error(chalk.gray(`  • ${detail}`));
+          });
+        } else {
+          console.error(chalk.gray(`  ${JSON.stringify(error.details, null, 2)}`));
+        }
+      }
+    } else if (error.name === 'AbortError') {
+      console.error(chalk.yellow('⚠ Operation Cancelled'));
+    } else {
+      // Generic error
+      console.error(chalk.red('✗ Error'));
+      console.error(chalk.gray(error.message || 'An unexpected error occurred'));
+      
+      // Show additional details in debug mode
+      if (this.logger.getLevel() === 'debug') {
+        console.error(chalk.gray('\nDebug Information:'));
+        if (error.stack) {
+          console.error(chalk.gray(error.stack));
+        }
+        if (error.details) {
+          console.error(chalk.gray('Details:'));
+          console.error(chalk.gray(JSON.stringify(error.details, null, 2)));
+        }
+      } else {
+        console.error(chalk.gray('Use --debug for more information'));
+      }
+    }
+
+    // Show help information for common errors
+    this.showHelpForError(error);
+  }
+
+  private showHelpForError(error: any): void {
+    const helpMessages = {
+      'ENOTFOUND': 'Check your network connection and portal URL',
+      'ECONNREFUSED': 'Make sure the Backstage portal is running',
+      'AUTH_ERROR': 'Run "backstage-cli auth login" to authenticate',
+      'AUTHORIZATION_ERROR': 'Contact your administrator for access permissions',
+      'CONFIG_ERROR': 'Run "backstage-cli init" to setup configuration',
+      'VALIDATION_ERROR': 'Check the command syntax and parameters'
+    };
+
+    const helpMessage = helpMessages[error.code];
+    if (helpMessage) {
+      console.error(chalk.gray(`\nTip: ${helpMessage}`));
+    }
+
+    // General help
+    console.error(chalk.gray('\nFor more help:'));
+    console.error(chalk.cyan('  backstage-cli --help'));
+    console.error(chalk.cyan('  backstage-cli <command> --help'));
+  }
+
+  public handlePromiseRejection(reason: any, promise: Promise<any>): void {
+    this.logger.error('Unhandled Promise Rejection:', reason);
+    this.handleError(reason);
+  }
+
+  public handleUncaughtException(error: Error): void {
+    this.logger.error('Uncaught Exception:', error);
+    console.error(chalk.red('\n✗ Fatal Error'));
+    console.error(chalk.gray('An unexpected error occurred that crashed the CLI.'));
+    console.error(chalk.gray('Please report this issue with the following information:'));
+    console.error(chalk.gray(`Error: ${error.message}`));
+    
+    if (this.logger.getLevel() === 'debug') {
+      console.error(chalk.gray('Stack trace:'));
+      console.error(chalk.gray(error.stack || 'No stack trace available'));
+    }
+  }
+
+  public validateConfig(config: any): { valid: boolean; errors: string[] } {
+    const errors: string[] = [];
+
+    // Validate base URL
+    if (!config.baseURL) {
+      errors.push('Base URL is required');
+    } else {
+      try {
+        new URL(config.baseURL);
+      } catch {
+        errors.push('Invalid base URL format');
+      }
+    }
+
+    // Validate authentication
+    if (!config.apiKey && !config.bearerToken) {
+      errors.push('Either API key or bearer token is required');
+    }
+
+    // Validate timeout
+    if (config.timeout && config.timeout < 1000) {
+      errors.push('Timeout must be at least 1000ms');
+    }
+
+    // Validate retries
+    if (config.retries !== undefined && (config.retries < 0 || config.retries > 10)) {
+      errors.push('Retries must be between 0 and 10');
+    }
+
+    return {
+      valid: errors.length === 0,
+      errors
+    };
+  }
+
+  public async handleAsyncError<T>(
+    promise: Promise<T>, 
+    errorMessage?: string
+  ): Promise<T | null> {
+    try {
+      return await promise;
+    } catch (error) {
+      if (errorMessage) {
+        this.logger.error(errorMessage, error);
+      }
+      this.handleError(error);
+      return null;
+    }
+  }
+
+  public wrapAsync<T extends any[], R>(
+    fn: (...args: T) => Promise<R>
+  ): (...args: T) => Promise<R | void> {
+    return async (...args: T): Promise<R | void> => {
+      try {
+        return await fn(...args);
+      } catch (error) {
+        this.handleError(error);
+        process.exit(1);
+      }
+    };
+  }
+}

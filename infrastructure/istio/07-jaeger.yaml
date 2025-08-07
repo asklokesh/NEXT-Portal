@@ -1,0 +1,287 @@
+apiVersion: jaegertracing.io/v1
+kind: Jaeger
+metadata:
+  name: jaeger
+  namespace: istio-system
+spec:
+  strategy: production
+  storage:
+    type: elasticsearch
+    elasticsearch:
+      nodeCount: 3
+      resources:
+        requests:
+          memory: "2Gi"
+          cpu: "1000m"
+        limits:
+          memory: "4Gi"
+          cpu: "2000m"
+      redundancyPolicy: SingleRedundancy
+      storage:
+        storageClassName: fast-ssd
+        size: 100Gi
+  collector:
+    resources:
+      requests:
+        memory: "512Mi"
+        cpu: "250m"
+      limits:
+        memory: "1Gi"
+        cpu: "500m"
+    replicas: 3
+    maxReplicas: 10
+    options:
+      es:
+        server-urls: http://jaeger-elasticsearch:9200
+        num-shards: 5
+        num-replicas: 1
+      collector:
+        zipkin:
+          host-port: ":9411"
+        grpc:
+          host-port: ":14250"
+        http:
+          host-port: ":14268"
+        otlp:
+          grpc:
+            host-port: ":4317"
+          http:
+            host-port: ":4318"
+    config: |
+      receivers:
+        jaeger:
+          protocols:
+            grpc:
+              endpoint: 0.0.0.0:14250
+            thrift_http:
+              endpoint: 0.0.0.0:14268
+            thrift_compact:
+              endpoint: 0.0.0.0:6831
+            thrift_binary:
+              endpoint: 0.0.0.0:6832
+        zipkin:
+          endpoint: 0.0.0.0:9411
+        otlp:
+          protocols:
+            grpc:
+              endpoint: 0.0.0.0:4317
+            http:
+              endpoint: 0.0.0.0:4318
+      processors:
+        batch:
+          timeout: 1s
+          send_batch_size: 1024
+          send_batch_max_size: 2048
+        memory_limiter:
+          limit_mib: 512
+          spike_limit_mib: 128
+          check_interval: 5s
+        resource:
+          attributes:
+            - key: service.name
+              from_attribute: jaeger.service_name
+              action: upsert
+            - key: service.version
+              from_attribute: jaeger.service_version
+              action: upsert
+      exporters:
+        jaeger:
+          endpoint: jaeger-collector:14250
+          tls:
+            insecure: true
+      service:
+        extensions: [health_check]
+        pipelines:
+          traces:
+            receivers: [jaeger, zipkin, otlp]
+            processors: [memory_limiter, resource, batch]
+            exporters: [jaeger]
+  query:
+    resources:
+      requests:
+        memory: "256Mi"
+        cpu: "100m"
+      limits:
+        memory: "512Mi"
+        cpu: "250m"
+    replicas: 2
+    options:
+      query:
+        base-path: /jaeger
+      es:
+        server-urls: http://jaeger-elasticsearch:9200
+        max-span-age: 168h # 7 days
+      log-level: info
+  agent:
+    strategy: DaemonSet
+    resources:
+      requests:
+        memory: "64Mi"
+        cpu: "50m"
+      limits:
+        memory: "128Mi"
+        cpu: "100m"
+  ingester:
+    resources:
+      requests:
+        memory: "256Mi"
+        cpu: "100m"
+      limits:
+        memory: "512Mi"
+        cpu: "200m"
+    replicas: 2
+  ui:
+    options:
+      menu:
+        - label: "Documentation"
+          url: "https://www.jaegertracing.io/docs/latest"
+        - label: "GitHub"
+          url: "https://github.com/jaegertracing/jaeger"
+        - label: "Support"
+          url: "https://github.com/jaegertracing/jaeger/discussions"
+      dependencies:
+        menuEnabled: true
+      archiveEnabled: true
+      tracking:
+        gaID: "UA-000000-2"
+        trackErrors: true
+---
+# Jaeger Service Monitor for Prometheus
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: jaeger-metrics
+  namespace: istio-system
+  labels:
+    app: jaeger
+spec:
+  selector:
+    matchLabels:
+      app: jaeger
+      app.kubernetes.io/component: query
+  endpoints:
+  - port: admin-http
+    interval: 30s
+    path: /metrics
+---
+# Jaeger PrometheusRule for alerting
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: jaeger-alerts
+  namespace: istio-system
+  labels:
+    app: jaeger
+spec:
+  groups:
+  - name: jaeger.rules
+    rules:
+    - alert: JaegerCollectorDown
+      expr: up{job="jaeger-collector"} == 0
+      for: 5m
+      labels:
+        severity: critical
+      annotations:
+        summary: "Jaeger collector is down"
+        description: "Jaeger collector has been down for more than 5 minutes."
+    
+    - alert: JaegerQueryDown
+      expr: up{job="jaeger-query"} == 0
+      for: 5m
+      labels:
+        severity: critical
+      annotations:
+        summary: "Jaeger query service is down"
+        description: "Jaeger query service has been down for more than 5 minutes."
+    
+    - alert: JaegerHighErrorRate
+      expr: rate(jaeger_collector_spans_received_total{status="error"}[5m]) > 0.1
+      for: 10m
+      labels:
+        severity: warning
+      annotations:
+        summary: "High error rate in Jaeger collector"
+        description: "Jaeger collector error rate is {{ $value }} spans/sec."
+    
+    - alert: JaegerHighLatency
+      expr: histogram_quantile(0.95, rate(jaeger_query_duration_seconds_bucket[5m])) > 2
+      for: 15m
+      labels:
+        severity: warning
+      annotations:
+        summary: "High latency in Jaeger queries"
+        description: "95th percentile latency for Jaeger queries is {{ $value }} seconds."
+    
+    - alert: JaegerElasticsearchDown
+      expr: up{job="jaeger-elasticsearch"} == 0
+      for: 5m
+      labels:
+        severity: critical
+      annotations:
+        summary: "Jaeger Elasticsearch is down"
+        description: "Jaeger Elasticsearch backend has been down for more than 5 minutes."
+---
+# Jaeger cleanup cronjob to manage storage
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: jaeger-es-rollover
+  namespace: istio-system
+spec:
+  schedule: "0 1 * * *" # Daily at 1 AM
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: rollover
+            image: jaegertracing/jaeger-es-rollover:1.52.0
+            args:
+            - rollover
+            - --es.server-urls=http://jaeger-elasticsearch:9200
+            - --es.max-span-age=168h
+            - --es.index-prefix=jaeger
+            env:
+            - name: INDEX_PREFIX
+              value: "jaeger"
+            - name: ARCHIVE_INDEX_PREFIX  
+              value: "jaeger-archive"
+            resources:
+              requests:
+                memory: "64Mi"
+                cpu: "50m"
+              limits:
+                memory: "128Mi"
+                cpu: "100m"
+          restartPolicy: OnFailure
+---
+# Jaeger index cleaner
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: jaeger-es-index-cleaner
+  namespace: istio-system
+spec:
+  schedule: "0 2 * * *" # Daily at 2 AM
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: index-cleaner
+            image: jaegertracing/jaeger-es-index-cleaner:1.52.0
+            args:
+            - --es.server-urls=http://jaeger-elasticsearch:9200
+            - --es.index-prefix=jaeger
+            - --es.max-span-age=168h
+            env:
+            - name: INDEX_PREFIX
+              value: "jaeger"
+            resources:
+              requests:
+                memory: "64Mi"
+                cpu: "50m"
+              limits:
+                memory: "128Mi"
+                cpu: "100m"
+          restartPolicy: OnFailure

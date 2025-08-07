@@ -1,0 +1,497 @@
+_format_version: "3.0"
+_transform: true
+
+services:
+- name: backstage-api
+  url: http://host.docker.internal:7007
+  protocol: http
+  host: host.docker.internal
+  port: 7007
+  path: /
+  connect_timeout: 60000
+  write_timeout: 60000
+  read_timeout: 60000
+  retries: 5
+  tags:
+  - backstage
+  - internal
+  
+- name: next-portal-api
+  url: http://host.docker.internal:4400
+  protocol: http
+  host: host.docker.internal
+  port: 4400
+  path: /api
+  connect_timeout: 60000
+  write_timeout: 60000
+  read_timeout: 60000
+  retries: 5
+  tags:
+  - portal
+  - api
+
+- name: next-portal-app
+  url: http://host.docker.internal:4400
+  protocol: http
+  host: host.docker.internal
+  port: 4400
+  path: /
+  connect_timeout: 60000
+  write_timeout: 60000
+  read_timeout: 60000
+  retries: 5
+  tags:
+  - portal
+  - frontend
+
+routes:
+# Backstage API Routes
+- name: backstage-catalog
+  service: backstage-api
+  paths:
+  - /api/catalog
+  methods:
+  - GET
+  - POST
+  - PUT
+  - DELETE
+  - PATCH
+  strip_path: false
+  preserve_host: false
+  tags:
+  - backstage
+  - catalog
+
+- name: backstage-auth
+  service: backstage-api
+  paths:
+  - /api/auth
+  methods:
+  - GET
+  - POST
+  - PUT
+  - DELETE
+  strip_path: false
+  preserve_host: false
+  tags:
+  - backstage
+  - auth
+
+- name: backstage-scaffolder
+  service: backstage-api
+  paths:
+  - /api/scaffolder
+  methods:
+  - GET
+  - POST
+  - PUT
+  - DELETE
+  strip_path: false
+  preserve_host: false
+  tags:
+  - backstage
+  - scaffolder
+
+- name: backstage-techdocs
+  service: backstage-api
+  paths:
+  - /api/techdocs
+  methods:
+  - GET
+  - POST
+  - PUT
+  - DELETE
+  strip_path: false
+  preserve_host: false
+  tags:
+  - backstage
+  - techdocs
+
+# Next Portal API Routes
+- name: portal-api-v1
+  service: next-portal-api
+  paths:
+  - /v1/api
+  methods:
+  - GET
+  - POST
+  - PUT
+  - DELETE
+  - PATCH
+  - OPTIONS
+  strip_path: true
+  preserve_host: false
+  tags:
+  - portal
+  - v1
+
+- name: portal-api-v2
+  service: next-portal-api
+  paths:
+  - /v2/api
+  methods:
+  - GET
+  - POST
+  - PUT
+  - DELETE
+  - PATCH
+  - OPTIONS
+  strip_path: true
+  preserve_host: false
+  tags:
+  - portal
+  - v2
+
+- name: portal-graphql
+  service: next-portal-api
+  paths:
+  - /graphql
+  methods:
+  - GET
+  - POST
+  - OPTIONS
+  strip_path: false
+  preserve_host: false
+  tags:
+  - portal
+  - graphql
+
+- name: portal-webhooks
+  service: next-portal-api
+  paths:
+  - /webhooks
+  methods:
+  - POST
+  strip_path: false
+  preserve_host: false
+  tags:
+  - portal
+  - webhooks
+
+# Frontend Routes
+- name: portal-frontend
+  service: next-portal-app
+  paths:
+  - /
+  methods:
+  - GET
+  strip_path: false
+  preserve_host: false
+  tags:
+  - portal
+  - frontend
+
+plugins:
+# Global Plugins
+- name: prometheus
+  config:
+    per_consumer: true
+    status_code_metrics: true
+    latency_metrics: true
+    bandwidth_metrics: true
+    upstream_health_metrics: true
+
+- name: correlation-id
+  config:
+    header_name: X-Correlation-ID
+    generator: uuid
+    echo_downstream: true
+
+- name: request-transformer
+  config:
+    add:
+      headers:
+      - "X-Kong-Request-Time:$(date +%s)"
+      - "X-Kong-Version:3.8.0"
+
+# Rate Limiting (Global)
+- name: rate-limiting
+  config:
+    minute: 1000
+    hour: 10000
+    day: 100000
+    policy: redis
+    redis_host: redis
+    redis_port: 6379
+    redis_timeout: 2000
+    fault_tolerant: true
+    hide_client_headers: false
+
+# CORS (Global)
+- name: cors
+  config:
+    origins:
+    - "http://localhost:4400"
+    - "http://localhost:3000"
+    - "http://localhost:7007"
+    - "https://portal.company.com"
+    methods:
+    - GET
+    - HEAD
+    - PUT
+    - PATCH
+    - POST
+    - DELETE
+    - OPTIONS
+    headers:
+    - Accept
+    - Accept-Version
+    - Content-Length
+    - Content-MD5
+    - Content-Type
+    - Date
+    - X-Auth-Token
+    - Authorization
+    - X-Correlation-ID
+    exposed_headers:
+    - X-Correlation-ID
+    - X-Kong-Request-Time
+    credentials: true
+    max_age: 3600
+    preflight_continue: false
+
+# Route-specific plugins
+- name: jwt
+  route: portal-api-v1
+  config:
+    uri_param_names:
+    - jwt
+    cookie_names:
+    - jwt
+    header_names:
+    - Authorization
+    claims_to_verify:
+    - exp
+    - iat
+    key_claim_name: iss
+    secret_is_base64: false
+    run_on_preflight: true
+
+- name: jwt
+  route: portal-api-v2
+  config:
+    uri_param_names:
+    - jwt
+    cookie_names:
+    - jwt
+    header_names:
+    - Authorization
+    claims_to_verify:
+    - exp
+    - iat
+    key_claim_name: iss
+    secret_is_base64: false
+    run_on_preflight: true
+
+# OAuth2 for backstage routes
+- name: oauth2
+  route: backstage-catalog
+  config:
+    enable_authorization_code: true
+    enable_client_credentials: true
+    enable_implicit_grant: false
+    enable_password_grant: false
+    token_expiration: 3600
+    auth_header_name: Authorization
+    scopes:
+    - read
+    - write
+    - admin
+
+# Rate limiting per route
+- name: rate-limiting
+  route: portal-api-v1
+  config:
+    minute: 500
+    hour: 5000
+    day: 50000
+    policy: redis
+    redis_host: redis
+    redis_port: 6379
+    fault_tolerant: true
+
+- name: rate-limiting
+  route: portal-api-v2
+  config:
+    minute: 1000
+    hour: 10000
+    day: 100000
+    policy: redis
+    redis_host: redis
+    redis_port: 6379
+    fault_tolerant: true
+
+# Response transformation for API versioning
+- name: response-transformer
+  route: portal-api-v1
+  config:
+    add:
+      headers:
+      - "X-API-Version:v1"
+      - "X-Powered-By:Kong Gateway"
+
+- name: response-transformer
+  route: portal-api-v2
+  config:
+    add:
+      headers:
+      - "X-API-Version:v2"
+      - "X-Powered-By:Kong Gateway"
+
+consumers:
+- username: portal-admin
+  custom_id: admin-001
+  tags:
+  - admin
+  - internal
+
+- username: portal-user
+  custom_id: user-001
+  tags:
+  - user
+  - external
+
+jwt_secrets:
+- consumer: portal-admin
+  algorithm: HS256
+  key: portal-admin-key
+  secret: your-256-bit-secret-key-here-admin
+
+- consumer: portal-user
+  algorithm: HS256
+  key: portal-user-key
+  secret: your-256-bit-secret-key-here-user
+
+oauth2_credentials:
+- consumer: portal-admin
+  name: Portal Admin App
+  client_id: portal-admin-client
+  client_secret: portal-admin-secret
+  redirect_uris:
+  - http://localhost:4400/auth/callback
+  - https://portal.company.com/auth/callback
+
+upstreams:
+- name: backstage-upstream
+  algorithm: round-robin
+  hash_on: none
+  hash_fallback: none
+  healthchecks:
+    active:
+      type: http
+      http_path: /api/catalog/health
+      https_verify_certificate: true
+      healthy:
+        interval: 10
+        http_statuses:
+        - 200
+        - 302
+        successes: 2
+      unhealthy:
+        interval: 10
+        http_statuses:
+        - 429
+        - 404
+        - 500
+        - 501
+        - 502
+        - 503
+        - 504
+        - 505
+        tcp_failures: 3
+        timeouts: 3
+        http_failures: 5
+    passive:
+      type: http
+      healthy:
+        http_statuses:
+        - 200
+        - 201
+        - 202
+        - 203
+        - 204
+        - 205
+        - 206
+        - 300
+        - 301
+        - 302
+        - 303
+        - 304
+        - 305
+        - 306
+        - 307
+        - 308
+        successes: 5
+      unhealthy:
+        http_statuses:
+        - 429
+        - 500
+        - 503
+        tcp_failures: 3
+        timeouts: 3
+        http_failures: 5
+  targets:
+  - target: host.docker.internal:7007
+    weight: 100
+
+- name: portal-upstream
+  algorithm: round-robin
+  hash_on: none
+  hash_fallback: none
+  healthchecks:
+    active:
+      type: http
+      http_path: /api/health
+      https_verify_certificate: true
+      healthy:
+        interval: 10
+        http_statuses:
+        - 200
+        - 302
+        successes: 2
+      unhealthy:
+        interval: 10
+        http_statuses:
+        - 429
+        - 404
+        - 500
+        - 501
+        - 502
+        - 503
+        - 504
+        - 505
+        tcp_failures: 3
+        timeouts: 3
+        http_failures: 5
+    passive:
+      type: http
+      healthy:
+        http_statuses:
+        - 200
+        - 201
+        - 202
+        - 203
+        - 204
+        - 205
+        - 206
+        - 300
+        - 301
+        - 302
+        - 303
+        - 304
+        - 305
+        - 306
+        - 307
+        - 308
+        successes: 5
+      unhealthy:
+        http_statuses:
+        - 429
+        - 500
+        - 503
+        tcp_failures: 3
+        timeouts: 3
+        http_failures: 5
+  targets:
+  - target: host.docker.internal:4400
+    weight: 100

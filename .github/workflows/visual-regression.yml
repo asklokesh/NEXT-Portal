@@ -1,0 +1,306 @@
+name: Visual Regression Testing
+
+on:
+ push:
+ branches: [ main, develop ]
+ pull_request:
+ branches: [ main, develop ]
+ schedule:
+ # Run visual regression tests daily at 2 AM UTC
+ - cron: '0 2 * * *'
+
+jobs:
+ visual-regression:
+ name: Visual Regression Tests
+ runs-on: ubuntu-latest
+ timeout-minutes: 30
+ 
+ strategy:
+ fail-fast: false
+ matrix:
+ browser: [chromium, firefox, webkit]
+ 
+ steps:
+ - name: Checkout code
+ uses: actions/checkout@v4
+ 
+ - name: Setup Node.js
+ uses: actions/setup-node@v4
+ with:
+ node-version: '18'
+ cache: 'npm'
+ 
+ - name: Install dependencies
+ run: npm ci
+ 
+ - name: Install Playwright browsers
+ run: npx playwright install --with-deps ${{ matrix.browser }}
+ 
+ - name: Build application
+ run: npm run build
+ 
+ - name: Run visual regression tests
+ run: npm run test:visual -- --project=${{ matrix.browser }}-desktop
+ env:
+ CI: true
+ NODE_ENV: test
+ 
+ - name: Upload test results
+ uses: actions/upload-artifact@v4
+ if: always()
+ with:
+ name: visual-test-results-${{ matrix.browser }}
+ path: |
+ test-results/
+ tests/visual/screenshots/
+ retention-days: 30
+ 
+ - name: Upload visual diff artifacts
+ uses: actions/upload-artifact@v4
+ if: failure()
+ with:
+ name: visual-diffs-${{ matrix.browser }}
+ path: test-results/visual/diff/
+ retention-days: 7
+
+ mobile-visual-regression:
+ name: Mobile Visual Regression Tests
+ runs-on: ubuntu-latest
+ timeout-minutes: 20
+ 
+ strategy:
+ fail-fast: false
+ matrix:
+ device: [mobile-chrome, mobile-safari, tablet-chrome, tablet-safari]
+ 
+ steps:
+ - name: Checkout code
+ uses: actions/checkout@v4
+ 
+ - name: Setup Node.js
+ uses: actions/setup-node@v4
+ with:
+ node-version: '18'
+ cache: 'npm'
+ 
+ - name: Install dependencies
+ run: npm ci
+ 
+ - name: Install Playwright browsers
+ run: npx playwright install --with-deps
+ 
+ - name: Build application
+ run: npm run build
+ 
+ - name: Run mobile visual regression tests
+ run: npm run test:visual -- --project=${{ matrix.device }}
+ env:
+ CI: true
+ NODE_ENV: test
+ 
+ - name: Upload mobile test results
+ uses: actions/upload-artifact@v4
+ if: always()
+ with:
+ name: mobile-visual-results-${{ matrix.device }}
+ path: test-results/
+ retention-days: 30
+
+ theme-visual-regression:
+ name: Theme Visual Regression Tests
+ runs-on: ubuntu-latest
+ timeout-minutes: 15
+ 
+ steps:
+ - name: Checkout code
+ uses: actions/checkout@v4
+ 
+ - name: Setup Node.js
+ uses: actions/setup-node@v4
+ with:
+ node-version: '18'
+ cache: 'npm'
+ 
+ - name: Install dependencies
+ run: npm ci
+ 
+ - name: Install Playwright browsers
+ run: npx playwright install --with-deps chromium
+ 
+ - name: Build application
+ run: npm run build
+ 
+ - name: Run dark mode visual tests
+ run: npm run test:visual -- --project=dark-mode
+ env:
+ CI: true
+ NODE_ENV: test
+ 
+ - name: Upload theme test results
+ uses: actions/upload-artifact@v4
+ if: always()
+ with:
+ name: theme-visual-results
+ path: test-results/
+ retention-days: 30
+
+ component-visual-regression:
+ name: Component Visual Regression Tests
+ runs-on: ubuntu-latest
+ timeout-minutes: 25
+ 
+ steps:
+ - name: Checkout code
+ uses: actions/checkout@v4
+ 
+ - name: Setup Node.js
+ uses: actions/setup-node@v4
+ with:
+ node-version: '18'
+ cache: 'npm'
+ 
+ - name: Install dependencies
+ run: npm ci
+ 
+ - name: Install Playwright browsers
+ run: npx playwright install --with-deps chromium
+ 
+ - name: Build application
+ run: npm run build
+ 
+ - name: Run component visual tests
+ run: npm run test:visual -- --project=component-snapshots
+ env:
+ CI: true
+ NODE_ENV: test
+ 
+ - name: Upload component test results
+ uses: actions/upload-artifact@v4
+ if: always()
+ with:
+ name: component-visual-results
+ path: test-results/
+ retention-days: 30
+
+ visual-regression-report:
+ name: Generate Visual Regression Report
+ runs-on: ubuntu-latest
+ needs: [visual-regression, mobile-visual-regression, theme-visual-regression, component-visual-regression]
+ if: always()
+ 
+ steps:
+ - name: Checkout code
+ uses: actions/checkout@v4
+ 
+ - name: Download all test results
+ uses: actions/download-artifact@v4
+ with:
+ path: collected-results/
+ 
+ - name: Setup Node.js
+ uses: actions/setup-node@v4
+ with:
+ node-version: '18'
+ cache: 'npm'
+ 
+ - name: Install dependencies
+ run: npm ci
+ 
+ - name: Generate consolidated report
+ run: |
+ node -e "
+ const fs = require('fs');
+ const path = require('path');
+ 
+ const resultsDir = 'collected-results';
+ const reportData = {
+ timestamp: new Date().toISOString(),
+ summary: {
+ total: 0,
+ passed: 0,
+ failed: 0,
+ browsers: [],
+ devices: []
+ },
+ details: []
+ };
+ 
+ // Process all result directories
+ if (fs.existsSync(resultsDir)) {
+ const resultDirs = fs.readdirSync(resultsDir);
+ 
+ resultDirs.forEach(dir => {
+ const dirPath = path.join(resultsDir, dir);
+ if (fs.statSync(dirPath).isDirectory()) {
+ reportData.summary.browsers.push(dir);
+ 
+ // Look for summary files
+ const summaryPath = path.join(dirPath, 'test-results/visual/summary.json');
+ if (fs.existsSync(summaryPath)) {
+ const summary = JSON.parse(fs.readFileSync(summaryPath, 'utf-8'));
+ reportData.summary.total += summary.testRun.total || 0;
+ reportData.summary.passed += summary.testRun.passed || 0;
+ reportData.summary.failed += summary.testRun.failed || 0;
+ reportData.details.push({ browser: dir, ...summary });
+ }
+ }
+ });
+ }
+ 
+ // Write consolidated report
+ fs.writeFileSync('visual-regression-report.json', JSON.stringify(reportData, null, 2));
+ 
+ // Generate markdown report
+ const markdownReport = \`
+ # Visual Regression Test Report
+ 
+ **Generated:** \${reportData.timestamp}
+ 
+ ## Summary
+ - **Total Tests:** \${reportData.summary.total}
+ - **Passed:** \${reportData.summary.passed}
+ - **Failed:** \${reportData.summary.failed}
+ - **Success Rate:** \${reportData.summary.total > 0 ? ((reportData.summary.passed / reportData.summary.total) * 100).toFixed(1) : 0}%
+ 
+ ## Browser Coverage
+ \${reportData.summary.browsers.map(browser => \`- \${browser}\`).join('\n')}
+ 
+ ## Detailed Results
+ \${reportData.details.map(detail => \`
+ ### \${detail.browser}
+ - Total Screenshots: \${detail.totalScreenshots || 0}
+ - Failed Comparisons: \${detail.failedComparisons || 0}
+ - Component Coverage: \${detail.coverage?.components?.length || 0} components
+ \`).join('\n')}
+ \`;
+ 
+ fs.writeFileSync('visual-regression-report.md', markdownReport);
+ console.log('Visual regression report generated');
+ "
+ 
+ - name: Upload consolidated report
+ uses: actions/upload-artifact@v4
+ with:
+ name: visual-regression-report
+ path: |
+ visual-regression-report.json
+ visual-regression-report.md
+ retention-days: 90
+ 
+ - name: Comment PR with results
+ if: github.event_name == 'pull_request'
+ uses: actions/github-script@v7
+ with:
+ script: |
+ const fs = require('fs');
+ 
+ if (fs.existsSync('visual-regression-report.md')) {
+ const report = fs.readFileSync('visual-regression-report.md', 'utf-8');
+ 
+ github.rest.issues.createComment({
+ issue_number: context.issue.number,
+ owner: context.repo.owner,
+ repo: context.repo.repo,
+ body: report
+ });
+ }

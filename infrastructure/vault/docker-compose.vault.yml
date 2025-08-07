@@ -1,0 +1,243 @@
+version: '3.8'
+
+networks:
+  vault_network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+volumes:
+  vault_data_1:
+  vault_data_2:
+  vault_data_3:
+  consul_data_1:
+  consul_data_2:
+  consul_data_3:
+  vault_audit:
+  vault_backup:
+
+services:
+  # Consul Cluster for HA Backend
+  consul-1:
+    image: consul:1.18
+    container_name: consul-1
+    networks:
+      vault_network:
+        ipv4_address: 172.20.0.10
+    ports:
+      - "8500:8500"
+      - "8600:8600/udp"
+    volumes:
+      - consul_data_1:/consul/data
+      - ./consul/config:/consul/config:ro
+    environment:
+      - CONSUL_BIND_INTERFACE=eth0
+      - CONSUL_CLIENT_INTERFACE=eth0
+    command: >
+      consul agent -server -bootstrap-expect=3 -ui -data-dir=/consul/data
+      -bind=172.20.0.10 -client=0.0.0.0 -retry-join=172.20.0.11
+      -retry-join=172.20.0.12 -config-dir=/consul/config
+    healthcheck:
+      test: ["CMD", "consul", "members"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  consul-2:
+    image: consul:1.18
+    container_name: consul-2
+    networks:
+      vault_network:
+        ipv4_address: 172.20.0.11
+    volumes:
+      - consul_data_2:/consul/data
+      - ./consul/config:/consul/config:ro
+    environment:
+      - CONSUL_BIND_INTERFACE=eth0
+    command: >
+      consul agent -server -data-dir=/consul/data -bind=172.20.0.11
+      -retry-join=172.20.0.10 -config-dir=/consul/config
+    depends_on:
+      consul-1:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "consul", "members"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  consul-3:
+    image: consul:1.18
+    container_name: consul-3
+    networks:
+      vault_network:
+        ipv4_address: 172.20.0.12
+    volumes:
+      - consul_data_3:/consul/data
+      - ./consul/config:/consul/config:ro
+    environment:
+      - CONSUL_BIND_INTERFACE=eth0
+    command: >
+      consul agent -server -data-dir=/consul/data -bind=172.20.0.12
+      -retry-join=172.20.0.10 -config-dir=/consul/config
+    depends_on:
+      consul-1:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "consul", "members"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  # HashiCorp Vault HA Cluster
+  vault-1:
+    image: hashicorp/vault:1.16.1
+    container_name: vault-1
+    networks:
+      vault_network:
+        ipv4_address: 172.20.0.20
+    ports:
+      - "8200:8200"
+    volumes:
+      - vault_data_1:/vault/data
+      - vault_audit:/vault/audit
+      - ./vault/config:/vault/config:ro
+      - ./vault/policies:/vault/policies:ro
+      - ./vault/ssl:/vault/ssl:ro
+    environment:
+      - VAULT_ADDR=https://0.0.0.0:8200
+      - VAULT_API_ADDR=https://172.20.0.20:8200
+      - VAULT_CLUSTER_ADDR=https://172.20.0.20:8201
+      - VAULT_UI=true
+      - VAULT_LOG_LEVEL=INFO
+    cap_add:
+      - IPC_LOCK
+    command: vault server -config=/vault/config/vault-1.hcl
+    depends_on:
+      consul-1:
+        condition: service_healthy
+      consul-2:
+        condition: service_healthy
+      consul-3:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "vault", "status"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  vault-2:
+    image: hashicorp/vault:1.16.1
+    container_name: vault-2
+    networks:
+      vault_network:
+        ipv4_address: 172.20.0.21
+    ports:
+      - "8201:8200"
+    volumes:
+      - vault_data_2:/vault/data
+      - vault_audit:/vault/audit
+      - ./vault/config:/vault/config:ro
+      - ./vault/policies:/vault/policies:ro
+      - ./vault/ssl:/vault/ssl:ro
+    environment:
+      - VAULT_ADDR=https://0.0.0.0:8200
+      - VAULT_API_ADDR=https://172.20.0.21:8200
+      - VAULT_CLUSTER_ADDR=https://172.20.0.21:8201
+      - VAULT_UI=true
+      - VAULT_LOG_LEVEL=INFO
+    cap_add:
+      - IPC_LOCK
+    command: vault server -config=/vault/config/vault-2.hcl
+    depends_on:
+      vault-1:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "vault", "status"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  vault-3:
+    image: hashicorp/vault:1.16.1
+    container_name: vault-3
+    networks:
+      vault_network:
+        ipv4_address: 172.20.0.22
+    ports:
+      - "8202:8200"
+    volumes:
+      - vault_data_3:/vault/data
+      - vault_audit:/vault/audit
+      - ./vault/config:/vault/config:ro
+      - ./vault/policies:/vault/policies:ro
+      - ./vault/ssl:/vault/ssl:ro
+    environment:
+      - VAULT_ADDR=https://0.0.0.0:8200
+      - VAULT_API_ADDR=https://172.20.0.22:8200
+      - VAULT_CLUSTER_ADDR=https://172.20.0.22:8201
+      - VAULT_UI=true
+      - VAULT_LOG_LEVEL=INFO
+    cap_add:
+      - IPC_LOCK
+    command: vault server -config=/vault/config/vault-3.hcl
+    depends_on:
+      vault-1:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "vault", "status"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  # Vault Agent for Auto-Auth and Token Renewal
+  vault-agent:
+    image: hashicorp/vault:1.16.1
+    container_name: vault-agent
+    networks:
+      vault_network:
+        ipv4_address: 172.20.0.30
+    volumes:
+      - ./vault/agent:/vault/config:ro
+      - ./vault/ssl:/vault/ssl:ro
+      - vault_agent_tokens:/vault/tokens
+    environment:
+      - VAULT_ADDR=https://vault-1:8200
+    command: vault agent -config=/vault/config/agent.hcl
+    depends_on:
+      vault-1:
+        condition: service_healthy
+      vault-2:
+        condition: service_healthy
+      vault-3:
+        condition: service_healthy
+
+  # Vault Backup Service
+  vault-backup:
+    image: hashicorp/vault:1.16.1
+    container_name: vault-backup
+    networks:
+      vault_network:
+        ipv4_address: 172.20.0.40
+    volumes:
+      - vault_backup:/vault/backup
+      - ./vault/backup:/vault/scripts:ro
+      - ./vault/ssl:/vault/ssl:ro
+    environment:
+      - VAULT_ADDR=https://vault-1:8200
+      - BACKUP_SCHEDULE=0 2 * * *
+      - BACKUP_RETENTION_DAYS=30
+    command: /vault/scripts/backup-daemon.sh
+    depends_on:
+      vault-1:
+        condition: service_healthy
+
+volumes:
+  vault_agent_tokens:

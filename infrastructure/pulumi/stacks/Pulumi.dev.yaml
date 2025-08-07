@@ -1,0 +1,33 @@
+config:
+  cloud:provider: aws
+  environment: development
+  region: us-east-1
+  multiRegion: false
+  enableMonitoring: true
+  enableBackup: true
+  enableDR: false
+  
+  # Development-specific configurations
+  saas-idp-infrastructure:instanceType: t3.medium
+  saas-idp-infrastructure:minInstances: 1
+  saas-idp-infrastructure:maxInstances: 3
+  saas-idp-infrastructure:databaseSize: db.t3.medium
+  saas-idp-infrastructure:cacheSize: cache.t3.micro
+  saas-idp-infrastructure:enableAutoScaling: true
+  saas-idp-infrastructure:enableSSL: false
+  saas-idp-infrastructure:logRetentionDays: 7
+  saas-idp-infrastructure:backupRetentionDays: 7
+  
+  # Cost optimization for development
+  saas-idp-infrastructure:useSpotInstances: true
+  saas-idp-infrastructure:spotMaxPrice: "0.03"
+  
+  # Development endpoints
+  saas-idp-infrastructure:apiDomain: api-dev.saas-idp.local
+  saas-idp-infrastructure:portalDomain: portal-dev.saas-idp.local
+  saas-idp-infrastructure:backstageDomain: backstage-dev.saas-idp.local
+  
+  # Feature flags
+  saas-idp-infrastructure:enableDebugMode: true
+  saas-idp-infrastructure:enableProfiler: true
+  saas-idp-infrastructure:enableTracing: true

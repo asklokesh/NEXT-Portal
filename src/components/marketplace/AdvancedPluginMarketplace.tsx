@@ -1,0 +1,1016 @@
+'use client';
+
+import React, { useState, useEffect } from 'react';
+import {
+  Search,
+  Filter,
+  Download,
+  Star,
+  ChevronDown,
+  Package,
+  Shield,
+  Users,
+  Calendar,
+  ExternalLink,
+  Check,
+  X,
+  Clock,
+  AlertCircle,
+  Settings,
+  Trash2,
+  MessageSquare,
+  ThumbsUp,
+  ThumbsDown,
+  TrendingUp,
+  Award,
+  Grid,
+  List
+} from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Badge } from '@/components/ui/badge';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import { Progress } from '@/components/ui/progress';
+import { Textarea } from '@/components/ui/textarea';
+import { Label } from '@/components/ui/label';
+import { Switch } from '@/components/ui/switch';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Separator } from '@/components/ui/separator';
+import { toast } from 'sonner';
+
+interface Plugin {
+  id: string;
+  name: string;
+  displayName: string;
+  description: string;
+  category: string;
+  version: string;
+  author: {
+    name: string;
+    verified: boolean;
+  };
+  downloads: {
+    total: number;
+    monthly: number;
+    weekly: number;
+    daily: number;
+  };
+  stats: {
+    stars: number;
+    rating: number;
+    reviews: number;
+  };
+  tags: string[];
+  compatibility: {
+    backstage: string;
+    node: string;
+  };
+  publishedAt: string;
+  lastUpdated: string;
+  featured?: boolean;
+  trending?: boolean;
+  verified?: boolean;
+  installed?: boolean;
+  installedVersion?: string;
+  icon?: string;
+  screenshots?: string[];
+  license: string;
+  repository?: { url: string };
+  homepage?: string;
+}
+
+interface Review {
+  id: string;
+  pluginId: string;
+  userId: string;
+  userName: string;
+  userAvatar?: string;
+  rating: number;
+  title: string;
+  content: string;
+  pros: string[];
+  cons: string[];
+  version: string;
+  verified: boolean;
+  helpful: number;
+  createdAt: string;
+}
+
+interface Installation {
+  id: string;
+  pluginId: string;
+  pluginVersion: string;
+  status: 'installing' | 'installed' | 'failed' | 'updating' | 'uninstalling';
+  errorMessage?: string;
+  installationLogs: string[];
+  installedAt?: string;
+  lastUpdated: string;
+}
+
+const CATEGORIES = [
+  { id: 'all', name: 'All Categories', icon: '📦' },
+  { id: 'ci-cd', name: 'CI/CD', icon: '🔄' },
+  { id: 'infrastructure', name: 'Infrastructure', icon: '🏗️' },
+  { id: 'monitoring', name: 'Monitoring', icon: '📊' },
+  { id: 'security', name: 'Security', icon: '🔒' },
+  { id: 'documentation', name: 'Documentation', icon: '📚' },
+  { id: 'testing', name: 'Testing', icon: '🧪' },
+  { id: 'deployment', name: 'Deployment', icon: '🚀' }
+];
+
+const SORT_OPTIONS = [
+  { value: 'featured', label: 'Featured' },
+  { value: 'downloads', label: 'Most Downloaded' },
+  { value: 'rating', label: 'Highest Rated' },
+  { value: 'recent', label: 'Recently Updated' },
+  { value: 'name', label: 'Name (A-Z)' }
+];
+
+export default function AdvancedPluginMarketplace() {
+  const [plugins, setPlugins] = useState<Plugin[]>([]);
+  const [filteredPlugins, setFilteredPlugins] = useState<Plugin[]>([]);
+  const [selectedPlugin, setSelectedPlugin] = useState<Plugin | null>(null);
+  const [pluginReviews, setPluginReviews] = useState<Review[]>([]);
+  const [installations, setInstallations] = useState<Installation[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
+  
+  // Filters and search
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedCategory, setSelectedCategory] = useState('all');
+  const [sortBy, setSortBy] = useState('featured');
+  const [showOnlyInstalled, setShowOnlyInstalled] = useState(false);
+  const [showOnlyVerified, setShowOnlyVerified] = useState(false);
+  const [minRating, setMinRating] = useState(0);
+
+  // Review form
+  const [reviewForm, setReviewForm] = useState({
+    rating: 5,
+    title: '',
+    content: '',
+    pros: [] as string[],
+    cons: [] as string[]
+  });
+  const [isReviewDialogOpen, setIsReviewDialogOpen] = useState(false);
+
+  useEffect(() => {
+    fetchPlugins();
+    fetchInstallations();
+  }, []);
+
+  useEffect(() => {
+    applyFilters();
+  }, [plugins, searchQuery, selectedCategory, sortBy, showOnlyInstalled, showOnlyVerified, minRating]);
+
+  const fetchPlugins = async () => {
+    try {
+      setIsLoading(true);
+      const response = await fetch('/api/marketplace/plugins');
+      const data = await response.json();
+      setPlugins(data.plugins || []);
+    } catch (error) {
+      console.error('Failed to fetch plugins:', error);
+      toast.error('Failed to load plugins');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const fetchInstallations = async () => {
+    try {
+      const response = await fetch('/api/marketplace/installations');
+      if (response.ok) {
+        const data = await response.json();
+        setInstallations(data.installations || []);
+      }
+    } catch (error) {
+      console.error('Failed to fetch installations:', error);
+    }
+  };
+
+  const fetchPluginReviews = async (pluginId: string) => {
+    try {
+      const response = await fetch(`/api/marketplace/plugins/${pluginId}/reviews`);
+      if (response.ok) {
+        const data = await response.json();
+        setPluginReviews(data.reviews || []);
+      }
+    } catch (error) {
+      console.error('Failed to fetch reviews:', error);
+    }
+  };
+
+  const applyFilters = () => {
+    let filtered = [...plugins];
+
+    // Apply search
+    if (searchQuery) {
+      const query = searchQuery.toLowerCase();
+      filtered = filtered.filter(plugin =>
+        plugin.displayName.toLowerCase().includes(query) ||
+        plugin.description.toLowerCase().includes(query) ||
+        plugin.tags.some(tag => tag.toLowerCase().includes(query))
+      );
+    }
+
+    // Apply category filter
+    if (selectedCategory !== 'all') {
+      filtered = filtered.filter(plugin => plugin.category === selectedCategory);
+    }
+
+    // Apply other filters
+    if (showOnlyInstalled) {
+      const installedPluginIds = installations
+        .filter(i => i.status === 'installed')
+        .map(i => i.pluginId);
+      filtered = filtered.filter(plugin => installedPluginIds.includes(plugin.id));
+    }
+
+    if (showOnlyVerified) {
+      filtered = filtered.filter(plugin => plugin.verified);
+    }
+
+    if (minRating > 0) {
+      filtered = filtered.filter(plugin => plugin.stats.rating >= minRating);
+    }
+
+    // Apply sorting
+    filtered.sort((a, b) => {
+      switch (sortBy) {
+        case 'downloads':
+          return b.downloads.total - a.downloads.total;
+        case 'rating':
+          return b.stats.rating - a.stats.rating;
+        case 'recent':
+          return new Date(b.lastUpdated).getTime() - new Date(a.lastUpdated).getTime();
+        case 'name':
+          return a.displayName.localeCompare(b.displayName);
+        case 'featured':
+        default:
+          if (a.featured && !b.featured) return -1;
+          if (!a.featured && b.featured) return 1;
+          return b.downloads.total - a.downloads.total;
+      }
+    });
+
+    setFilteredPlugins(filtered);
+  };
+
+  const installPlugin = async (plugin: Plugin) => {
+    try {
+      const response = await fetch('/api/marketplace/installations', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          pluginId: plugin.id,
+          version: plugin.version
+        })
+      });
+
+      if (response.ok) {
+        toast.success(`Installing ${plugin.displayName}...`);
+        fetchInstallations();
+      } else {
+        const error = await response.json();
+        toast.error(error.error || 'Failed to install plugin');
+      }
+    } catch (error) {
+      console.error('Failed to install plugin:', error);
+      toast.error('Failed to install plugin');
+    }
+  };
+
+  const uninstallPlugin = async (installationId: string) => {
+    try {
+      const response = await fetch(`/api/marketplace/installations?id=${installationId}`, {
+        method: 'DELETE'
+      });
+
+      if (response.ok) {
+        toast.success('Plugin uninstalled successfully');
+        fetchInstallations();
+      } else {
+        const error = await response.json();
+        toast.error(error.error || 'Failed to uninstall plugin');
+      }
+    } catch (error) {
+      console.error('Failed to uninstall plugin:', error);
+      toast.error('Failed to uninstall plugin');
+    }
+  };
+
+  const submitReview = async () => {
+    if (!selectedPlugin) return;
+
+    try {
+      const response = await fetch(`/api/marketplace/plugins/${selectedPlugin.id}/reviews`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId: 'current-user',
+          userName: 'Current User',
+          ...reviewForm
+        })
+      });
+
+      if (response.ok) {
+        toast.success('Review submitted successfully');
+        setIsReviewDialogOpen(false);
+        setReviewForm({ rating: 5, title: '', content: '', pros: [], cons: [] });
+        fetchPluginReviews(selectedPlugin.id);
+      } else {
+        const error = await response.json();
+        toast.error(error.error || 'Failed to submit review');
+      }
+    } catch (error) {
+      console.error('Failed to submit review:', error);
+      toast.error('Failed to submit review');
+    }
+  };
+
+  const getInstallationStatus = (pluginId: string) => {
+    return installations.find(i => i.pluginId === pluginId);
+  };
+
+  const renderStars = (rating: number) => {
+    return Array.from({ length: 5 }, (_, i) => (
+      <Star
+        key={i}
+        className={`w-4 h-4 ${i < rating ? 'fill-yellow-400 text-yellow-400' : 'text-gray-300'}`}
+      />
+    ));
+  };
+
+  const renderPluginCard = (plugin: Plugin) => {
+    const installation = getInstallationStatus(plugin.id);
+    
+    return (
+      <Card 
+        key={plugin.id} 
+        className={`transition-all duration-200 hover:shadow-lg cursor-pointer ${viewMode === 'list' ? 'mb-4' : ''}`}
+        onClick={() => {
+          setSelectedPlugin(plugin);
+          fetchPluginReviews(plugin.id);
+        }}
+      >
+        <CardHeader className={`pb-3 ${viewMode === 'list' ? 'flex-row items-start space-y-0' : ''}`}>
+          <div className={viewMode === 'list' ? 'flex items-center space-x-4 flex-1' : ''}>
+            <div className={`${plugin.icon ? '' : 'bg-gradient-to-br from-blue-500 to-purple-600'} rounded-lg p-2 text-white text-2xl font-bold flex items-center justify-center ${viewMode === 'list' ? 'w-12 h-12 text-lg' : 'w-16 h-16 mb-3'}`}>
+              {plugin.icon || plugin.displayName.charAt(0)}
+            </div>
+            
+            <div className={viewMode === 'list' ? 'flex-1 min-w-0' : ''}>
+              <div className="flex items-center gap-2 mb-2">
+                <CardTitle className={`${viewMode === 'list' ? 'text-lg' : 'text-xl'} line-clamp-1`}>
+                  {plugin.displayName}
+                </CardTitle>
+                {plugin.verified && (
+                  <Badge variant="secondary" className="bg-blue-100 text-blue-800">
+                    <Shield className="w-3 h-3 mr-1" />
+                    Verified
+                  </Badge>
+                )}
+                {plugin.featured && (
+                  <Badge variant="secondary" className="bg-yellow-100 text-yellow-800">
+                    <Award className="w-3 h-3 mr-1" />
+                    Featured
+                  </Badge>
+                )}
+                {plugin.trending && (
+                  <Badge variant="secondary" className="bg-green-100 text-green-800">
+                    <TrendingUp className="w-3 h-3 mr-1" />
+                    Trending
+                  </Badge>
+                )}
+              </div>
+              
+              <CardDescription className="line-clamp-2 mb-3">
+                {plugin.description}
+              </CardDescription>
+              
+              <div className="flex items-center gap-4 text-sm text-gray-600">
+                <div className="flex items-center gap-1">
+                  {renderStars(Math.round(plugin.stats.rating))}
+                  <span className="ml-1">({plugin.stats.reviews})</span>
+                </div>
+                
+                <div className="flex items-center gap-1">
+                  <Download className="w-4 h-4" />
+                  <span>{plugin.downloads.total.toLocaleString()}</span>
+                </div>
+                
+                <div className="flex items-center gap-1">
+                  <Users className="w-4 h-4" />
+                  <span>{plugin.author.name}</span>
+                  {plugin.author.verified && <Shield className="w-3 h-3 text-blue-500" />}
+                </div>
+              </div>
+            </div>
+          </div>
+          
+          {viewMode === 'list' && (
+            <div className="flex flex-col items-end gap-2">
+              <div className="text-xs text-gray-500">
+                v{plugin.version} • Updated {new Date(plugin.lastUpdated).toLocaleDateString()}
+              </div>
+              
+              {installation ? (
+                <div className="flex items-center gap-2">
+                  {installation.status === 'installed' && (
+                    <>
+                      <Badge variant="secondary" className="bg-green-100 text-green-800">
+                        <Check className="w-3 h-3 mr-1" />
+                        Installed
+                      </Badge>
+                      <Button 
+                        size="sm" 
+                        variant="outline"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          uninstallPlugin(installation.id);
+                        }}
+                      >
+                        <Trash2 className="w-3 h-3 mr-1" />
+                        Remove
+                      </Button>
+                    </>
+                  )}
+                  {installation.status === 'installing' && (
+                    <Badge variant="secondary" className="bg-blue-100 text-blue-800">
+                      <Clock className="w-3 h-3 mr-1" />
+                      Installing
+                    </Badge>
+                  )}
+                  {installation.status === 'failed' && (
+                    <Badge variant="secondary" className="bg-red-100 text-red-800">
+                      <AlertCircle className="w-3 h-3 mr-1" />
+                      Failed
+                    </Badge>
+                  )}
+                </div>
+              ) : (
+                <Button 
+                  size="sm"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    installPlugin(plugin);
+                  }}
+                >
+                  <Download className="w-3 h-3 mr-1" />
+                  Install
+                </Button>
+              )}
+            </div>
+          )}
+        </CardHeader>
+        
+        {viewMode === 'grid' && (
+          <CardContent className="pt-0">
+            <div className="flex flex-wrap gap-1 mb-3">
+              {plugin.tags.slice(0, 3).map(tag => (
+                <Badge key={tag} variant="outline" className="text-xs">
+                  {tag}
+                </Badge>
+              ))}
+              {plugin.tags.length > 3 && (
+                <Badge variant="outline" className="text-xs">
+                  +{plugin.tags.length - 3}
+                </Badge>
+              )}
+            </div>
+            
+            <div className="flex items-center justify-between">
+              <div className="text-xs text-gray-500">
+                v{plugin.version} • {new Date(plugin.lastUpdated).toLocaleDateString()}
+              </div>
+              
+              {installation ? (
+                <div className="flex items-center gap-1">
+                  {installation.status === 'installed' && (
+                    <Badge variant="secondary" className="bg-green-100 text-green-800">
+                      <Check className="w-3 h-3 mr-1" />
+                      Installed
+                    </Badge>
+                  )}
+                  {installation.status === 'installing' && (
+                    <Badge variant="secondary" className="bg-blue-100 text-blue-800">
+                      <Clock className="w-3 h-3 mr-1" />
+                      Installing
+                    </Badge>
+                  )}
+                  {installation.status === 'failed' && (
+                    <Badge variant="secondary" className="bg-red-100 text-red-800">
+                      <AlertCircle className="w-3 h-3 mr-1" />
+                      Failed
+                    </Badge>
+                  )}
+                </div>
+              ) : (
+                <Button 
+                  size="sm"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    installPlugin(plugin);
+                  }}
+                >
+                  <Download className="w-3 h-3 mr-1" />
+                  Install
+                </Button>
+              )}
+            </div>
+          </CardContent>
+        )}
+      </Card>
+    );
+  };
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4 sm:space-y-6 p-4 sm:p-6">
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div className="min-w-0 flex-1">
+          <h1 className="text-2xl sm:text-3xl font-bold">Plugin Marketplace</h1>
+          <p className="text-sm sm:text-base text-gray-600">Discover and install plugins to extend your Backstage experience</p>
+        </div>
+        
+        <div className="flex items-center gap-2 justify-center sm:justify-end">
+          <Button
+            variant={viewMode === 'grid' ? 'default' : 'outline'}
+            size="sm"
+            onClick={() => setViewMode('grid')}
+            className="flex-1 sm:flex-none"
+          >
+            <Grid className="w-4 h-4" />
+            <span className="sm:hidden ml-2">Grid</span>
+          </Button>
+          <Button
+            variant={viewMode === 'list' ? 'default' : 'outline'}
+            size="sm"
+            onClick={() => setViewMode('list')}
+            className="flex-1 sm:flex-none"
+          >
+            <List className="w-4 h-4" />
+            <span className="sm:hidden ml-2">List</span>
+          </Button>
+        </div>
+      </div>
+
+      {/* Search and Filters */}
+      <div className="flex flex-col gap-4">
+        <div className="flex-1">
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
+            <Input
+              placeholder="Search plugins, tags, or descriptions..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="pl-10"
+            />
+          </div>
+        </div>
+        
+        <div className="flex flex-col sm:flex-row gap-2">
+          <Select value={selectedCategory} onValueChange={setSelectedCategory}>
+            <SelectTrigger className="w-full sm:w-48">
+              <SelectValue placeholder="Category" />
+            </SelectTrigger>
+            <SelectContent>
+              {CATEGORIES.map(category => (
+                <SelectItem key={category.id} value={category.id}>
+                  <span className="flex items-center gap-2">
+                    <span>{category.icon}</span>
+                    {category.name}
+                  </span>
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          
+          <Select value={sortBy} onValueChange={setSortBy}>
+            <SelectTrigger className="w-full sm:w-48">
+              <SelectValue placeholder="Sort by" />
+            </SelectTrigger>
+            <SelectContent>
+              {SORT_OPTIONS.map(option => (
+                <SelectItem key={option.value} value={option.value}>
+                  {option.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+
+      {/* Additional Filters */}
+      <div className="flex flex-col sm:flex-row sm:flex-wrap items-start sm:items-center gap-3 sm:gap-4 p-3 sm:p-4 bg-gray-50 rounded-lg">
+        <div className="flex items-center space-x-2">
+          <Switch
+            id="installed"
+            checked={showOnlyInstalled}
+            onCheckedChange={setShowOnlyInstalled}
+          />
+          <Label htmlFor="installed" className="text-xs sm:text-sm">Show only installed</Label>
+        </div>
+        
+        <div className="flex items-center space-x-2">
+          <Switch
+            id="verified"
+            checked={showOnlyVerified}
+            onCheckedChange={setShowOnlyVerified}
+          />
+          <Label htmlFor="verified" className="text-xs sm:text-sm">Verified plugins only</Label>
+        </div>
+        
+        <div className="flex items-center space-x-2">
+          <Label htmlFor="rating" className="text-xs sm:text-sm">Min rating:</Label>
+          <Select value={minRating.toString()} onValueChange={(value) => setMinRating(Number(value))}>
+            <SelectTrigger className="w-20">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="0">All</SelectItem>
+              <SelectItem value="1">1+</SelectItem>
+              <SelectItem value="2">2+</SelectItem>
+              <SelectItem value="3">3+</SelectItem>
+              <SelectItem value="4">4+</SelectItem>
+              <SelectItem value="5">5</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        
+        <div className="text-xs sm:text-sm text-gray-600 ml-auto">
+          Showing {filteredPlugins.length} of {plugins.length} plugins
+        </div>
+      </div>
+
+      {/* Plugins Grid/List */}
+      <div className={viewMode === 'grid' ? 'grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 sm:gap-6' : 'space-y-2 sm:space-y-0'}>
+        {filteredPlugins.map(renderPluginCard)}
+      </div>
+
+      {filteredPlugins.length === 0 && (
+        <div className="text-center py-12">
+          <Package className="w-16 h-16 text-gray-400 mx-auto mb-4" />
+          <h3 className="text-lg font-semibold text-gray-700 mb-2">No plugins found</h3>
+          <p className="text-gray-500">Try adjusting your search or filters</p>
+        </div>
+      )}
+
+      {/* Plugin Detail Dialog */}
+      {selectedPlugin && (
+        <Dialog open={!!selectedPlugin} onOpenChange={() => setSelectedPlugin(null)}>
+          <DialogContent className="w-[95vw] max-w-4xl h-[90vh] sm:max-h-[80vh] overflow-y-auto">
+            <DialogHeader>
+              <div className="flex flex-col sm:flex-row items-start gap-4">
+                <div className={`${selectedPlugin.icon ? '' : 'bg-gradient-to-br from-blue-500 to-purple-600'} rounded-lg p-3 text-white text-2xl sm:text-3xl font-bold flex items-center justify-center w-12 h-12 sm:w-16 sm:h-16 mx-auto sm:mx-0`}>
+                  {selectedPlugin.icon || selectedPlugin.displayName.charAt(0)}
+                </div>
+                
+                <div className="flex-1 text-center sm:text-left">
+                  <div className="flex flex-col sm:flex-row sm:items-center gap-2 mb-2">
+                    <DialogTitle className="text-xl sm:text-2xl">{selectedPlugin.displayName}</DialogTitle>
+                    {selectedPlugin.verified && (
+                      <Badge className="bg-blue-100 text-blue-800 w-fit mx-auto sm:mx-0">
+                        <Shield className="w-3 h-3 mr-1" />
+                        Verified
+                      </Badge>
+                    )}
+                  </div>
+                  
+                  <DialogDescription className="text-base mb-4">
+                    {selectedPlugin.description}
+                  </DialogDescription>
+                  
+                  <div className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-6 text-xs sm:text-sm">
+                    <div className="flex items-center justify-center sm:justify-start gap-1">
+                      {renderStars(Math.round(selectedPlugin.stats.rating))}
+                      <span className="ml-2 font-medium">{selectedPlugin.stats.rating}</span>
+                      <span className="text-gray-500">({selectedPlugin.stats.reviews} reviews)</span>
+                    </div>
+                    
+                    <div className="flex items-center justify-center sm:justify-start gap-1">
+                      <Download className="w-4 h-4 text-gray-500" />
+                      <span>{selectedPlugin.downloads.total.toLocaleString()} downloads</span>
+                    </div>
+                    
+                    <div className="flex items-center justify-center sm:justify-start gap-1">
+                      <Users className="w-4 h-4 text-gray-500" />
+                      <span>{selectedPlugin.author.name}</span>
+                      {selectedPlugin.author.verified && <Shield className="w-3 h-3 text-blue-500" />}
+                    </div>
+                  </div>
+                </div>
+                
+                <div className="flex flex-col gap-2">
+                  {(() => {
+                    const installation = getInstallationStatus(selectedPlugin.id);
+                    if (installation) {
+                      if (installation.status === 'installed') {
+                        return (
+                          <div className="flex flex-col gap-2">
+                            <Badge className="bg-green-100 text-green-800 justify-center">
+                              <Check className="w-3 h-3 mr-1" />
+                              Installed
+                            </Badge>
+                            <Button 
+                              variant="outline"
+                              onClick={() => uninstallPlugin(installation.id)}
+                            >
+                              <Trash2 className="w-4 h-4 mr-2" />
+                              Uninstall
+                            </Button>
+                          </div>
+                        );
+                      } else if (installation.status === 'installing') {
+                        return (
+                          <Badge className="bg-blue-100 text-blue-800 justify-center">
+                            <Clock className="w-3 h-3 mr-1" />
+                            Installing...
+                          </Badge>
+                        );
+                      } else if (installation.status === 'failed') {
+                        return (
+                          <div className="flex flex-col gap-2">
+                            <Badge className="bg-red-100 text-red-800 justify-center">
+                              <AlertCircle className="w-3 h-3 mr-1" />
+                              Failed
+                            </Badge>
+                            <Button onClick={() => installPlugin(selectedPlugin)}>
+                              <Download className="w-4 h-4 mr-2" />
+                              Retry Install
+                            </Button>
+                          </div>
+                        );
+                      }
+                    }
+                    
+                    return (
+                      <Button onClick={() => installPlugin(selectedPlugin)}>
+                        <Download className="w-4 h-4 mr-2" />
+                        Install Plugin
+                      </Button>
+                    );
+                  })()}
+                  
+                  <Dialog open={isReviewDialogOpen} onOpenChange={setIsReviewDialogOpen}>
+                    <DialogTrigger asChild>
+                      <Button variant="outline">
+                        <MessageSquare className="w-4 h-4 mr-2" />
+                        Write Review
+                      </Button>
+                    </DialogTrigger>
+                    <DialogContent>
+                      <DialogHeader>
+                        <DialogTitle>Write a Review</DialogTitle>
+                        <DialogDescription>
+                          Share your experience with {selectedPlugin.displayName}
+                        </DialogDescription>
+                      </DialogHeader>
+                      
+                      <div className="space-y-4">
+                        <div>
+                          <Label>Rating</Label>
+                          <div className="flex gap-1 mt-1">
+                            {Array.from({ length: 5 }, (_, i) => (
+                              <button
+                                key={i}
+                                onClick={() => setReviewForm(prev => ({ ...prev, rating: i + 1 }))}
+                                className="text-2xl"
+                              >
+                                <Star
+                                  className={`w-8 h-8 ${i < reviewForm.rating ? 'fill-yellow-400 text-yellow-400' : 'text-gray-300'}`}
+                                />
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                        
+                        <div>
+                          <Label htmlFor="review-title">Review Title</Label>
+                          <Input
+                            id="review-title"
+                            value={reviewForm.title}
+                            onChange={(e) => setReviewForm(prev => ({ ...prev, title: e.target.value }))}
+                            placeholder="Summarize your experience"
+                          />
+                        </div>
+                        
+                        <div>
+                          <Label htmlFor="review-content">Review Content</Label>
+                          <Textarea
+                            id="review-content"
+                            value={reviewForm.content}
+                            onChange={(e) => setReviewForm(prev => ({ ...prev, content: e.target.value }))}
+                            placeholder="Share your detailed experience with this plugin..."
+                            rows={4}
+                          />
+                        </div>
+                        
+                        <div className="flex gap-2">
+                          <Button variant="outline" onClick={() => setIsReviewDialogOpen(false)}>
+                            Cancel
+                          </Button>
+                          <Button onClick={submitReview}>
+                            Submit Review
+                          </Button>
+                        </div>
+                      </div>
+                    </DialogContent>
+                  </Dialog>
+                </div>
+              </div>
+            </DialogHeader>
+            
+            <Tabs defaultValue="overview" className="mt-6">
+              <TabsList>
+                <TabsTrigger value="overview">Overview</TabsTrigger>
+                <TabsTrigger value="reviews">Reviews</TabsTrigger>
+                <TabsTrigger value="versions">Versions</TabsTrigger>
+                <TabsTrigger value="dependencies">Dependencies</TabsTrigger>
+              </TabsList>
+              
+              <TabsContent value="overview" className="space-y-6">
+                <div>
+                  <h3 className="font-semibold mb-3">Tags</h3>
+                  <div className="flex flex-wrap gap-2">
+                    {selectedPlugin.tags.map(tag => (
+                      <Badge key={tag} variant="outline">{tag}</Badge>
+                    ))}
+                  </div>
+                </div>
+                
+                <div>
+                  <h3 className="font-semibold mb-3">Compatibility</h3>
+                  <div className="grid grid-cols-2 gap-4 text-sm">
+                    <div>
+                      <span className="font-medium">Backstage:</span> {selectedPlugin.compatibility.backstage}
+                    </div>
+                    <div>
+                      <span className="font-medium">Node.js:</span> {selectedPlugin.compatibility.node}
+                    </div>
+                  </div>
+                </div>
+                
+                <div>
+                  <h3 className="font-semibold mb-3">Details</h3>
+                  <div className="grid grid-cols-2 gap-4 text-sm">
+                    <div>
+                      <span className="font-medium">Version:</span> {selectedPlugin.version}
+                    </div>
+                    <div>
+                      <span className="font-medium">License:</span> {selectedPlugin.license}
+                    </div>
+                    <div>
+                      <span className="font-medium">Published:</span> {new Date(selectedPlugin.publishedAt).toLocaleDateString()}
+                    </div>
+                    <div>
+                      <span className="font-medium">Updated:</span> {new Date(selectedPlugin.lastUpdated).toLocaleDateString()}
+                    </div>
+                  </div>
+                </div>
+                
+                {(selectedPlugin.homepage || selectedPlugin.repository) && (
+                  <div>
+                    <h3 className="font-semibold mb-3">Links</h3>
+                    <div className="flex gap-4">
+                      {selectedPlugin.homepage && (
+                        <Button variant="outline" size="sm" asChild>
+                          <a href={selectedPlugin.homepage} target="_blank" rel="noopener noreferrer">
+                            <ExternalLink className="w-4 h-4 mr-2" />
+                            Homepage
+                          </a>
+                        </Button>
+                      )}
+                      {selectedPlugin.repository && (
+                        <Button variant="outline" size="sm" asChild>
+                          <a href={selectedPlugin.repository.url} target="_blank" rel="noopener noreferrer">
+                            <ExternalLink className="w-4 h-4 mr-2" />
+                            Repository
+                          </a>
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </TabsContent>
+              
+              <TabsContent value="reviews" className="space-y-4">
+                {pluginReviews.length > 0 ? (
+                  pluginReviews.map(review => (
+                    <Card key={review.id}>
+                      <CardContent className="pt-4">
+                        <div className="flex items-start gap-3">
+                          <Avatar className="w-10 h-10">
+                            <AvatarImage src={review.userAvatar} />
+                            <AvatarFallback>{review.userName.charAt(0)}</AvatarFallback>
+                          </Avatar>
+                          
+                          <div className="flex-1">
+                            <div className="flex items-center gap-2 mb-2">
+                              <span className="font-medium">{review.userName}</span>
+                              {review.verified && (
+                                <Badge variant="secondary" className="text-xs">
+                                  Verified Install
+                                </Badge>
+                              )}
+                              <div className="flex items-center gap-1">
+                                {renderStars(review.rating)}
+                              </div>
+                              <span className="text-xs text-gray-500">
+                                {new Date(review.createdAt).toLocaleDateString()}
+                              </span>
+                            </div>
+                            
+                            <h4 className="font-medium mb-2">{review.title}</h4>
+                            <p className="text-sm text-gray-600 mb-3">{review.content}</p>
+                            
+                            {(review.pros.length > 0 || review.cons.length > 0) && (
+                              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-3">
+                                {review.pros.length > 0 && (
+                                  <div>
+                                    <div className="flex items-center gap-1 mb-1">
+                                      <ThumbsUp className="w-3 h-3 text-green-600" />
+                                      <span className="text-xs font-medium text-green-600">Pros</span>
+                                    </div>
+                                    <ul className="text-xs space-y-1">
+                                      {review.pros.map((pro, i) => (
+                                        <li key={i} className="text-gray-600">• {pro}</li>
+                                      ))}
+                                    </ul>
+                                  </div>
+                                )}
+                                
+                                {review.cons.length > 0 && (
+                                  <div>
+                                    <div className="flex items-center gap-1 mb-1">
+                                      <ThumbsDown className="w-3 h-3 text-red-600" />
+                                      <span className="text-xs font-medium text-red-600">Cons</span>
+                                    </div>
+                                    <ul className="text-xs space-y-1">
+                                      {review.cons.map((con, i) => (
+                                        <li key={i} className="text-gray-600">• {con}</li>
+                                      ))}
+                                    </ul>
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                            
+                            <div className="flex items-center gap-2 text-xs text-gray-500">
+                              <span>Version {review.version}</span>
+                              <span>•</span>
+                              <span>{review.helpful} people found this helpful</span>
+                            </div>
+                          </div>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  ))
+                ) : (
+                  <div className="text-center py-8">
+                    <MessageSquare className="w-12 h-12 text-gray-400 mx-auto mb-3" />
+                    <p className="text-gray-500">No reviews yet. Be the first to review this plugin!</p>
+                  </div>
+                )}
+              </TabsContent>
+              
+              <TabsContent value="versions">
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between p-3 border rounded-lg">
+                    <div>
+                      <div className="font-medium">v{selectedPlugin.version}</div>
+                      <div className="text-sm text-gray-500">Latest</div>
+                    </div>
+                    <div className="text-right">
+                      <div className="text-sm">
+                        {new Date(selectedPlugin.lastUpdated).toLocaleDateString()}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </TabsContent>
+              
+              <TabsContent value="dependencies">
+                <div className="text-sm text-gray-500">
+                  Dependency information would be shown here in a production implementation.
+                </div>
+              </TabsContent>
+            </Tabs>
+          </DialogContent>
+        </Dialog>
+      )}
+    </div>
+  );
+}

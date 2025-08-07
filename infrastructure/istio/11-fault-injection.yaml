@@ -1,0 +1,481 @@
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: backstage-fault-injection
+  namespace: developer-portal
+spec:
+  hosts:
+  - backstage-backend.developer-portal.svc.cluster.local
+  http:
+  # Production traffic with minimal fault injection
+  - match:
+    - headers:
+        x-environment:
+          exact: "production"
+    fault:
+      # Inject 0.1% delays to test resilience
+      delay:
+        percentage:
+          value: 0.1
+        fixedDelay: 100ms
+      # Inject 0.01% errors to test error handling
+      abort:
+        percentage:
+          value: 0.01
+        httpStatus: 503
+    route:
+    - destination:
+        host: backstage-backend.developer-portal.svc.cluster.local
+        subset: stable
+    retries:
+      attempts: 3
+      perTryTimeout: 10s
+      retryOn: 5xx,reset,connect-failure,refused-stream
+      
+  # Canary traffic with higher fault injection for testing
+  - match:
+    - headers:
+        x-canary:
+          exact: "true"
+    fault:
+      delay:
+        percentage:
+          value: 5.0
+        fixedDelay: 500ms
+      abort:
+        percentage:
+          value: 1.0
+        httpStatus: 503
+    route:
+    - destination:
+        host: backstage-backend.developer-portal.svc.cluster.local
+        subset: canary
+    retries:
+      attempts: 2
+      perTryTimeout: 5s
+      
+  # Staging environment with aggressive fault injection
+  - match:
+    - headers:
+        x-environment:
+          exact: "staging"
+    fault:
+      delay:
+        percentage:
+          value: 10.0
+        fixedDelay: 1s
+      abort:
+        percentage:
+          value: 5.0
+        httpStatus: 500
+    route:
+    - destination:
+        host: backstage-backend.developer-portal.svc.cluster.local
+    retries:
+      attempts: 3
+      perTryTimeout: 15s
+      
+  # Default route with minimal fault injection
+  - route:
+    - destination:
+        host: backstage-backend.developer-portal.svc.cluster.local
+        subset: stable
+    fault:
+      delay:
+        percentage:
+          value: 0.01
+        fixedDelay: 50ms
+---
+# Database fault injection for testing
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: postgres-fault-injection
+  namespace: developer-portal
+spec:
+  hosts:
+  - postgres.developer-portal.svc.cluster.local
+  http:
+  # Test environment with database connection issues
+  - match:
+    - headers:
+        x-test-db-fault:
+          exact: "true"
+    fault:
+      delay:
+        percentage:
+          value: 20.0
+        fixedDelay: 2s
+      abort:
+        percentage:
+          value: 10.0
+        httpStatus: 503
+    route:
+    - destination:
+        host: postgres.developer-portal.svc.cluster.local
+    timeout: 30s
+    retries:
+      attempts: 2
+      perTryTimeout: 10s
+      
+  # Production traffic with minimal delays
+  - route:
+    - destination:
+        host: postgres.developer-portal.svc.cluster.local
+    fault:
+      delay:
+        percentage:
+          value: 0.01
+        fixedDelay: 10ms
+---
+# External API fault injection
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: external-api-fault-injection
+  namespace: developer-portal
+spec:
+  hosts:
+  - api.github.com
+  http:
+  # Test external API resilience
+  - match:
+    - headers:
+        x-test-external-fault:
+          exact: "true"
+    fault:
+      delay:
+        percentage:
+          value: 30.0
+        fixedDelay: 5s
+      abort:
+        percentage:
+          value: 15.0
+        httpStatus: 429 # Rate limit simulation
+    route:
+    - destination:
+        host: api.github.com
+    timeout: 30s
+    retries:
+      attempts: 3
+      perTryTimeout: 10s
+      retryOn: 5xx,reset,connect-failure,refused-stream,retriable-4xx
+      
+  # Normal traffic with occasional delays
+  - route:
+    - destination:
+        host: api.github.com
+    fault:
+      delay:
+        percentage:
+          value: 1.0
+        fixedDelay: 200ms
+    timeout: 20s
+    retries:
+      attempts: 3
+      perTryTimeout: 7s
+---
+# Redis fault injection for cache testing
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: redis-fault-injection
+  namespace: developer-portal
+spec:
+  hosts:
+  - redis.developer-portal.svc.cluster.local
+  http:
+  # Cache failure simulation
+  - match:
+    - headers:
+        x-test-cache-fault:
+          exact: "true"
+    fault:
+      delay:
+        percentage:
+          value: 25.0
+        fixedDelay: 1s
+      abort:
+        percentage:
+          value: 20.0
+        httpStatus: 503
+    route:
+    - destination:
+        host: redis.developer-portal.svc.cluster.local
+    timeout: 10s
+    retries:
+      attempts: 1 # Don't retry cache operations aggressively
+      perTryTimeout: 3s
+      
+  # Normal cache operations
+  - route:
+    - destination:
+        host: redis.developer-portal.svc.cluster.local
+    fault:
+      delay:
+        percentage:
+          value: 0.1
+        fixedDelay: 5ms
+---
+# Chaos testing virtual service
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: backstage-chaos-testing
+  namespace: developer-portal
+spec:
+  hosts:
+  - backstage.local
+  gateways:
+  - backstage-gateway
+  http:
+  # Chaos monkey endpoint for testing
+  - match:
+    - uri:
+        prefix: /chaos/
+    - headers:
+        x-chaos-test:
+          regex: ".*"
+    fault:
+      delay:
+        percentage:
+          value: 50.0
+        fixedDelay: 3s
+      abort:
+        percentage:
+          value: 30.0
+        httpStatus: 500
+    route:
+    - destination:
+        host: backstage-frontend.developer-portal.svc.cluster.local
+    timeout: 10s
+    retries:
+      attempts: 1
+      perTryTimeout: 5s
+      
+  # API stress testing
+  - match:
+    - uri:
+        prefix: /api/stress
+    fault:
+      delay:
+        percentage:
+          value: 25.0
+        fixedDelay: 2s
+      abort:
+        percentage:
+          value: 10.0
+        httpStatus: 503
+    route:
+    - destination:
+        host: backstage-backend.developer-portal.svc.cluster.local
+    timeout: 30s
+    retries:
+      attempts: 2
+      perTryTimeout: 15s
+      
+  # Load testing with high concurrency simulation
+  - match:
+    - uri:
+        prefix: /api/load-test
+    fault:
+      delay:
+        percentage:
+          value: 80.0
+        fixedDelay: 5s
+    route:
+    - destination:
+        host: backstage-backend.developer-portal.svc.cluster.local
+    timeout: 60s
+    retries:
+      attempts: 1
+      perTryTimeout: 30s
+---
+# Fault injection controller and automation
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: chaos-engineering-schedule
+  namespace: developer-portal
+spec:
+  schedule: "0 2 * * 1" # Weekly on Monday at 2 AM
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app: chaos-engineering
+            version: v1
+        spec:
+          serviceAccountName: chaos-engineering
+          containers:
+          - name: chaos-controller
+            image: alpine/curl:latest
+            command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Starting weekly chaos engineering tests..."
+              
+              # Test 1: Database connection failures
+              kubectl annotate virtualservice postgres-fault-injection -n developer-portal \
+                chaos.istio.io/fault-delay="30.0" \
+                chaos.istio.io/fault-abort="20.0" \
+                --overwrite
+              
+              echo "Injecting database faults for 10 minutes..."
+              sleep 600
+              
+              # Reset database faults
+              kubectl annotate virtualservice postgres-fault-injection -n developer-portal \
+                chaos.istio.io/fault-delay="0.01" \
+                chaos.istio.io/fault-abort="0.0" \
+                --overwrite
+              
+              echo "Database fault injection completed"
+              
+              # Test 2: External API failures
+              kubectl annotate virtualservice external-api-fault-injection -n developer-portal \
+                chaos.istio.io/fault-delay="50.0" \
+                chaos.istio.io/fault-abort="25.0" \
+                --overwrite
+              
+              echo "Injecting external API faults for 5 minutes..."
+              sleep 300
+              
+              # Reset external API faults
+              kubectl annotate virtualservice external-api-fault-injection -n developer-portal \
+                chaos.istio.io/fault-delay="1.0" \
+                chaos.istio.io/fault-abort="0.0" \
+                --overwrite
+              
+              echo "External API fault injection completed"
+              
+              # Test 3: Application layer faults
+              kubectl annotate virtualservice backstage-fault-injection -n developer-portal \
+                chaos.istio.io/fault-delay="15.0" \
+                chaos.istio.io/fault-abort="5.0" \
+                --overwrite
+              
+              echo "Injecting application faults for 15 minutes..."
+              sleep 900
+              
+              # Reset application faults
+              kubectl annotate virtualservice backstage-fault-injection -n developer-portal \
+                chaos.istio.io/fault-delay="0.1" \
+                chaos.istio.io/fault-abort="0.01" \
+                --overwrite
+              
+              echo "Chaos engineering tests completed successfully"
+            resources:
+              requests:
+                cpu: 100m
+                memory: 128Mi
+              limits:
+                cpu: 200m
+                memory: 256Mi
+          restartPolicy: OnFailure
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: chaos-engineering
+  namespace: developer-portal
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: chaos-engineering
+  namespace: developer-portal
+rules:
+- apiGroups: ["networking.istio.io"]
+  resources: ["virtualservices"]
+  verbs: ["get", "list", "patch", "update"]
+- apiGroups: [""]
+  resources: ["events"]
+  verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: chaos-engineering
+  namespace: developer-portal
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: chaos-engineering
+subjects:
+- kind: ServiceAccount
+  name: chaos-engineering
+  namespace: developer-portal
+---
+# Fault injection monitoring and alerting
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fault-injection-dashboard
+  namespace: developer-portal
+  labels:
+    grafana_dashboard: "1"
+data:
+  fault-injection-dashboard.json: |
+    {
+      "dashboard": {
+        "id": null,
+        "title": "Istio Fault Injection Dashboard",
+        "tags": ["istio", "fault-injection", "chaos-engineering"],
+        "style": "dark",
+        "timezone": "browser",
+        "panels": [
+          {
+            "id": 1,
+            "title": "Injected Delays",
+            "type": "timeseries",
+            "targets": [
+              {
+                "expr": "rate(istio_request_duration_milliseconds_sum{source_app=\"istio-proxy\"}[5m]) / rate(istio_request_duration_milliseconds_count{source_app=\"istio-proxy\"}[5m])",
+                "legendFormat": "Average Latency - {{ destination_service_name }}"
+              }
+            ]
+          },
+          {
+            "id": 2,
+            "title": "Injected Errors",
+            "type": "timeseries",
+            "targets": [
+              {
+                "expr": "rate(istio_requests_total{response_code=\"503\"}[5m])",
+                "legendFormat": "503 Errors - {{ destination_service_name }}"
+              }
+            ]
+          },
+          {
+            "id": 3,
+            "title": "Fault Injection Rate",
+            "type": "stat",
+            "targets": [
+              {
+                "expr": "sum(rate(istio_requests_total{response_code=~\"5..\"}[5m])) / sum(rate(istio_requests_total[5m])) * 100",
+                "legendFormat": "Error Rate %"
+              }
+            ]
+          },
+          {
+            "id": 4,
+            "title": "Retry Attempts",
+            "type": "timeseries",
+            "targets": [
+              {
+                "expr": "rate(istio_request_total{response_flags=~\".*UR.*\"}[5m])",
+                "legendFormat": "Upstream Retries - {{ destination_service_name }}"
+              }
+            ]
+          }
+        ],
+        "time": {
+          "from": "now-6h",
+          "to": "now"
+        },
+        "refresh": "10s"
+      }
+    }

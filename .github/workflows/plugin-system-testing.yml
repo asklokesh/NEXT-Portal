@@ -1,0 +1,766 @@
+name: Plugin System Comprehensive Testing
+
+on:
+  push:
+    branches: [ main, develop ]
+    paths: 
+      - 'src/components/plugins/**'
+      - 'src/services/**'
+      - 'tests/**'
+      - '.github/workflows/**'
+  pull_request:
+    branches: [ main, develop ]
+    paths:
+      - 'src/components/plugins/**' 
+      - 'src/services/**'
+      - 'tests/**'
+  schedule:
+    # Run full test suite daily at 2 AM UTC
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+    inputs:
+      test_suite:
+        description: 'Test suite to run'
+        required: true
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - unit
+          - integration
+          - e2e
+          - performance
+          - security
+          - compatibility
+
+env:
+  NODE_VERSION: '18.x'
+  DOCKER_REGISTRY: ghcr.io
+  BACKSTAGE_VERSION: '1.39.0'
+  PLAYWRIGHT_BROWSERS_PATH: 0
+
+jobs:
+  # Job 1: Test Environment Setup and Validation
+  setup-test-environment:
+    name: Setup Test Environment
+    runs-on: ubuntu-latest
+    outputs:
+      cache-key: ${{ steps.cache-key.outputs.key }}
+      backstage-version: ${{ steps.version-check.outputs.version }}
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Generate Cache Key
+        id: cache-key
+        run: |
+          echo "key=test-deps-$(date +'%Y-%m-%d')-$(echo '${{ hashFiles('package-lock.json', 'tests/**/*.json') }}' | md5sum | cut -d' ' -f1)" >> $GITHUB_OUTPUT
+
+      - name: Cache Test Dependencies
+        uses: actions/cache@v3
+        with:
+          path: |
+            node_modules
+            ~/.cache/playwright
+            ~/.cache/ms-playwright
+            tests/e2e/test-results
+          key: ${{ steps.cache-key.outputs.key }}
+          restore-keys: |
+            test-deps-$(date +'%Y-%m-%d')-
+            test-deps-
+
+      - name: Install Dependencies
+        run: |
+          npm ci --prefer-offline --no-audit
+          npm run db:generate
+
+      - name: Install Playwright Browsers
+        run: npx playwright install --with-deps
+
+      - name: Verify Backstage Version Compatibility
+        id: version-check
+        run: |
+          BACKSTAGE_VERSION=$(node -e "console.log(require('./package.json').dependencies['@backstage/catalog-client'].replace(/[\^~]/, ''))")
+          echo "version=$BACKSTAGE_VERSION" >> $GITHUB_OUTPUT
+          echo "Backstage version: $BACKSTAGE_VERSION"
+
+      - name: Setup Test Database
+        run: |
+          npm run db:setup
+          npm run db:migrate
+
+      - name: Validate Test Environment
+        run: |
+          npm run typecheck
+          npm run lint
+          echo "Test environment validation completed"
+
+  # Job 2: Unit Tests with Coverage
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    needs: setup-test-environment
+    if: ${{ github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'unit' || github.event.inputs.test_suite == '' }}
+    strategy:
+      matrix:
+        test-group: [services, components, utils, hooks]
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Restore Dependencies Cache
+        uses: actions/cache@v3
+        with:
+          path: |
+            node_modules
+            ~/.cache/playwright
+          key: ${{ needs.setup-test-environment.outputs.cache-key }}
+
+      - name: Run Unit Tests
+        run: |
+          npm run test -- --coverage --testPathPattern="src/${{ matrix.test-group }}" --ci --json --outputFile=test-results-${{ matrix.test-group }}.json
+        env:
+          CI: true
+          NODE_ENV: test
+
+      - name: Upload Test Results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: unit-test-results-${{ matrix.test-group }}
+          path: |
+            test-results-${{ matrix.test-group }}.json
+            coverage/
+          retention-days: 30
+
+      - name: Comment Coverage on PR
+        uses: marocchino/sticky-pull-request-comment@v2
+        if: github.event_name == 'pull_request'
+        with:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          header: coverage-${{ matrix.test-group }}
+          path: coverage/coverage-summary.json
+
+  # Job 3: Integration Tests
+  integration-tests:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    needs: setup-test-environment
+    if: ${{ github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'integration' || github.event.inputs.test_suite == '' }}
+    services:
+      postgres:
+        image: postgres:14
+        env:
+          POSTGRES_PASSWORD: testpass
+          POSTGRES_USER: testuser
+          POSTGRES_DB: testdb
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+
+    strategy:
+      matrix:
+        test-suite: 
+          - plugin-registry-integration
+          - plugin-configuration-integration
+          - security-integration
+          - monitoring-integration
+    
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Restore Dependencies Cache
+        uses: actions/cache@v3
+        with:
+          path: |
+            node_modules
+            ~/.cache/playwright
+          key: ${{ needs.setup-test-environment.outputs.cache-key }}
+
+      - name: Setup Integration Test Environment
+        run: |
+          npm run db:setup
+          npm run db:seed
+        env:
+          DATABASE_URL: postgresql://testuser:testpass@localhost:5432/testdb
+          REDIS_URL: redis://localhost:6379
+
+      - name: Run Integration Tests
+        run: |
+          npm test -- tests/integration/${{ matrix.test-suite }}.test.ts --ci --json --outputFile=integration-${{ matrix.test-suite }}-results.json
+        env:
+          CI: true
+          NODE_ENV: test
+          DATABASE_URL: postgresql://testuser:testpass@localhost:5432/testdb
+          REDIS_URL: redis://localhost:6379
+          BACKSTAGE_VERSION: ${{ needs.setup-test-environment.outputs.backstage-version }}
+
+      - name: Upload Integration Test Results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: integration-test-results-${{ matrix.test-suite }}
+          path: integration-${{ matrix.test-suite }}-results.json
+          retention-days: 30
+
+  # Job 4: End-to-End Tests
+  e2e-tests:
+    name: E2E Tests
+    runs-on: ubuntu-latest
+    needs: setup-test-environment
+    if: ${{ github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'e2e' || github.event.inputs.test_suite == '' }}
+    strategy:
+      matrix:
+        browser: [chromium, firefox, webkit]
+        test-suite:
+          - plugin-marketplace-workflow
+          - plugin-installation-workflow
+          - plugin-configuration-workflow
+    
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Restore Dependencies Cache
+        uses: actions/cache@v3
+        with:
+          path: |
+            node_modules
+            ~/.cache/playwright
+            ~/.cache/ms-playwright
+          key: ${{ needs.setup-test-environment.outputs.cache-key }}
+
+      - name: Build Application
+        run: |
+          npm run build
+        env:
+          NODE_ENV: production
+          NEXT_PUBLIC_API_URL: http://localhost:4400
+
+      - name: Start Test Server
+        run: |
+          npm run start &
+          sleep 30
+          curl --retry 10 --retry-delay 3 --retry-connrefused http://localhost:4400/health
+        env:
+          PORT: 4400
+          NODE_ENV: production
+
+      - name: Run E2E Tests
+        run: |
+          npx playwright test tests/e2e/${{ matrix.test-suite }}.spec.ts --project=${{ matrix.browser }} --reporter=json
+        env:
+          PLAYWRIGHT_BASE_URL: http://localhost:4400
+          CI: true
+
+      - name: Upload E2E Test Results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: e2e-test-results-${{ matrix.browser }}-${{ matrix.test-suite }}
+          path: |
+            tests/e2e/test-results/
+            tests/e2e/reports/
+          retention-days: 30
+
+      - name: Upload Screenshots and Videos
+        uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: e2e-failures-${{ matrix.browser }}-${{ matrix.test-suite }}
+          path: |
+            tests/e2e/test-results/**/*.png
+            tests/e2e/test-results/**/*.webm
+          retention-days: 15
+
+  # Job 5: Performance Tests
+  performance-tests:
+    name: Performance Tests
+    runs-on: ubuntu-latest
+    needs: setup-test-environment
+    if: ${{ github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'performance' || github.event.inputs.test_suite == '' }}
+    strategy:
+      matrix:
+        test-type: [load-testing, stress-testing]
+    
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install k6
+        run: |
+          sudo gpg -k
+          sudo gpg --no-default-keyring --keyring /usr/share/keyrings/k6-archive-keyring.gpg --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
+          echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" | sudo tee /etc/apt/sources.list.d/k6.list
+          sudo apt-get update
+          sudo apt-get install k6
+
+      - name: Restore Dependencies Cache
+        uses: actions/cache@v3
+        with:
+          path: node_modules
+          key: ${{ needs.setup-test-environment.outputs.cache-key }}
+
+      - name: Build and Start Application
+        run: |
+          npm run build
+          npm run start &
+          sleep 30
+        env:
+          NODE_ENV: production
+          PORT: 4400
+
+      - name: Run Performance Tests
+        run: |
+          k6 run tests/performance/plugin-${{ matrix.test-type }}.js --out json=performance-results-${{ matrix.test-type }}.json
+        env:
+          BASE_URL: http://localhost:4400
+          K6_PROMETHEUS_RW_SERVER_URL: ${{ secrets.K6_PROMETHEUS_URL }}
+
+      - name: Upload Performance Results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: performance-test-results-${{ matrix.test-type }}
+          path: performance-results-${{ matrix.test-type }}.json
+          retention-days: 30
+
+      - name: Performance Regression Check
+        run: |
+          node scripts/performance-regression-check.js performance-results-${{ matrix.test-type }}.json
+        continue-on-error: true
+
+  # Job 6: Security Tests
+  security-tests:
+    name: Security Tests
+    runs-on: ubuntu-latest
+    needs: setup-test-environment
+    if: ${{ github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'security' || github.event.inputs.test_suite == '' }}
+    strategy:
+      matrix:
+        test-type: [plugin-security, rbac-integration]
+    
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Restore Dependencies Cache
+        uses: actions/cache@v3
+        with:
+          path: |
+            node_modules
+            ~/.cache/playwright
+          key: ${{ needs.setup-test-environment.outputs.cache-key }}
+
+      - name: Run Security Tests
+        run: |
+          npm test -- tests/security/${{ matrix.test-type }}.test.ts --ci --json --outputFile=security-${{ matrix.test-type }}-results.json
+        env:
+          CI: true
+          NODE_ENV: test
+          SECURITY_POLICY_MODE: strict
+          PLUGIN_SANDBOXING_ENABLED: true
+
+      - name: Run OWASP ZAP Security Scan
+        if: matrix.test-type == 'plugin-security'
+        uses: zaproxy/action-full-scan@v0.7.0
+        with:
+          target: 'http://localhost:4400'
+          rules_file_name: '.zap/rules.tsv'
+          cmd_options: '-a'
+
+      - name: Upload Security Test Results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: security-test-results-${{ matrix.test-type }}
+          path: |
+            security-${{ matrix.test-type }}-results.json
+            report_html.html
+            report_json.json
+          retention-days: 30
+
+  # Job 7: Compatibility Tests
+  compatibility-tests:
+    name: Compatibility Tests
+    runs-on: ubuntu-latest
+    needs: setup-test-environment
+    if: ${{ github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'compatibility' || github.event.inputs.test_suite == '' }}
+    strategy:
+      matrix:
+        browser: [chromium, firefox, webkit]
+        backstage-version: ['1.35.0', '1.39.0', '1.40.0']
+    
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Restore Dependencies Cache
+        uses: actions/cache@v3
+        with:
+          path: |
+            node_modules
+            ~/.cache/playwright
+          key: ${{ needs.setup-test-environment.outputs.cache-key }}
+
+      - name: Run Cross-Browser Compatibility Tests
+        run: |
+          npx playwright test tests/compatibility/cross-browser-testing.spec.ts --project=${{ matrix.browser }}
+        env:
+          PLAYWRIGHT_BASE_URL: http://localhost:4400
+          BACKSTAGE_VERSION: ${{ matrix.backstage-version }}
+
+      - name: Run Backstage Version Compatibility Tests
+        run: |
+          npm test -- tests/compatibility/backstage-version-compatibility.test.ts --ci
+        env:
+          BACKSTAGE_VERSION: ${{ matrix.backstage-version }}
+
+      - name: Upload Compatibility Test Results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: compatibility-test-results-${{ matrix.browser }}-${{ matrix.backstage-version }}
+          path: |
+            tests/compatibility/test-results/
+            tests/compatibility/reports/
+          retention-days: 30
+
+  # Job 8: Failure Scenario Tests
+  failure-scenario-tests:
+    name: Failure Scenario Tests
+    runs-on: ubuntu-latest
+    needs: setup-test-environment
+    if: ${{ github.event.inputs.test_suite == 'all' || github.event_name == 'schedule' }}
+    strategy:
+      matrix:
+        scenario: [network-failures, system-recovery]
+    
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Restore Dependencies Cache
+        uses: actions/cache@v3
+        with:
+          path: |
+            node_modules
+            ~/.cache/playwright
+          key: ${{ needs.setup-test-environment.outputs.cache-key }}
+
+      - name: Build Application
+        run: npm run build
+
+      - name: Start Test Server
+        run: |
+          npm run start &
+          sleep 30
+
+      - name: Run Network Failure Tests
+        if: matrix.scenario == 'network-failures'
+        run: |
+          npx playwright test tests/failure-scenarios/network-failure-testing.spec.ts
+        env:
+          PLAYWRIGHT_BASE_URL: http://localhost:4400
+
+      - name: Run System Recovery Tests
+        if: matrix.scenario == 'system-recovery'
+        run: |
+          npm test -- tests/failure-scenarios/system-recovery-testing.test.ts --ci
+        env:
+          NODE_ENV: test
+          RECOVERY_MODE: automated
+
+      - name: Upload Failure Test Results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: failure-scenario-results-${{ matrix.scenario }}
+          path: |
+            tests/failure-scenarios/test-results/
+            tests/failure-scenarios/reports/
+          retention-days: 30
+
+  # Job 9: Test Results Aggregation and Reporting
+  test-results-aggregation:
+    name: Aggregate Test Results
+    runs-on: ubuntu-latest
+    needs: 
+      - unit-tests
+      - integration-tests
+      - e2e-tests
+      - performance-tests
+      - security-tests
+      - compatibility-tests
+    if: always()
+    
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Download All Test Results
+        uses: actions/download-artifact@v4
+        with:
+          path: test-results/
+
+      - name: Install Report Dependencies
+        run: |
+          npm install --no-save junit-report-merger jest-junit-reporter
+
+      - name: Aggregate Test Results
+        run: |
+          node scripts/aggregate-test-results.js test-results/
+        continue-on-error: true
+
+      - name: Generate Comprehensive Test Report
+        run: |
+          node scripts/generate-test-report.js
+        continue-on-error: true
+
+      - name: Upload Aggregated Results
+        uses: actions/upload-artifact@v4
+        with:
+          name: comprehensive-test-report
+          path: |
+            test-summary.html
+            test-summary.json
+            coverage-report/
+          retention-days: 90
+
+      - name: Comment Test Summary on PR
+        uses: marocchino/sticky-pull-request-comment@v2
+        if: github.event_name == 'pull_request'
+        with:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          header: test-summary
+          path: test-summary.md
+
+      - name: Update Status Checks
+        run: |
+          node scripts/update-status-checks.js ${{ github.sha }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Job 10: Deploy Test Reports (for scheduled runs)
+  deploy-test-reports:
+    name: Deploy Test Reports
+    runs-on: ubuntu-latest
+    needs: test-results-aggregation
+    if: github.event_name == 'schedule'
+    
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Download Test Reports
+        uses: actions/download-artifact@v4
+        with:
+          name: comprehensive-test-report
+          path: test-reports/
+
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: test-reports/
+          destination_dir: test-reports/$(date +'%Y-%m-%d')
+
+      - name: Update Latest Report Link
+        run: |
+          echo "Latest test report: https://$(echo ${{ github.repository }} | tr '[:upper:]' '[:lower:]').github.io/test-reports/$(date +'%Y-%m-%d')/test-summary.html"
+
+  # Job 11: Notify Test Results
+  notify-results:
+    name: Notify Test Results
+    runs-on: ubuntu-latest
+    needs: 
+      - test-results-aggregation
+      - deploy-test-reports
+    if: always() && (failure() || github.event_name == 'schedule')
+    
+    steps:
+      - name: Send Slack Notification on Failure
+        uses: 8398a7/action-slack@v3
+        if: failure()
+        with:
+          status: ${{ job.status }}
+          channel: '#plugin-system-alerts'
+          webhook_url: ${{ secrets.SLACK_WEBHOOK }}
+          fields: repo,message,commit,author,action,eventName,ref,workflow
+          text: |
+            Plugin System Test Suite Failed!
+            Repository: ${{ github.repository }}
+            Branch: ${{ github.ref_name }}
+            Commit: ${{ github.sha }}
+            Workflow: ${{ github.workflow }}
+
+      - name: Send Teams Notification
+        uses: aliencube/microsoft-teams-actions@v0.8.0
+        if: failure()
+        with:
+          webhook_uri: ${{ secrets.TEAMS_WEBHOOK }}
+          title: Plugin System Test Failure
+          summary: Critical test failure in plugin management system
+          theme_color: 'FF0000'
+          sections: |
+            [
+              {
+                "activityTitle": "Test Suite Failed",
+                "activitySubtitle": "${{ github.repository }}",
+                "facts": [
+                  {
+                    "name": "Repository",
+                    "value": "${{ github.repository }}"
+                  },
+                  {
+                    "name": "Branch",
+                    "value": "${{ github.ref_name }}"
+                  },
+                  {
+                    "name": "Commit",
+                    "value": "${{ github.sha }}"
+                  },
+                  {
+                    "name": "Workflow",
+                    "value": "${{ github.workflow }}"
+                  }
+                ]
+              }
+            ]
+
+      - name: Create GitHub Issue on Failure
+        uses: actions/github-script@v6
+        if: failure() && github.event_name == 'schedule'
+        with:
+          script: |
+            github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `Scheduled Plugin System Test Failure - ${new Date().toISOString().split('T')[0]}`,
+              body: `## Test Suite Failure Report
+
+              **Date**: ${new Date().toISOString()}
+              **Workflow**: ${context.workflow}
+              **Run ID**: ${context.runId}
+              **Commit**: ${context.sha}
+
+              ### Failed Jobs
+              Check the [workflow run](${context.payload.repository.html_url}/actions/runs/${context.runId}) for details.
+
+              ### Next Steps
+              1. Review failed test results
+              2. Check for system degradation
+              3. Investigate root cause
+              4. Implement fixes
+              5. Re-run tests
+
+              **Priority**: High
+              **Auto-generated**: Yes`,
+              labels: ['bug', 'test-failure', 'automated', 'high-priority']
+            })
+
+# Additional workflow for plugin-specific testing on plugin changes
+plugin-change-detection:
+  name: Plugin Change Detection
+  runs-on: ubuntu-latest
+  outputs:
+    changed-plugins: ${{ steps.changes.outputs.plugins }}
+    
+  steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Detect Changed Plugin Files
+      uses: dorny/paths-filter@v2
+      id: changes
+      with:
+        filters: |
+          plugins:
+            - 'src/components/plugins/**'
+            - 'src/services/plugins/**'
+            - 'tests/plugins/**'
+          configs:
+            - 'src/components/configuration/**'
+            - 'src/services/configuration/**'
+            - 'tests/configuration/**'
+          security:
+            - 'src/services/security/**'
+            - 'tests/security/**'
+
+    - name: Output Changed Components
+      run: |
+        echo "Changed plugins: ${{ steps.changes.outputs.plugins }}"
+        echo "Changed configs: ${{ steps.changes.outputs.configs }}"
+        echo "Changed security: ${{ steps.changes.outputs.security }}"

@@ -1,0 +1,53 @@
+# Technical synonyms for search enhancement
+
+# Programming Languages
+javascript,js,node,nodejs
+typescript,ts,tsx
+python,py
+java,jvm
+golang,go
+csharp,c#,dotnet,.net
+php,php7,php8
+
+# Frameworks
+react,reactjs
+angular,angularjs
+vue,vuejs
+spring,spring-boot,springboot
+django,flask
+laravel,symfony
+rails,ruby-on-rails
+
+# Databases
+postgresql,postgres,psql
+mysql,mariadb
+mongodb,mongo
+redis,cache
+elasticsearch,elastic,search-engine
+
+# Infrastructure
+kubernetes,k8s
+docker,container
+aws,amazon-web-services
+gcp,google-cloud
+azure,microsoft-azure
+terraform,iac,infrastructure-as-code
+
+# Architecture Patterns
+microservice,microservices,service,api
+rest,restful,http-api
+graphql,gql,graph-api
+grpc,rpc
+
+# DevOps
+cicd,ci/cd,continuous-integration,continuous-deployment,pipeline
+monitoring,observability,metrics,alerting
+logging,logs,audit
+testing,tests,qa,quality-assurance
+
+# Common Terms
+frontend,front-end,ui,user-interface
+backend,back-end,server,api
+fullstack,full-stack
+web,webapp,web-application
+mobile,ios,android,app

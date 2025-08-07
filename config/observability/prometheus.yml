@@ -1,0 +1,102 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: 'saas-idp'
+    environment: 'development'
+
+rule_files:
+  - "alert_rules.yml"
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+          - alertmanager:9093
+
+scrape_configs:
+  # Prometheus itself
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+    scrape_interval: 30s
+    metrics_path: /metrics
+
+  # SaaS IDP Application
+  - job_name: 'saas-idp-app'
+    static_configs:
+      - targets: ['host.docker.internal:4400']
+    scrape_interval: 15s
+    metrics_path: /api/plugin-observability
+    params:
+      action: ['metrics']
+    scrape_timeout: 10s
+    honor_labels: true
+
+  # OpenTelemetry Collector
+  - job_name: 'otel-collector'
+    static_configs:
+      - targets: ['otel-collector:8888', 'otel-collector:8889']
+    scrape_interval: 30s
+
+  # Node Exporter (System Metrics)
+  - job_name: 'node-exporter'
+    static_configs:
+      - targets: ['node-exporter:9100']
+    scrape_interval: 30s
+
+  # cAdvisor (Container Metrics)
+  - job_name: 'cadvisor'
+    static_configs:
+      - targets: ['cadvisor:8080']
+    scrape_interval: 30s
+
+  # Redis
+  - job_name: 'redis'
+    static_configs:
+      - targets: ['redis:6379']
+    scrape_interval: 30s
+
+  # Jaeger
+  - job_name: 'jaeger'
+    static_configs:
+      - targets: ['jaeger:14269']
+    scrape_interval: 30s
+    metrics_path: /metrics
+
+  # Plugin-specific metrics
+  - job_name: 'plugin-catalog'
+    static_configs:
+      - targets: ['host.docker.internal:4400']
+    scrape_interval: 15s
+    metrics_path: /api/plugin-observability
+    params:
+      action: ['metrics']
+      pluginId: ['catalog-plugin']
+
+  - job_name: 'plugin-auth'
+    static_configs:
+      - targets: ['host.docker.internal:4400']
+    scrape_interval: 15s
+    metrics_path: /api/plugin-observability
+    params:
+      action: ['metrics']
+      pluginId: ['auth-plugin']
+
+  - job_name: 'plugin-cicd'
+    static_configs:
+      - targets: ['host.docker.internal:4400']
+    scrape_interval: 15s
+    metrics_path: /api/plugin-observability
+    params:
+      action: ['metrics']
+      pluginId: ['ci-cd-plugin']
+
+  - job_name: 'plugin-monitoring'
+    static_configs:
+      - targets: ['host.docker.internal:4400']
+    scrape_interval: 15s
+    metrics_path: /api/plugin-observability
+    params:
+      action: ['metrics']
+      pluginId: ['monitoring-plugin']

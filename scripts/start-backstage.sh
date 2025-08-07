@@ -1,0 +1,39 @@
+#!/bin/bash
+
+# Script to start Backstage backend
+set -e
+
+echo "🚀 Starting Backstage Backend..."
+
+# Change to backstage directory
+cd "$(dirname "$0")/../config/docker/backstage"
+
+# Check if node_modules exists
+if [ ! -d "node_modules" ]; then
+    echo "📦 Installing dependencies..."
+    yarn install --frozen-lockfile
+fi
+
+# Check if backend was built
+if [ ! -d "packages/backend/dist" ]; then
+    echo "🔨 Building backend..."
+    yarn build:backend
+fi
+
+# Export environment variables
+export POSTGRES_HOST=localhost
+export POSTGRES_PORT=5432
+export POSTGRES_USER=postgres
+export POSTGRES_PASSWORD=postgres
+export POSTGRES_DB=backstage
+
+echo "🎯 Starting PostgreSQL (if not already running)..."
+# Try to start postgres if not running (macOS with homebrew)
+if command -v brew &> /dev/null; then
+    brew services start postgresql@16 || brew services start postgresql || echo "PostgreSQL may already be running"
+fi
+
+# Start the backend
+echo "🌟 Starting Backstage backend on port 7007..."
+cd packages/backend
+yarn start

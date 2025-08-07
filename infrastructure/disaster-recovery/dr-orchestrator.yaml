@@ -1,0 +1,679 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dr-orchestrator-config
+  namespace: developer-portal
+  labels:
+    app: dr-orchestrator
+    component: disaster-recovery
+data:
+  dr-config.yaml: |
+    # Disaster Recovery Orchestration Configuration
+    apiVersion: dr.portal.dev/v1
+    kind: DisasterRecoveryConfiguration
+    metadata:
+      name: plugin-ecosystem-dr
+      version: "2.0"
+      created: "2025-01-07T10:00:00Z"
+    
+    # Recovery objectives
+    objectives:
+      rto: "4h"  # Recovery Time Objective
+      rpo: "15min"  # Recovery Point Objective
+      availability_target: "99.9%"
+      data_loss_tolerance: "minimal"
+      
+    # Site configurations
+    sites:
+      primary:
+        name: "us-west-2-primary"
+        region: "us-west-2"
+        zone: "us-west-2a"
+        cluster: "portal-primary"
+        endpoint: "https://portal.company.com"
+        status: "active"
+        priority: 1
+        
+      secondary:
+        name: "us-east-1-secondary" 
+        region: "us-east-1"
+        zone: "us-east-1a"
+        cluster: "portal-secondary"
+        endpoint: "https://dr.portal.company.com"
+        status: "standby"
+        priority: 2
+        
+      tertiary:
+        name: "eu-west-1-tertiary"
+        region: "eu-west-1"
+        zone: "eu-west-1a"
+        cluster: "portal-tertiary"
+        endpoint: "https://eu.portal.company.com"
+        status: "cold"
+        priority: 3
+    
+    # Failover strategies
+    failover:
+      automatic:
+        enabled: false  # Manual approval required for safety
+        triggers:
+          - type: "health_check_failure"
+            threshold: 3
+            duration: "5min"
+          - type: "availability_below"
+            threshold: "95%"
+            duration: "10min"
+          - type: "error_rate_above"
+            threshold: "5%"
+            duration: "5min"
+            
+      manual:
+        enabled: true
+        require_confirmation: true
+        confirmation_timeout: "15min"
+        approval_required: true
+        approvers:
+          - "ops-team@company.com"
+          - "platform-team@company.com"
+          
+      procedures:
+        pre_failover:
+          - validate_secondary_site
+          - verify_data_consistency
+          - notify_stakeholders
+          - create_failover_snapshot
+          
+        failover_steps:
+          - stop_primary_traffic
+          - validate_backup_integrity
+          - restore_secondary_database
+          - restore_secondary_redis
+          - restore_plugin_state
+          - update_dns_records
+          - start_secondary_services
+          - validate_secondary_health
+          - route_traffic_to_secondary
+          - notify_completion
+          
+        post_failover:
+          - monitor_secondary_performance
+          - validate_plugin_functionality
+          - update_monitoring_dashboards
+          - document_failover_events
+    
+    # Failback procedures
+    failback:
+      automatic: false
+      require_manual_approval: true
+      validation_required: true
+      
+      procedures:
+        pre_failback:
+          - assess_primary_site_status
+          - validate_primary_repairs
+          - sync_data_from_secondary
+          - verify_plugin_compatibility
+          - prepare_rollback_plan
+          
+        failback_steps:
+          - stop_secondary_traffic
+          - sync_final_data_changes
+          - restore_primary_database
+          - restore_primary_redis
+          - restore_plugin_configurations
+          - start_primary_services
+          - validate_primary_health
+          - update_dns_records
+          - route_traffic_to_primary
+          - standby_secondary_site
+          
+        post_failback:
+          - monitor_primary_performance
+          - validate_data_integrity
+          - update_backup_schedules
+          - conduct_post_mortem
+    
+    # Data replication
+    replication:
+      database:
+        type: "streaming_replication"
+        mode: "asynchronous"
+        lag_threshold: "30s"
+        standby_servers:
+          - host: "portal-db-secondary.company.com"
+            region: "us-east-1"
+            priority: 1
+          - host: "portal-db-tertiary.company.com"
+            region: "eu-west-1" 
+            priority: 2
+            
+      cache:
+        type: "redis_replication"
+        mode: "master_slave"
+        replication_timeout: "10s"
+        slaves:
+          - host: "portal-redis-secondary.company.com"
+            region: "us-east-1"
+          - host: "portal-redis-tertiary.company.com"
+            region: "eu-west-1"
+            
+      storage:
+        type: "cross_region_replication"
+        sync_mode: "eventual_consistency"
+        replication_time: "15min"
+        regions:
+          - "us-west-2"
+          - "us-east-1"
+          - "eu-west-1"
+    
+    # Health monitoring
+    monitoring:
+      health_checks:
+        enabled: true
+        interval: "30s"
+        timeout: "10s"
+        retries: 3
+        
+        endpoints:
+          - name: "primary_api"
+            url: "https://portal.company.com/api/health"
+            critical: true
+          - name: "primary_frontend"
+            url: "https://portal.company.com/health"
+            critical: true
+          - name: "primary_database"
+            type: "postgresql"
+            host: "portal-db-primary.company.com"
+            critical: true
+          - name: "primary_redis"
+            type: "redis"
+            host: "portal-redis-primary.company.com"
+            critical: false
+            
+      metrics:
+        - name: "availability"
+          target: ">99.9%"
+          measurement_window: "5min"
+        - name: "response_time"
+          target: "<500ms"
+          percentile: "95th"
+        - name: "error_rate"
+          target: "<1%"
+          measurement_window: "5min"
+        - name: "database_lag"
+          target: "<30s"
+          measurement_window: "1min"
+          
+      alerts:
+        critical:
+          - condition: "primary_site_down"
+            action: "trigger_failover_evaluation"
+            escalation: "immediate"
+          - condition: "data_corruption_detected"
+            action: "stop_replication"
+            escalation: "immediate"
+            
+        warning:
+          - condition: "replication_lag_high"
+            threshold: ">60s"
+            action: "notify_ops_team"
+          - condition: "backup_failed"
+            action: "retry_and_notify"
+    
+    # Network and DNS
+    networking:
+      dns:
+        provider: "route53"
+        ttl: 60
+        health_check_enabled: true
+        failover_routing: true
+        
+        records:
+          - name: "portal.company.com"
+            type: "A"
+            primary: "1.2.3.4"
+            secondary: "5.6.7.8"
+          - name: "api.portal.company.com"
+            type: "CNAME"
+            primary: "portal.company.com"
+            secondary: "dr.portal.company.com"
+            
+      load_balancer:
+        type: "global"
+        health_check_path: "/health"
+        failover_time: "60s"
+        regions:
+          - region: "us-west-2"
+            weight: 100
+            backup: false
+          - region: "us-east-1"
+            weight: 0
+            backup: true
+    
+    # Plugin-specific DR
+    plugins:
+      critical:
+        plugins: ["auth", "security", "user-management", "notifications"]
+        rto: "1h"
+        rpo: "5min"
+        replication: "synchronous"
+        failover_priority: 1
+        
+      high:
+        plugins: ["catalog", "workflows", "api-docs", "monitoring"]
+        rto: "2h"
+        rpo: "15min"
+        replication: "asynchronous"
+        failover_priority: 2
+        
+      medium:
+        plugins: ["analytics", "reporting", "documentation"]
+        rto: "4h"
+        rpo: "1h"
+        replication: "batch"
+        failover_priority: 3
+        
+      low:
+        plugins: ["experimental", "development-tools"]
+        rto: "8h"
+        rpo: "4h"
+        replication: "daily"
+        failover_priority: 4
+    
+    # Testing and validation
+    testing:
+      disaster_recovery_drills:
+        frequency: "quarterly"
+        scope: "full_failover"
+        automated: true
+        duration: "4h"
+        rollback_required: true
+        
+      backup_testing:
+        frequency: "weekly"
+        scope: "random_plugin_restore"
+        automated: true
+        validation_required: true
+        
+      network_failover_testing:
+        frequency: "monthly"
+        scope: "dns_failover"
+        automated: true
+        
+      procedures:
+        - name: "validate_backup_integrity"
+          frequency: "daily"
+          automated: true
+        - name: "test_plugin_restore"
+          frequency: "weekly"
+          automated: false
+        - name: "simulate_site_failure"
+          frequency: "quarterly"
+          automated: false
+    
+    # Compliance and documentation
+    compliance:
+      frameworks:
+        - "SOC2"
+        - "ISO27001"
+        - "GDPR"
+        
+      requirements:
+        backup_retention: "7_years"
+        audit_trail: "required"
+        encryption_in_transit: "required"
+        encryption_at_rest: "required"
+        
+      documentation:
+        runbooks_location: "/docs/dr/runbooks"
+        procedures_location: "/docs/dr/procedures"
+        test_results_location: "/docs/dr/test-results"
+        audit_logs_location: "/logs/dr/audit"
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dr-orchestrator
+  namespace: developer-portal
+  labels:
+    app: dr-orchestrator
+    component: disaster-recovery
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: dr-orchestrator
+  template:
+    metadata:
+      labels:
+        app: dr-orchestrator
+        component: disaster-recovery
+    spec:
+      serviceAccountName: dr-orchestrator
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        fsGroup: 1001
+      containers:
+        - name: dr-orchestrator
+          image: portal.local:5000/dr-orchestrator:v2.0
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8080
+              name: http
+            - containerPort: 8081
+              name: metrics
+            - containerPort: 9090
+              name: webhook
+          env:
+            - name: LOG_LEVEL
+              value: "INFO"
+            - name: DR_CONFIG_PATH
+              value: "/config/dr-config.yaml"
+            - name: BACKUP_ORCHESTRATOR_ENDPOINT
+              value: "http://backup-orchestrator:8080"
+            - name: PRIMARY_CLUSTER_ENDPOINT
+              valueFrom:
+                secretKeyRef:
+                  name: dr-secrets
+                  key: PRIMARY_CLUSTER_ENDPOINT
+            - name: SECONDARY_CLUSTER_ENDPOINT
+              valueFrom:
+                secretKeyRef:
+                  name: dr-secrets
+                  key: SECONDARY_CLUSTER_ENDPOINT
+            - name: DNS_PROVIDER_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: dns-credentials
+                  key: token
+            - name: SLACK_WEBHOOK_URL
+              valueFrom:
+                secretKeyRef:
+                  name: notification-secrets
+                  key: SLACK_WEBHOOK_URL
+            - name: PAGERDUTY_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: notification-secrets
+                  key: PAGERDUTY_API_KEY
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "250m"
+            limits:
+              memory: "1Gi"
+              cpu: "500m"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          volumeMounts:
+            - name: config
+              mountPath: /config
+              readOnly: true
+            - name: dr-data
+              mountPath: /data
+            - name: kube-configs
+              mountPath: /kube-configs
+              readOnly: true
+            - name: ssh-keys
+              mountPath: /ssh-keys
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: dr-orchestrator-config
+        - name: dr-data
+          persistentVolumeClaim:
+            claimName: dr-data-pvc
+        - name: kube-configs
+          secret:
+            secretName: multi-cluster-kubeconfig
+        - name: ssh-keys
+          secret:
+            secretName: dr-ssh-keys
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: dr-orchestrator
+  namespace: developer-portal
+  labels:
+    app: dr-orchestrator
+    component: disaster-recovery
+spec:
+  type: ClusterIP
+  ports:
+    - port: 8080
+      targetPort: http
+      name: http
+    - port: 8081
+      targetPort: metrics
+      name: metrics
+    - port: 9090
+      targetPort: webhook
+      name: webhook
+  selector:
+    app: dr-orchestrator
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: dr-orchestrator
+  namespace: developer-portal
+  labels:
+    app: dr-orchestrator
+    component: disaster-recovery
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: dr-orchestrator
+  labels:
+    app: dr-orchestrator
+    component: disaster-recovery
+rules:
+  - apiGroups: [""]
+    resources: ["*"]
+    verbs: ["*"]
+  - apiGroups: ["apps"]
+    resources: ["*"]
+    verbs: ["*"]
+  - apiGroups: ["extensions"]
+    resources: ["*"]
+    verbs: ["*"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["*"]
+    verbs: ["*"]
+  - apiGroups: ["batch"]
+    resources: ["*"]
+    verbs: ["*"]
+  - apiGroups: ["dr.portal.dev"]
+    resources: ["*"]
+    verbs: ["*"]
+  - apiGroups: ["backup.portal.dev"]
+    resources: ["*"]
+    verbs: ["get", "list", "watch"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: dr-orchestrator
+  labels:
+    app: dr-orchestrator
+    component: disaster-recovery
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: dr-orchestrator
+subjects:
+  - kind: ServiceAccount
+    name: dr-orchestrator
+    namespace: developer-portal
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: dr-data-pvc
+  namespace: developer-portal
+  labels:
+    app: dr-orchestrator
+    component: disaster-recovery
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: "10Gi"
+  storageClassName: "fast-ssd"
+
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: dr-health-monitor
+  namespace: developer-portal
+  labels:
+    app: dr-orchestrator
+    component: disaster-recovery
+spec:
+  schedule: "*/5 * * * *"  # Every 5 minutes
+  successfulJobsHistoryLimit: 5
+  failedJobsHistoryLimit: 3
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        spec:
+          serviceAccountName: dr-orchestrator
+          restartPolicy: OnFailure
+          containers:
+            - name: health-monitor
+              image: portal.local:5000/dr-orchestrator:v2.0
+              command: ["/app/health-monitor.sh"]
+              env:
+                - name: DR_ORCHESTRATOR_ENDPOINT
+                  value: "http://dr-orchestrator:8080"
+                - name: LOG_LEVEL
+                  value: "INFO"
+              resources:
+                requests:
+                  memory: "64Mi"
+                  cpu: "50m"
+                limits:
+                  memory: "128Mi"
+                  cpu: "100m"
+
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: dr-test-weekly
+  namespace: developer-portal
+  labels:
+    app: dr-orchestrator
+    component: disaster-recovery
+spec:
+  schedule: "0 2 * * 0"  # Weekly Sunday 2 AM
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      template:
+        spec:
+          serviceAccountName: dr-orchestrator
+          restartPolicy: OnFailure
+          containers:
+            - name: dr-test
+              image: portal.local:5000/dr-orchestrator:v2.0
+              command: ["/app/dr-test.sh", "weekly"]
+              env:
+                - name: DR_ORCHESTRATOR_ENDPOINT
+                  value: "http://dr-orchestrator:8080"
+                - name: TEST_SCOPE
+                  value: "backup_restore"
+              resources:
+                requests:
+                  memory: "256Mi"
+                  cpu: "100m"
+                limits:
+                  memory: "512Mi"
+                  cpu: "200m"
+
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: dr-orchestrator
+  namespace: developer-portal
+  labels:
+    app: dr-orchestrator
+    component: disaster-recovery
+spec:
+  selector:
+    matchLabels:
+      app: dr-orchestrator
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: 30s
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: dr-orchestrator
+  namespace: developer-portal
+  labels:
+    app: dr-orchestrator
+    component: disaster-recovery
+spec:
+  podSelector:
+    matchLabels:
+      app: dr-orchestrator
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: monitoring
+      ports:
+        - protocol: TCP
+          port: 8081
+    - from:
+        - podSelector:
+            matchLabels:
+              app: backup-orchestrator
+      ports:
+        - protocol: TCP
+          port: 8080
+  egress:
+    - to: []
+      ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 53
+        - protocol: UDP
+          port: 53

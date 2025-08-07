@@ -1,0 +1,600 @@
+# CI/CD Pipeline Integration Examples for Backstage SDK
+
+# GitHub Actions Workflow
+name: Deploy with Backstage SDK
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  backstage-integration:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+      
+    - name: Setup Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: '18'
+        
+    - name: Install Backstage CLI
+      run: npm install -g @backstage-idp/cli
+      
+    - name: Configure Backstage CLI
+      env:
+        BACKSTAGE_BASE_URL: ${{ secrets.BACKSTAGE_BASE_URL }}
+        BACKSTAGE_API_KEY: ${{ secrets.BACKSTAGE_API_KEY }}
+      run: |
+        backstage-cli config set baseURL "$BACKSTAGE_BASE_URL"
+        backstage-cli config set apiKey "$BACKSTAGE_API_KEY"
+        backstage-cli config set format json
+        
+    - name: Health Check
+      run: |
+        backstage-cli health || exit 1
+        echo "Backstage portal is healthy"
+        
+    - name: Register Service Component
+      run: |
+        backstage-cli components register \
+          --name "${{ github.repository }}" \
+          --type "service" \
+          --owner "${{ github.repository_owner }}" \
+          --description "Automated registration from CI/CD" \
+          --repo-url "${{ github.server_url }}/${{ github.repository }}" \
+          --tags "ci-cd,automated"
+          
+    - name: Update Component Metadata
+      run: |
+        cat > component-info.yaml << EOF
+        apiVersion: backstage.io/v1alpha1
+        kind: Component
+        metadata:
+          name: ${{ github.repository }}
+          description: ${{ github.event.head_commit.message }}
+          tags:
+            - ci-cd
+            - ${{ github.ref_name }}
+          annotations:
+            github.com/project-slug: ${{ github.repository }}
+            backstage.io/source-location: url:${{ github.server_url }}/${{ github.repository }}
+        spec:
+          type: service
+          lifecycle: production
+          owner: ${{ github.repository_owner }}
+        EOF
+        
+        backstage-cli components update --file component-info.yaml
+        
+    - name: Create Deployment Workflow
+      if: github.ref == 'refs/heads/main'
+      run: |
+        backstage-cli workflows create \
+          --name "Deploy ${{ github.repository }}" \
+          --description "Automated deployment from CI/CD" \
+          --template deployment \
+          --parameters '{
+            "service": "${{ github.repository }}",
+            "environment": "production",
+            "image": "${{ github.repository }}:${{ github.sha }}",
+            "replicas": 3
+          }'
+          
+    - name: Execute Deployment
+      if: github.ref == 'refs/heads/main'
+      run: |
+        WORKFLOW_ID=$(backstage-cli workflows list --format json | jq -r '.items[] | select(.name | contains("Deploy ${{ github.repository }}")) | .id' | head -1)
+        
+        if [ -n "$WORKFLOW_ID" ]; then
+          echo "Executing workflow: $WORKFLOW_ID"
+          EXECUTION_ID=$(backstage-cli workflows execute "$WORKFLOW_ID" --format json | jq -r '.executionId')
+          
+          # Wait for deployment to complete
+          while true; do
+            STATUS=$(backstage-cli workflows status "$EXECUTION_ID" --format json | jq -r '.status')
+            echo "Deployment status: $STATUS"
+            
+            case $STATUS in
+              "completed")
+                echo "Deployment completed successfully"
+                break
+                ;;
+              "failed")
+                echo "Deployment failed"
+                exit 1
+                ;;
+              "pending"|"running")
+                sleep 30
+                ;;
+            esac
+          done
+        fi
+        
+    - name: Send Notification
+      if: always()
+      run: |
+        if [ "${{ job.status }}" == "success" ]; then
+          backstage-cli notifications create \
+            --title "Deployment Success" \
+            --message "Successfully deployed ${{ github.repository }} to production" \
+            --type "success" \
+            --metadata '{"commit": "${{ github.sha }}", "branch": "${{ github.ref_name }}"}'
+        else
+          backstage-cli notifications create \
+            --title "Deployment Failed" \
+            --message "Failed to deploy ${{ github.repository }} to production" \
+            --type "error" \
+            --metadata '{"commit": "${{ github.sha }}", "branch": "${{ github.ref_name }}"}'
+        fi
+        
+    - name: Update Service Health
+      if: github.ref == 'refs/heads/main'
+      run: |
+        # Check if service is healthy after deployment
+        sleep 60  # Wait for service to start
+        
+        if curl -f "https://${{ github.repository }}.company.com/health"; then
+          backstage-cli components set-health \
+            --name "${{ github.repository }}" \
+            --status "healthy" \
+            --message "Service is running normally"
+        else
+          backstage-cli components set-health \
+            --name "${{ github.repository }}" \
+            --status "unhealthy" \
+            --message "Service health check failed"
+        fi
+
+---
+
+# Jenkins Pipeline (Jenkinsfile)
+pipeline:
+  name: Backstage Integration Pipeline
+  
+  pipeline {
+    agent any
+    
+    environment {
+      BACKSTAGE_BASE_URL = credentials('backstage-base-url')
+      BACKSTAGE_API_KEY = credentials('backstage-api-key')
+      SERVICE_NAME = "${env.JOB_NAME}"
+      BUILD_IMAGE = "${SERVICE_NAME}:${env.BUILD_NUMBER}"
+    }
+    
+    stages {
+      stage('Setup Backstage CLI') {
+        steps {
+          script {
+            sh '''
+              npm install -g @backstage-idp/cli
+              backstage-cli config set baseURL "$BACKSTAGE_BASE_URL"
+              backstage-cli config set apiKey "$BACKSTAGE_API_KEY"
+              backstage-cli health
+            '''
+          }
+        }
+      }
+      
+      stage('Build Application') {
+        steps {
+          script {
+            // Build your application
+            sh 'docker build -t $BUILD_IMAGE .'
+            
+            // Register build artifacts
+            sh '''
+              backstage-cli artifacts register \
+                --name "$BUILD_IMAGE" \
+                --type "docker-image" \
+                --location "registry.company.com/$BUILD_IMAGE" \
+                --build-number "$BUILD_NUMBER"
+            '''
+          }
+        }
+      }
+      
+      stage('Run Tests') {
+        steps {
+          script {
+            sh 'npm test'
+            
+            // Report test results
+            sh '''
+              backstage-cli test-results upload \
+                --service "$SERVICE_NAME" \
+                --build "$BUILD_NUMBER" \
+                --results ./test-results.xml \
+                --coverage ./coverage/lcov.info
+            '''
+          }
+        }
+      }
+      
+      stage('Security Scan') {
+        steps {
+          script {
+            sh 'docker run --rm -v $(pwd):/app security-scanner:latest /app'
+            
+            // Upload security scan results
+            sh '''
+              backstage-cli security-scan upload \
+                --service "$SERVICE_NAME" \
+                --results ./security-report.json \
+                --format "json"
+            '''
+          }
+        }
+      }
+      
+      stage('Deploy to Staging') {
+        when {
+          branch 'develop'
+        }
+        steps {
+          script {
+            def workflowId = sh(
+              script: '''
+                backstage-cli workflows create \
+                  --name "Deploy to Staging" \
+                  --environment "staging" \
+                  --service "$SERVICE_NAME" \
+                  --image "$BUILD_IMAGE" \
+                  --format json | jq -r '.id'
+              ''',
+              returnStdout: true
+            ).trim()
+            
+            sh """
+              backstage-cli workflows execute '${workflowId}' --wait --timeout 600
+            """
+          }
+        }
+      }
+      
+      stage('Deploy to Production') {
+        when {
+          branch 'main'
+        }
+        steps {
+          script {
+            // Create production deployment workflow
+            def workflowId = sh(
+              script: '''
+                backstage-cli workflows create \
+                  --name "Deploy to Production" \
+                  --environment "production" \
+                  --service "$SERVICE_NAME" \
+                  --image "$BUILD_IMAGE" \
+                  --replicas 5 \
+                  --health-check "/health" \
+                  --format json | jq -r '.id'
+              ''',
+              returnStdout: true
+            ).trim()
+            
+            // Execute with approval
+            input message: 'Deploy to Production?', ok: 'Deploy'
+            
+            sh """
+              backstage-cli workflows execute '${workflowId}' --wait --timeout 900
+            """
+          }
+        }
+      }
+    }
+    
+    post {
+      always {
+        script {
+          def status = currentBuild.result ?: 'SUCCESS'
+          def message = "Build ${env.BUILD_NUMBER} ${status.toLowerCase()}"
+          
+          sh """
+            backstage-cli notifications create \
+              --title "Build ${status}" \
+              --message "${message} for ${SERVICE_NAME}" \
+              --type "${status == 'SUCCESS' ? 'success' : 'error'}" \
+              --metadata '{"build": "${env.BUILD_NUMBER}", "service": "${SERVICE_NAME}"}'
+          """
+        }
+      }
+      
+      success {
+        sh '''
+          backstage-cli components set-health \
+            --name "$SERVICE_NAME" \
+            --status "healthy" \
+            --message "Build and deployment successful"
+        '''
+      }
+      
+      failure {
+        sh '''
+          backstage-cli components set-health \
+            --name "$SERVICE_NAME" \
+            --status "unhealthy" \
+            --message "Build or deployment failed"
+        '''
+      }
+    }
+  }
+
+---
+
+# GitLab CI/CD (.gitlab-ci.yml)
+stages:
+  - setup
+  - build
+  - test
+  - security
+  - deploy-staging
+  - deploy-production
+  - notify
+
+variables:
+  SERVICE_NAME: $CI_PROJECT_NAME
+  BUILD_IMAGE: $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA
+
+setup:
+  stage: setup
+  image: node:18-alpine
+  before_script:
+    - npm install -g @backstage-idp/cli
+  script:
+    - backstage-cli config set baseURL "$BACKSTAGE_BASE_URL"
+    - backstage-cli config set apiKey "$BACKSTAGE_API_KEY"
+    - backstage-cli health
+    - backstage-cli components register --name "$SERVICE_NAME" --auto-create
+  cache:
+    paths:
+      - ~/.backstage-cli/
+
+build:
+  stage: build
+  image: docker:latest
+  services:
+    - docker:dind
+  script:
+    - docker build -t $BUILD_IMAGE .
+    - docker push $BUILD_IMAGE
+    - |
+      backstage-cli artifacts register \
+        --name "$BUILD_IMAGE" \
+        --type "container" \
+        --location "$BUILD_IMAGE" \
+        --build-id "$CI_PIPELINE_ID"
+
+test:
+  stage: test
+  image: node:18-alpine
+  script:
+    - npm ci
+    - npm test
+    - |
+      backstage-cli test-results upload \
+        --service "$SERVICE_NAME" \
+        --build "$CI_PIPELINE_ID" \
+        --results junit.xml \
+        --coverage coverage/cobertura-coverage.xml
+  artifacts:
+    reports:
+      junit: junit.xml
+      coverage_report:
+        coverage_format: cobertura
+        path: coverage/cobertura-coverage.xml
+
+security-scan:
+  stage: security
+  image: registry.company.com/security-scanner:latest
+  script:
+    - security-scan --format json --output security-report.json .
+    - |
+      backstage-cli security upload \
+        --service "$SERVICE_NAME" \
+        --report security-report.json \
+        --format json
+  artifacts:
+    reports:
+      security: security-report.json
+
+deploy-staging:
+  stage: deploy-staging
+  image: node:18-alpine
+  environment:
+    name: staging
+    url: https://$SERVICE_NAME-staging.company.com
+  only:
+    - develop
+  script:
+    - |
+      WORKFLOW_ID=$(backstage-cli workflows create \
+        --name "Deploy $SERVICE_NAME to Staging" \
+        --template staging-deploy \
+        --parameters "{\"image\": \"$BUILD_IMAGE\", \"service\": \"$SERVICE_NAME\"}" \
+        --format json | jq -r '.id')
+      
+      backstage-cli workflows execute "$WORKFLOW_ID" --wait --timeout 600
+
+deploy-production:
+  stage: deploy-production
+  image: node:18-alpine
+  environment:
+    name: production
+    url: https://$SERVICE_NAME.company.com
+  only:
+    - main
+  when: manual
+  script:
+    - |
+      WORKFLOW_ID=$(backstage-cli workflows create \
+        --name "Deploy $SERVICE_NAME to Production" \
+        --template production-deploy \
+        --parameters "{\"image\": \"$BUILD_IMAGE\", \"service\": \"$SERVICE_NAME\", \"replicas\": 5}" \
+        --format json | jq -r '.id')
+      
+      backstage-cli workflows execute "$WORKFLOW_ID" --wait --timeout 900
+
+notify-success:
+  stage: notify
+  image: node:18-alpine
+  when: on_success
+  script:
+    - |
+      backstage-cli notifications create \
+        --title "Deployment Success" \
+        --message "Successfully deployed $SERVICE_NAME (Pipeline $CI_PIPELINE_ID)" \
+        --type success \
+        --metadata "{\"pipeline\": \"$CI_PIPELINE_ID\", \"commit\": \"$CI_COMMIT_SHA\"}"
+
+notify-failure:
+  stage: notify
+  image: node:18-alpine
+  when: on_failure
+  script:
+    - |
+      backstage-cli notifications create \
+        --title "Deployment Failed" \
+        --message "Failed to deploy $SERVICE_NAME (Pipeline $CI_PIPELINE_ID)" \
+        --type error \
+        --metadata "{\"pipeline\": \"$CI_PIPELINE_ID\", \"commit\": \"$CI_COMMIT_SHA\"}"
+
+---
+
+# Azure DevOps Pipeline (azure-pipelines.yml)
+trigger:
+  branches:
+    include:
+      - main
+      - develop
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+variables:
+  serviceName: '$(Build.Repository.Name)'
+  buildImage: '$(serviceName):$(Build.BuildNumber)'
+
+stages:
+- stage: Setup
+  jobs:
+  - job: ConfigureBackstage
+    steps:
+    - task: NodeTool@0
+      inputs:
+        versionSpec: '18.x'
+    
+    - script: |
+        npm install -g @backstage-idp/cli
+        backstage-cli config set baseURL "$(BACKSTAGE_BASE_URL)"
+        backstage-cli config set apiKey "$(BACKSTAGE_API_KEY)"
+        backstage-cli health
+      displayName: 'Setup Backstage CLI'
+      env:
+        BACKSTAGE_BASE_URL: $(backstageBaseUrl)
+        BACKSTAGE_API_KEY: $(backstageApiKey)
+
+- stage: Build
+  dependsOn: Setup
+  jobs:
+  - job: BuildApplication
+    steps:
+    - script: |
+        docker build -t $(buildImage) .
+        docker push $(buildImage)
+      displayName: 'Build and Push Image'
+      
+    - script: |
+        backstage-cli artifacts register \
+          --name "$(buildImage)" \
+          --type "container" \
+          --location "$(containerRegistry)/$(buildImage)" \
+          --build-id "$(Build.BuildNumber)"
+      displayName: 'Register Build Artifact'
+
+- stage: Test
+  dependsOn: Build
+  jobs:
+  - job: RunTests
+    steps:
+    - script: |
+        npm ci
+        npm test -- --reporter=junit --outputFile=test-results.xml
+        npm run test:coverage
+      displayName: 'Run Tests'
+      
+    - script: |
+        backstage-cli test-results upload \
+          --service "$(serviceName)" \
+          --build "$(Build.BuildNumber)" \
+          --results test-results.xml \
+          --coverage coverage/cobertura-coverage.xml
+      displayName: 'Upload Test Results'
+
+- stage: DeployStaging
+  condition: eq(variables['Build.SourceBranch'], 'refs/heads/develop')
+  dependsOn: Test
+  jobs:
+  - deployment: DeployToStaging
+    environment: 'Staging'
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - script: |
+              WORKFLOW_ID=$(backstage-cli workflows create \
+                --name "Deploy $(serviceName) to Staging" \
+                --environment "staging" \
+                --image "$(buildImage)" \
+                --format json | jq -r '.id')
+              
+              backstage-cli workflows execute "$WORKFLOW_ID" --wait
+            displayName: 'Deploy to Staging'
+
+- stage: DeployProduction
+  condition: eq(variables['Build.SourceBranch'], 'refs/heads/main')
+  dependsOn: Test
+  jobs:
+  - deployment: DeployToProduction
+    environment: 'Production'
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - script: |
+              WORKFLOW_ID=$(backstage-cli workflows create \
+                --name "Deploy $(serviceName) to Production" \
+                --environment "production" \
+                --image "$(buildImage)" \
+                --replicas 5 \
+                --format json | jq -r '.id')
+              
+              backstage-cli workflows execute "$WORKFLOW_ID" --wait
+            displayName: 'Deploy to Production'
+
+- stage: Notify
+  condition: always()
+  dependsOn:
+    - DeployStaging
+    - DeployProduction
+  jobs:
+  - job: SendNotification
+    steps:
+    - script: |
+        if [ "$(Agent.JobStatus)" = "Succeeded" ]; then
+          TYPE="success"
+          MESSAGE="Successfully deployed $(serviceName)"
+        else
+          TYPE="error"  
+          MESSAGE="Failed to deploy $(serviceName)"
+        fi
+        
+        backstage-cli notifications create \
+          --title "Pipeline $(Agent.JobStatus)" \
+          --message "$MESSAGE (Build $(Build.BuildNumber))" \
+          --type "$TYPE" \
+          --metadata "{\"build\": \"$(Build.BuildNumber)\", \"pipeline\": \"$(Build.BuildId)\"}"
+      displayName: 'Send Notification'

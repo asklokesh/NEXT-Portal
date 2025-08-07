@@ -1,0 +1,296 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: portal-frontend
+  namespace: developer-portal
+  labels:
+    app: portal-frontend
+    version: v1
+spec:
+  replicas: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: portal-frontend
+      version: v1
+  template:
+    metadata:
+      labels:
+        app: portal-frontend
+        version: v1
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: portal-frontend
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      initContainers:
+        - name: wait-for-backend
+          image: busybox:1.35
+          command: ['sh', '-c', 'until nc -z backstage-backend 7007; do echo waiting for backend; sleep 2; done']
+      containers:
+        - name: portal
+          image: portal-frontend:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 4400
+              name: http
+              protocol: TCP
+            - containerPort: 9090
+              name: metrics
+              protocol: TCP
+          env:
+            - name: NODE_ENV
+              value: "production"
+            - name: PORT
+              value: "4400"
+            - name: NEXT_PUBLIC_APP_URL
+              value: "https://portal.example.com"
+            - name: NEXT_PUBLIC_BACKSTAGE_API_URL
+              value: "https://api.portal.example.com"
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: portal-secrets
+                  key: DATABASE_URL
+            - name: REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: portal-secrets
+                  key: REDIS_URL
+            - name: SESSION_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: portal-secrets
+                  key: SESSION_SECRET
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: portal-secrets
+                  key: JWT_SECRET
+            - name: ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: portal-secrets
+                  key: ENCRYPTION_KEY
+          envFrom:
+            - configMapRef:
+                name: portal-config
+            - secretRef:
+                name: oauth-credentials
+          volumeMounts:
+            - name: cache
+              mountPath: /app/.next/cache
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "250m"
+            limits:
+              memory: "2Gi"
+              cpu: "1"
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: 4400
+              scheme: HTTP
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 10
+            successThreshold: 1
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: 4400
+              scheme: HTTP
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            successThreshold: 1
+            failureThreshold: 3
+          startupProbe:
+            httpGet:
+              path: /api/health
+              port: 4400
+              scheme: HTTP
+            initialDelaySeconds: 0
+            periodSeconds: 10
+            timeoutSeconds: 5
+            successThreshold: 1
+            failureThreshold: 30
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: true
+      volumes:
+        - name: cache
+          emptyDir:
+            sizeLimit: 1Gi
+        - name: tmp
+          emptyDir:
+            sizeLimit: 100Mi
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchExpressions:
+                    - key: app
+                      operator: In
+                      values:
+                        - portal-frontend
+                topologyKey: kubernetes.io/hostname
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backstage-backend
+  namespace: developer-portal
+  labels:
+    app: backstage-backend
+    version: v1
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: backstage-backend
+      version: v1
+  template:
+    metadata:
+      labels:
+        app: backstage-backend
+        version: v1
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: backstage-backend
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      initContainers:
+        - name: wait-for-db
+          image: busybox:1.35
+          command: ['sh', '-c', 'until nc -z postgres-service 5432; do echo waiting for postgres; sleep 2; done']
+        - name: run-migrations
+          image: backstage-backend:latest
+          command: ['npm', 'run', 'db:migrate']
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: portal-secrets
+                  key: DATABASE_URL
+      containers:
+        - name: backstage
+          image: backstage-backend:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 7007
+              name: http
+              protocol: TCP
+            - containerPort: 9090
+              name: metrics
+              protocol: TCP
+          env:
+            - name: NODE_ENV
+              value: "production"
+            - name: APP_CONFIG_app_baseUrl
+              value: "https://portal.example.com"
+            - name: APP_CONFIG_backend_baseUrl
+              value: "https://api.portal.example.com"
+            - name: APP_CONFIG_backend_listen_port
+              value: "7007"
+            - name: LOG_LEVEL
+              value: "info"
+          envFrom:
+            - secretRef:
+                name: portal-secrets
+            - secretRef:
+                name: github-credentials
+            - secretRef:
+                name: oauth-credentials
+            - secretRef:
+                name: aws-credentials
+            - secretRef:
+                name: kubernetes-credentials
+            - secretRef:
+                name: monitoring-credentials
+          volumeMounts:
+            - name: app-config
+              mountPath: /app/app-config.production.yaml
+              subPath: app-config.production.yaml
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            requests:
+              memory: "1Gi"
+              cpu: "500m"
+            limits:
+              memory: "4Gi"
+              cpu: "2"
+          livenessProbe:
+            httpGet:
+              path: /healthcheck
+              port: 7007
+              scheme: HTTP
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 10
+            successThreshold: 1
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /healthcheck
+              port: 7007
+              scheme: HTTP
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            successThreshold: 1
+            failureThreshold: 3
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: true
+      volumes:
+        - name: app-config
+          configMap:
+            name: backstage-config
+        - name: tmp
+          emptyDir:
+            sizeLimit: 100Mi
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchExpressions:
+                    - key: app
+                      operator: In
+                      values:
+                        - backstage-backend
+                topologyKey: kubernetes.io/hostname

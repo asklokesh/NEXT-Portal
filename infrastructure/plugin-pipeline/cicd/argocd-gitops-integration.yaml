@@ -1,0 +1,512 @@
+# ArgoCD GitOps Integration for Plugin Pipeline
+# This configuration enables GitOps-based plugin deployments using ArgoCD
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: plugin-gitops
+  labels:
+    app.kubernetes.io/name: plugin-gitops
+    app.kubernetes.io/component: gitops
+    app.kubernetes.io/managed-by: argocd
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: plugin-pipeline-orchestrator
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/your-org/saas-idp.git
+    targetRevision: HEAD
+    path: infrastructure/plugin-pipeline/k8s-manifests
+    helm:
+      valueFiles:
+        - values-production.yaml
+      parameters:
+        - name: image.tag
+          value: "latest"
+        - name: replicas
+          value: "3"
+        - name: resources.limits.memory
+          value: "2Gi"
+        - name: resources.limits.cpu
+          value: "1000m"
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: plugin-pipeline
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+      allowEmpty: false
+    syncOptions:
+      - CreateNamespace=true
+      - PrunePropagationPolicy=foreground
+      - PruneLast=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m0s
+  revisionHistoryLimit: 10
+---
+# Plugin Deployment Application Template
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: plugin-deployments
+  namespace: argocd
+spec:
+  generators:
+    # Git Directory Generator for plugin definitions
+    - git:
+        repoURL: https://github.com/your-org/saas-idp.git
+        revision: HEAD
+        directories:
+          - path: plugins/*
+        requeueAfterSeconds: 300
+    
+    # Cluster Generator for multi-cluster deployments
+    - clusters:
+        selector:
+          matchLabels:
+            plugin-deployment: "enabled"
+        values:
+          clusterName: "{{name}}"
+          
+  template:
+    metadata:
+      name: "{{path.basename}}-{{values.clusterName}}"
+      namespace: argocd
+      labels:
+        plugin: "{{path.basename}}"
+        cluster: "{{values.clusterName}}"
+        environment: "{{values.environment}}"
+      annotations:
+        argocd.argoproj.io/sync-wave: "1"
+    spec:
+      project: plugins
+      source:
+        repoURL: https://github.com/your-org/saas-idp.git
+        targetRevision: "{{values.targetRevision}}"
+        path: "{{path}}"
+        helm:
+          valueFiles:
+            - values.yaml
+            - "values-{{values.environment}}.yaml"
+          parameters:
+            - name: plugin.name
+              value: "{{path.basename}}"
+            - name: plugin.namespace
+              value: "{{values.environment}}-plugins"
+            - name: cluster.name
+              value: "{{values.clusterName}}"
+      destination:
+        name: "{{values.clusterName}}"
+        namespace: "{{values.environment}}-plugins"
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true
+          - ServerSideApply=true
+        retry:
+          limit: 3
+          backoff:
+            duration: 5s
+            factor: 2
+            maxDuration: 1m0s
+      ignoreDifferences:
+        - group: apps
+          kind: Deployment
+          jsonPointers:
+            - /spec/replicas
+        - group: autoscaling
+          kind: HorizontalPodAutoscaler
+          jsonPointers:
+            - /spec/minReplicas
+            - /spec/maxReplicas
+---
+# ArgoCD Project for Plugin Management
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: plugins
+  namespace: argocd
+spec:
+  description: Plugin deployment project with GitOps
+  sourceRepos:
+    - 'https://github.com/your-org/saas-idp.git'
+    - 'https://charts.bitnami.com/bitnami'
+    - 'https://istio-release.storage.googleapis.com/charts'
+  destinations:
+    - namespace: '*-plugins'
+      server: '*'
+    - namespace: 'plugin-*'
+      server: '*'
+  clusterResourceWhitelist:
+    - group: ''
+      kind: Namespace
+    - group: rbac.authorization.k8s.io
+      kind: ClusterRole
+    - group: rbac.authorization.k8s.io
+      kind: ClusterRoleBinding
+  namespaceResourceWhitelist:
+    - group: ''
+      kind: ConfigMap
+    - group: ''
+      kind: Secret
+    - group: ''
+      kind: Service
+    - group: ''
+      kind: ServiceAccount
+    - group: apps
+      kind: Deployment
+    - group: apps
+      kind: StatefulSet
+    - group: apps
+      kind: DaemonSet
+    - group: batch
+      kind: Job
+    - group: batch
+      kind: CronJob
+    - group: networking.k8s.io
+      kind: Ingress
+    - group: networking.k8s.io
+      kind: NetworkPolicy
+    - group: autoscaling
+      kind: HorizontalPodAutoscaler
+    - group: policy
+      kind: PodDisruptionBudget
+    - group: networking.istio.io
+      kind: VirtualService
+    - group: networking.istio.io
+      kind: DestinationRule
+    - group: security.istio.io
+      kind: PeerAuthentication
+  roles:
+    - name: plugin-dev
+      description: Plugin developers
+      policies:
+        - p, proj:plugins:plugin-dev, applications, get, plugins/*, allow
+        - p, proj:plugins:plugin-dev, applications, sync, plugins/*, allow
+      groups:
+        - plugin-developers
+    - name: platform-admin
+      description: Platform administrators
+      policies:
+        - p, proj:plugins:platform-admin, applications, *, plugins/*, allow
+        - p, proj:plugins:platform-admin, repositories, *, *, allow
+      groups:
+        - platform-admins
+  syncWindows:
+    - kind: allow
+      schedule: "0 9-17 * * MON-FRI"
+      duration: 8h
+      applications:
+        - "*-development"
+      manualSync: true
+    - kind: deny
+      schedule: "0 18-8 * * *"
+      duration: 14h
+      applications:
+        - "*-production"
+      manualSync: false
+      clusters:
+        - production-*
+---
+# ArgoCD Notification Configuration for Plugin Deployments
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-notifications-cm
+  namespace: argocd
+data:
+  service.slack: |
+    token: $slack-token
+    username: ArgoCD
+    icon: ":argo:"
+  
+  service.webhook: |
+    url: https://plugin-pipeline.example.com/api/v1/webhooks/argocd
+    headers:
+      - name: Authorization
+        value: "Bearer $webhook-token"
+  
+  template.plugin-sync-status: |
+    message: |
+      {{if eq .app.status.sync.status "Synced"}}
+        :white_check_mark: Plugin `{{.app.metadata.labels.plugin}}` successfully deployed to `{{.app.metadata.labels.environment}}`
+        
+        **Details:**
+        - Cluster: {{.app.metadata.labels.cluster}}
+        - Health: {{.app.status.health.status}}
+        - Sync Status: {{.app.status.sync.status}}
+        - Revision: {{.app.status.sync.revision}}
+        
+        [View in ArgoCD]({{.context.argocdUrl}}/applications/{{.app.metadata.name}})
+      {{else}}
+        :warning: Plugin `{{.app.metadata.labels.plugin}}` deployment failed in `{{.app.metadata.labels.environment}}`
+        
+        **Error Details:**
+        - Status: {{.app.status.sync.status}}
+        - Message: {{.app.status.conditions[0].message}}
+        
+        [View in ArgoCD]({{.context.argocdUrl}}/applications/{{.app.metadata.name}})
+      {{end}}
+  
+  template.plugin-health-degraded: |
+    message: |
+      :warning: Plugin `{{.app.metadata.labels.plugin}}` health is degraded in `{{.app.metadata.labels.environment}}`
+      
+      **Health Status:** {{.app.status.health.status}}
+      **Message:** {{.app.status.health.message}}
+      
+      [View in ArgoCD]({{.context.argocdUrl}}/applications/{{.app.metadata.name}})
+  
+  trigger.on-plugin-sync: |
+    - when: app.status.sync.status == 'Synced' or app.status.sync.status == 'OutOfSync'
+      oncePer: app.status.sync.revision
+      send: [plugin-sync-status]
+  
+  trigger.on-plugin-health-degraded: |
+    - when: app.status.health.status == 'Degraded'
+      send: [plugin-health-degraded]
+  
+  subscriptions: |
+    - recipients:
+      - slack:platform-notifications
+      - webhook:plugin-pipeline
+      triggers:
+      - on-plugin-sync
+      - on-plugin-health-degraded
+---
+# ArgoCD Application Notification Subscriptions
+apiVersion: v1
+kind: Secret
+metadata:
+  name: argocd-notifications-secret
+  namespace: argocd
+type: Opaque
+stringData:
+  slack-token: <your-slack-bot-token>
+  webhook-token: <your-webhook-token>
+---
+# Plugin Deployment Workflow with ArgoCD Hooks
+apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata:
+  name: plugin-deployment-workflow
+  namespace: plugin-gitops
+spec:
+  entrypoint: deploy-plugin
+  arguments:
+    parameters:
+      - name: plugin-name
+      - name: plugin-version
+      - name: target-environment
+      - name: deployment-strategy
+        value: "rolling-update"
+  templates:
+    - name: deploy-plugin
+      steps:
+        - - name: validate-plugin
+            template: validate-plugin-manifest
+        - - name: security-scan
+            template: security-scan
+        - - name: deploy-to-cluster
+            template: deploy-to-cluster
+        - - name: health-check
+            template: health-check
+        - - name: notify-completion
+            template: notify-completion
+    
+    - name: validate-plugin-manifest
+      container:
+        image: alpine/k8s:1.28.0
+        command: [sh, -c]
+        args:
+          - |
+            echo "Validating plugin manifest for {{workflow.parameters.plugin-name}}"
+            kubectl --dry-run=client apply -f /workspace/plugins/{{workflow.parameters.plugin-name}}/k8s/
+    
+    - name: security-scan
+      container:
+        image: aquasec/trivy:latest
+        command: [trivy]
+        args:
+          - image
+          - --severity HIGH,CRITICAL
+          - --exit-code 1
+          - "{{workflow.parameters.plugin-name}}:{{workflow.parameters.plugin-version}}"
+    
+    - name: deploy-to-cluster
+      resource:
+        action: create
+        successCondition: status.phase == Succeeded
+        failureCondition: status.phase == Failed
+        manifest: |
+          apiVersion: argoproj.io/v1alpha1
+          kind: Application
+          metadata:
+            name: "{{workflow.parameters.plugin-name}}-{{workflow.parameters.target-environment}}"
+            namespace: argocd
+          spec:
+            project: plugins
+            source:
+              repoURL: https://github.com/your-org/saas-idp.git
+              targetRevision: HEAD
+              path: plugins/{{workflow.parameters.plugin-name}}
+              helm:
+                parameters:
+                  - name: image.tag
+                    value: "{{workflow.parameters.plugin-version}}"
+                  - name: environment
+                    value: "{{workflow.parameters.target-environment}}"
+                  - name: strategy
+                    value: "{{workflow.parameters.deployment-strategy}}"
+            destination:
+              server: https://kubernetes.default.svc
+              namespace: "{{workflow.parameters.target-environment}}-plugins"
+            syncPolicy:
+              automated:
+                prune: true
+                selfHeal: true
+    
+    - name: health-check
+      container:
+        image: curlimages/curl:latest
+        command: [sh, -c]
+        args:
+          - |
+            echo "Performing health check for {{workflow.parameters.plugin-name}}"
+            sleep 30  # Wait for deployment to stabilize
+            
+            # Get service endpoint
+            ENDPOINT=$(kubectl get svc {{workflow.parameters.plugin-name}} \
+              -n {{workflow.parameters.target-environment}}-plugins \
+              -o jsonpath='{.status.loadBalancer.ingress[0].ip}:{.spec.ports[0].port}')
+            
+            # Perform health check
+            for i in {1..10}; do
+              if curl -f http://$ENDPOINT/health; then
+                echo "Health check passed!"
+                exit 0
+              fi
+              echo "Health check attempt $i failed, retrying..."
+              sleep 10
+            done
+            
+            echo "Health check failed after 10 attempts"
+            exit 1
+    
+    - name: notify-completion
+      container:
+        image: alpine/curl:latest
+        command: [sh, -c]
+        args:
+          - |
+            curl -X POST \
+              -H "Content-Type: application/json" \
+              -H "Authorization: Bearer $WEBHOOK_TOKEN" \
+              -d '{
+                "event": "plugin_deployed",
+                "plugin": "{{workflow.parameters.plugin-name}}",
+                "version": "{{workflow.parameters.plugin-version}}",
+                "environment": "{{workflow.parameters.target-environment}}",
+                "status": "success",
+                "timestamp": "'$(date -u +%Y-%m-%dT%H:%M:%SZ)'"
+              }' \
+              https://plugin-pipeline.example.com/api/v1/webhooks/deployment
+        env:
+          - name: WEBHOOK_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: argocd-notifications-secret
+                key: webhook-token
+---
+# ArgoCD Image Updater Configuration for Automated Updates
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-image-updater-config
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: argocd-image-updater
+data:
+  registries.conf: |
+    registries:
+      - name: ghcr
+        prefix: ghcr.io
+        api_url: https://ghcr.io/v2
+        credentials: env:GITHUB_TOKEN
+        default: true
+  
+  log.level: debug
+  
+  git.user: argocd-image-updater
+  git.email: argocd-image-updater@example.com
+---
+# ArgoCD Repository Configuration for Plugin Registry
+apiVersion: v1
+kind: Secret
+metadata:
+  name: plugin-registry-repo
+  namespace: argocd
+  labels:
+    argocd.argoproj.io/secret-type: repository
+type: Opaque
+stringData:
+  type: git
+  url: https://github.com/your-org/saas-idp.git
+  username: argocd
+  password: <github-token>
+---
+# ArgoCD Cluster Configuration for Multi-Cluster Deployments
+apiVersion: v1
+kind: Secret
+metadata:
+  name: staging-cluster
+  namespace: argocd
+  labels:
+    argocd.argoproj.io/secret-type: cluster
+type: Opaque
+stringData:
+  name: staging
+  server: https://staging-k8s-api.example.com
+  config: |
+    {
+      "bearerToken": "<staging-cluster-token>",
+      "tlsClientConfig": {
+        "insecure": false,
+        "caData": "<base64-encoded-ca-cert>"
+      }
+    }
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: production-cluster
+  namespace: argocd
+  labels:
+    argocd.argoproj.io/secret-type: cluster
+    plugin-deployment: enabled
+    environment: production
+type: Opaque
+stringData:
+  name: production
+  server: https://prod-k8s-api.example.com
+  config: |
+    {
+      "bearerToken": "<production-cluster-token>",
+      "tlsClientConfig": {
+        "insecure": false,
+        "caData": "<base64-encoded-ca-cert>"
+      }
+    }

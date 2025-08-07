@@ -1,0 +1,249 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: auth-config
+  namespace: developer-portal
+data:
+  auth-providers.json: |
+    {
+      "providers": [
+        {
+          "id": "github",
+          "type": "oauth2",
+          "name": "GitHub",
+          "enabled": true,
+          "config": {
+            "clientId": "${GITHUB_CLIENT_ID}",
+            "clientSecret": "${GITHUB_CLIENT_SECRET}",
+            "authorizationUrl": "https://github.com/login/oauth/authorize",
+            "tokenUrl": "https://github.com/login/oauth/access_token",
+            "userInfoUrl": "https://api.github.com/user",
+            "scope": "read:user user:email read:org",
+            "userIdPath": "id",
+            "userNamePath": "login",
+            "userEmailPath": "email",
+            "userAvatarPath": "avatar_url"
+          },
+          "roleMapping": {
+            "admin": ["organization:admin"],
+            "developer": ["organization:member"],
+            "viewer": ["*"]
+          }
+        },
+        {
+          "id": "google",
+          "type": "oauth2",
+          "name": "Google",
+          "enabled": true,
+          "config": {
+            "clientId": "${GOOGLE_CLIENT_ID}",
+            "clientSecret": "${GOOGLE_CLIENT_SECRET}",
+            "authorizationUrl": "https://accounts.google.com/o/oauth2/v2/auth",
+            "tokenUrl": "https://oauth2.googleapis.com/token",
+            "userInfoUrl": "https://www.googleapis.com/oauth2/v2/userinfo",
+            "scope": "openid email profile",
+            "userIdPath": "id",
+            "userNamePath": "email",
+            "userEmailPath": "email",
+            "userAvatarPath": "picture"
+          },
+          "domainWhitelist": ["example.com"],
+          "roleMapping": {
+            "admin": ["admin@example.com"],
+            "developer": ["*@example.com"],
+            "viewer": ["*"]
+          }
+        },
+        {
+          "id": "saml",
+          "type": "saml",
+          "name": "Corporate SSO",
+          "enabled": true,
+          "config": {
+            "entryPoint": "${SAML_ENTRY_POINT}",
+            "issuer": "${SAML_ISSUER}",
+            "cert": "${SAML_CERT}",
+            "identifierFormat": "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress",
+            "signatureAlgorithm": "sha256",
+            "digestAlgorithm": "sha256",
+            "acceptedClockSkewMs": 5000,
+            "attributeMapping": {
+              "id": "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/nameidentifier",
+              "email": "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress",
+              "name": "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/name",
+              "groups": "http://schemas.xmlsoap.org/claims/Group"
+            }
+          },
+          "roleMapping": {
+            "admin": ["Platform-Admins"],
+            "developer": ["Developers", "Engineers"],
+            "viewer": ["*"]
+          }
+        },
+        {
+          "id": "ldap",
+          "type": "ldap",
+          "name": "Active Directory",
+          "enabled": false,
+          "config": {
+            "url": "ldaps://ldap.example.com:636",
+            "bindDN": "CN=ServiceAccount,OU=Service,DC=example,DC=com",
+            "bindCredentials": "${LDAP_BIND_PASSWORD}",
+            "searchBase": "OU=Users,DC=example,DC=com",
+            "searchFilter": "(&(objectClass=user)(sAMAccountName={{username}}))",
+            "searchAttributes": ["sAMAccountName", "mail", "displayName", "memberOf"],
+            "usernameField": "sAMAccountName",
+            "emailField": "mail",
+            "nameField": "displayName",
+            "groupsField": "memberOf",
+            "tlsOptions": {
+              "rejectUnauthorized": true,
+              "ca": "${LDAP_CA_CERT}"
+            }
+          },
+          "roleMapping": {
+            "admin": ["CN=Portal-Admins,OU=Groups,DC=example,DC=com"],
+            "developer": ["CN=Developers,OU=Groups,DC=example,DC=com"],
+            "viewer": ["CN=Domain Users,CN=Users,DC=example,DC=com"]
+          }
+        }
+      ],
+      "session": {
+        "secret": "${SESSION_SECRET}",
+        "duration": 86400,
+        "extendOnActivity": true,
+        "cookie": {
+          "name": "portal.sid",
+          "httpOnly": true,
+          "secure": true,
+          "sameSite": "lax",
+          "maxAge": 86400000
+        }
+      },
+      "jwt": {
+        "secret": "${JWT_SECRET}",
+        "refreshSecret": "${JWT_REFRESH_SECRET}",
+        "accessTokenExpiry": "15m",
+        "refreshTokenExpiry": "7d",
+        "algorithm": "HS256"
+      },
+      "mfa": {
+        "enabled": true,
+        "required": false,
+        "requiredForRoles": ["admin"],
+        "providers": ["totp", "webauthn"],
+        "backupCodes": {
+          "enabled": true,
+          "count": 10,
+          "length": 8
+        }
+      },
+      "passwordPolicy": {
+        "minLength": 12,
+        "requireUppercase": true,
+        "requireLowercase": true,
+        "requireNumbers": true,
+        "requireSpecialChars": true,
+        "maxAge": 90,
+        "historyCount": 5,
+        "lockoutThreshold": 5,
+        "lockoutDuration": 900
+      },
+      "rbac": {
+        "enabled": true,
+        "defaultRole": "viewer",
+        "roles": {
+          "admin": {
+            "name": "Administrator",
+            "permissions": ["*"]
+          },
+          "developer": {
+            "name": "Developer",
+            "permissions": [
+              "catalog:read",
+              "catalog:write",
+              "catalog:delete",
+              "scaffolder:read",
+              "scaffolder:execute",
+              "techdocs:read",
+              "techdocs:write",
+              "kubernetes:read",
+              "proxy:read"
+            ]
+          },
+          "viewer": {
+            "name": "Viewer",
+            "permissions": [
+              "catalog:read",
+              "scaffolder:read",
+              "techdocs:read",
+              "kubernetes:read"
+            ]
+          }
+        }
+      }
+    }
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cors-config
+  namespace: developer-portal
+data:
+  cors.json: |
+    {
+      "allowedOrigins": [
+        "https://portal.example.com",
+        "https://api.portal.example.com",
+        "https://ws.portal.example.com"
+      ],
+      "allowedMethods": [
+        "GET",
+        "POST",
+        "PUT",
+        "DELETE",
+        "PATCH",
+        "OPTIONS"
+      ],
+      "allowedHeaders": [
+        "Content-Type",
+        "Authorization",
+        "X-Requested-With",
+        "X-CSRF-Token",
+        "X-Correlation-ID"
+      ],
+      "exposedHeaders": [
+        "X-Total-Count",
+        "X-Page-Count",
+        "X-Request-ID"
+      ],
+      "allowCredentials": true,
+      "maxAge": 86400
+    }
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: security-headers
+  namespace: developer-portal
+data:
+  headers.json: |
+    {
+      "X-Frame-Options": "SAMEORIGIN",
+      "X-Content-Type-Options": "nosniff",
+      "X-XSS-Protection": "1; mode=block",
+      "Referrer-Policy": "strict-origin-when-cross-origin",
+      "Permissions-Policy": "geolocation=(), microphone=(), camera=()",
+      "Content-Security-Policy": {
+        "default-src": ["'self'"],
+        "script-src": ["'self'", "'unsafe-inline'", "'unsafe-eval'", "https://cdn.jsdelivr.net"],
+        "style-src": ["'self'", "'unsafe-inline'"],
+        "img-src": ["'self'", "data:", "https:"],
+        "font-src": ["'self'", "data:"],
+        "connect-src": ["'self'", "wss:", "https:"],
+        "frame-ancestors": ["'self'"],
+        "base-uri": ["'self'"],
+        "form-action": ["'self'"]
+      },
+      "Strict-Transport-Security": "max-age=31536000; includeSubDomains; preload"
+    }

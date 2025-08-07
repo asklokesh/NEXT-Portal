@@ -1,0 +1,62 @@
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: default
+  namespace: istio-system
+spec:
+  # Enable strict mTLS for the entire mesh
+  mtls:
+    mode: STRICT
+---
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: developer-portal-mtls
+  namespace: developer-portal
+spec:
+  # Enable strict mTLS for developer-portal namespace
+  mtls:
+    mode: STRICT
+---
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: developer-portal-staging-mtls
+  namespace: developer-portal-staging
+spec:
+  # Enable strict mTLS for developer-portal-staging namespace
+  mtls:
+    mode: STRICT
+---
+# Custom mTLS for external services (permissive mode)
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: external-services-mtls
+  namespace: istio-system
+spec:
+  selector:
+    matchLabels:
+      app: external-service
+  mtls:
+    mode: PERMISSIVE
+---
+# mTLS configuration for monitoring services
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: monitoring-mtls
+  namespace: istio-system
+spec:
+  selector:
+    matchLabels:
+      component: monitoring
+  mtls:
+    mode: STRICT
+  portLevelMtls:
+    9090: # Prometheus
+      mode: PERMISSIVE
+    16686: # Jaeger
+      mode: PERMISSIVE
+    20001: # Kiali
+      mode: PERMISSIVE

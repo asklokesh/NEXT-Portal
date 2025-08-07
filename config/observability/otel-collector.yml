@@ -1,0 +1,114 @@
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+  
+  prometheus:
+    config:
+      scrape_configs:
+        - job_name: 'otel-collector'
+          scrape_interval: 30s
+          static_configs:
+            - targets: ['localhost:8888']
+
+  jaeger:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:14250
+      thrift_http:
+        endpoint: 0.0.0.0:14268
+      thrift_compact:
+        endpoint: 0.0.0.0:6831
+
+processors:
+  batch:
+    timeout: 1s
+    send_batch_size: 1024
+    send_batch_max_size: 2048
+
+  memory_limiter:
+    limit_mib: 512
+
+  resource:
+    attributes:
+      - key: service.name
+        from_attribute: service_name
+        action: upsert
+      - key: service.version
+        from_attribute: service_version  
+        action: upsert
+      - key: deployment.environment
+        from_attribute: environment
+        action: upsert
+
+  # Add plugin-specific attributes
+  attributes:
+    actions:
+      - key: plugin.type
+        from_attribute: plugin_id
+        action: upsert
+      - key: plugin.version
+        value: "1.0.0"
+        action: upsert
+
+exporters:
+  jaeger:
+    endpoint: jaeger:14250
+    tls:
+      insecure: true
+
+  prometheus:
+    endpoint: "0.0.0.0:8889"
+    const_labels:
+      service: saas-idp-plugins
+
+  logging:
+    loglevel: info
+
+  otlp/traces:
+    endpoint: jaeger:4317
+    tls:
+      insecure: true
+
+  otlp/metrics:
+    endpoint: prometheus:9090
+    tls:
+      insecure: true
+
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+
+  pprof:
+    endpoint: 0.0.0.0:1888
+
+  zpages:
+    endpoint: 0.0.0.0:55679
+
+service:
+  extensions: [health_check, pprof, zpages]
+  
+  pipelines:
+    traces:
+      receivers: [otlp, jaeger]
+      processors: [memory_limiter, resource, attributes, batch]
+      exporters: [jaeger, otlp/traces, logging]
+
+    metrics:
+      receivers: [otlp, prometheus]
+      processors: [memory_limiter, resource, attributes, batch]
+      exporters: [prometheus, logging]
+
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter, resource, batch]
+      exporters: [logging]
+
+  telemetry:
+    logs:
+      level: "info"
+    metrics:
+      address: 0.0.0.0:8888

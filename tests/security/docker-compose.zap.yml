@@ -1,0 +1,119 @@
+version: '3.8'
+
+services:
+  # OWASP ZAP security testing service
+  zap:
+    image: owasp/zap2docker-stable:latest
+    container_name: plugin-security-zap
+    ports:
+      - "8080:8080"      # ZAP proxy port
+      - "8090:8090"      # ZAP API port
+    volumes:
+      - zap_data:/zap/wrk
+      - ./zap-config:/zap/config:ro
+      - ./security-reports:/zap/reports
+    environment:
+      - ZAP_PORT=8080
+      - ZAP_API_PORT=8090
+    command: [
+      "zap.sh",
+      "-daemon",
+      "-host", "0.0.0.0",
+      "-port", "8080",
+      "-config", "api.addrs.addr.name=.*",
+      "-config", "api.addrs.addr.regex=true",
+      "-config", "database.newsessionprompt=false",
+      "-config", "api.disablekey=true"
+    ]
+    networks:
+      - security-testing
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  # Security scanner that uses ZAP
+  security-scanner:
+    build:
+      context: .
+      dockerfile: Dockerfile.security
+    container_name: plugin-security-scanner
+    depends_on:
+      zap:
+        condition: service_healthy
+    volumes:
+      - ./security-reports:/app/reports
+      - ./test-data:/app/test-data:ro
+    environment:
+      - BASE_URL=http://host.docker.internal:4400
+      - ZAP_PROXY_URL=http://zap:8080
+      - TEST_AUTH_TOKEN=${TEST_AUTH_TOKEN:-test-token}
+      - ADMIN_AUTH_TOKEN=${ADMIN_AUTH_TOKEN:-admin-token}
+      - PYTHONUNBUFFERED=1
+    networks:
+      - security-testing
+    profiles:
+      - security-testing
+
+  # Nuclei security scanner (additional security testing)
+  nuclei:
+    image: projectdiscovery/nuclei:latest
+    container_name: plugin-security-nuclei
+    volumes:
+      - ./security-reports:/output
+      - ./nuclei-templates:/app/templates:ro
+    command: [
+      "-u", "http://host.docker.internal:4400",
+      "-t", "/app/templates/",
+      "-o", "/output/nuclei-report.txt",
+      "-json-export", "/output/nuclei-report.json",
+      "-severity", "critical,high,medium",
+      "-timeout", "10",
+      "-retries", "2"
+    ]
+    networks:
+      - security-testing
+    profiles:
+      - security-testing
+
+  # SQLMap for SQL injection testing
+  sqlmap:
+    image: psiinon/sqlmap:latest
+    container_name: plugin-security-sqlmap
+    volumes:
+      - ./security-reports:/output
+      - ./sqlmap-config:/app/config:ro
+    environment:
+      - TARGET_URL=http://host.docker.internal:4400
+    networks:
+      - security-testing
+    profiles:
+      - security-testing
+
+  # Nikto web vulnerability scanner
+  nikto:
+    image: sullo/nikto:latest
+    container_name: plugin-security-nikto
+    volumes:
+      - ./security-reports:/tmp
+    command: [
+      "-h", "http://host.docker.internal:4400",
+      "-o", "/tmp/nikto-report.xml",
+      "-Format", "xml",
+      "-timeout", "10",
+      "-maxtime", "300"
+    ]
+    networks:
+      - security-testing
+    profiles:
+      - security-testing
+
+volumes:
+  zap_data:
+    driver: local
+
+networks:
+  security-testing:
+    driver: bridge

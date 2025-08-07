@@ -1,0 +1,118 @@
+name: Pulumi Preview
+
+on:
+  pull_request:
+    paths:
+      - 'infrastructure/pulumi/**'
+      - '.github/workflows/infrastructure/**'
+
+env:
+  PULUMI_ACCESS_TOKEN: ${{ secrets.PULUMI_ACCESS_TOKEN }}
+  AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+  AWS_REGION: us-east-1
+  NODE_VERSION: '18'
+
+jobs:
+  preview:
+    name: Preview Infrastructure Changes
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        stack: [dev, staging, production]
+    
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: infrastructure/pulumi/package-lock.json
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Install Dependencies
+        working-directory: infrastructure/pulumi
+        run: |
+          npm ci
+          npm install -g @pulumi/pulumi
+
+      - name: Pulumi Login
+        run: pulumi login
+
+      - name: Select Stack
+        working-directory: infrastructure/pulumi
+        run: pulumi stack select ${{ matrix.stack }}
+
+      - name: Pulumi Preview
+        id: preview
+        working-directory: infrastructure/pulumi
+        run: |
+          pulumi preview --diff --show-config --show-replacement-steps --show-sames --json > preview-output.json
+          echo "## Pulumi Preview for ${{ matrix.stack }}" >> $GITHUB_STEP_SUMMARY
+          echo '```json' >> $GITHUB_STEP_SUMMARY
+          cat preview-output.json | jq -r '.changeSummary' >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+      - name: Cost Estimation
+        working-directory: infrastructure/pulumi
+        run: |
+          npm run cost:estimate
+          echo "## Cost Estimate for ${{ matrix.stack }}" >> $GITHUB_STEP_SUMMARY
+          cat cost-estimate.json >> $GITHUB_STEP_SUMMARY
+
+      - name: Policy Validation
+        working-directory: infrastructure/pulumi
+        run: |
+          pulumi preview --policy-pack ./policies
+
+      - name: Comment PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const preview = JSON.parse(fs.readFileSync('infrastructure/pulumi/preview-output.json', 'utf8'));
+            const comment = `
+            ### Pulumi Preview for \`${{ matrix.stack }}\` 
+
+            **Change Summary:**
+            - Create: ${preview.changeSummary?.create || 0}
+            - Update: ${preview.changeSummary?.update || 0}
+            - Delete: ${preview.changeSummary?.delete || 0}
+            - Same: ${preview.changeSummary?.same || 0}
+
+            <details>
+            <summary>View detailed changes</summary>
+
+            \`\`\`
+            ${preview.stdout || 'No changes detected'}
+            \`\`\`
+
+            </details>
+            `;
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: comment
+            });
+
+      - name: Upload Preview Artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: pulumi-preview-${{ matrix.stack }}
+          path: |
+            infrastructure/pulumi/preview-output.json
+            infrastructure/pulumi/cost-estimate.json

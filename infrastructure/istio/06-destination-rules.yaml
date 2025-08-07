@@ -1,0 +1,265 @@
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: backstage-backend-destination-rule
+  namespace: developer-portal
+spec:
+  host: backstage-backend.developer-portal.svc.cluster.local
+  trafficPolicy:
+    # Load balancing configuration
+    loadBalancer:
+      simple: LEAST_REQUEST
+      consistentHash:
+        httpHeaderName: "x-user-id"
+        minimumRingSize: 1024
+    # Connection pool settings
+    connectionPool:
+      tcp:
+        maxConnections: 100
+        connectTimeout: 30s
+        keepAlive:
+          time: 7200s
+          interval: 75s
+          probes: 9
+      http:
+        http1MaxPendingRequests: 100
+        http2MaxRequests: 1000
+        maxRequestsPerConnection: 10
+        maxRetries: 3
+        idleTimeout: 90s
+        h2UpgradePolicy: UPGRADE
+        useClientProtocol: true
+    # Circuit breaker configuration
+    outlierDetection:
+      consecutive5xxErrors: 5
+      consecutiveGatewayErrors: 5
+      interval: 30s
+      baseEjectionTime: 30s
+      maxEjectionPercent: 50
+      minHealthPercent: 50
+      splitExternalLocalOriginErrors: false
+  subsets:
+  - name: stable
+    labels:
+      version: stable
+    trafficPolicy:
+      connectionPool:
+        tcp:
+          maxConnections: 80
+        http:
+          http1MaxPendingRequests: 80
+          http2MaxRequests: 800
+  - name: canary
+    labels:
+      version: canary
+    trafficPolicy:
+      connectionPool:
+        tcp:
+          maxConnections: 20
+        http:
+          http1MaxPendingRequests: 20
+          http2MaxRequests: 200
+      outlierDetection:
+        consecutive5xxErrors: 3
+        interval: 15s
+        baseEjectionTime: 15s
+---
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: backstage-frontend-destination-rule
+  namespace: developer-portal
+spec:
+  host: backstage-frontend.developer-portal.svc.cluster.local
+  trafficPolicy:
+    loadBalancer:
+      simple: ROUND_ROBIN
+    connectionPool:
+      tcp:
+        maxConnections: 50
+        connectTimeout: 10s
+      http:
+        http1MaxPendingRequests: 50
+        http2MaxRequests: 500
+        maxRequestsPerConnection: 5
+        maxRetries: 2
+        idleTimeout: 60s
+        h2UpgradePolicy: UPGRADE
+    outlierDetection:
+      consecutive5xxErrors: 3
+      interval: 30s
+      baseEjectionTime: 30s
+      maxEjectionPercent: 30
+  subsets:
+  - name: stable
+    labels:
+      version: stable
+  - name: canary
+    labels:
+      version: canary
+    trafficPolicy:
+      outlierDetection:
+        consecutive5xxErrors: 2
+        interval: 15s
+        baseEjectionTime: 15s
+---
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: backstage-database-destination-rule
+  namespace: developer-portal
+spec:
+  host: postgres.developer-portal.svc.cluster.local
+  trafficPolicy:
+    loadBalancer:
+      simple: LEAST_CONN
+    connectionPool:
+      tcp:
+        maxConnections: 50
+        connectTimeout: 5s
+        keepAlive:
+          time: 7200s
+          interval: 75s
+      http:
+        http1MaxPendingRequests: 10
+        http2MaxRequests: 100
+        maxRequestsPerConnection: 2
+        maxRetries: 1
+        idleTimeout: 300s
+    outlierDetection:
+      consecutive5xxErrors: 2
+      interval: 60s
+      baseEjectionTime: 60s
+      maxEjectionPercent: 25
+      minHealthPercent: 75
+---
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: backstage-redis-destination-rule
+  namespace: developer-portal
+spec:
+  host: redis.developer-portal.svc.cluster.local
+  trafficPolicy:
+    loadBalancer:
+      simple: LEAST_CONN
+    connectionPool:
+      tcp:
+        maxConnections: 30
+        connectTimeout: 2s
+        keepAlive:
+          time: 600s
+          interval: 60s
+    outlierDetection:
+      consecutive5xxErrors: 3
+      interval: 30s
+      baseEjectionTime: 30s
+      maxEjectionPercent: 50
+---
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: backstage-websocket-destination-rule
+  namespace: developer-portal
+spec:
+  host: backstage-websocket.developer-portal.svc.cluster.local
+  trafficPolicy:
+    loadBalancer:
+      consistentHash:
+        httpHeaderName: "x-session-id"
+    connectionPool:
+      tcp:
+        maxConnections: 200
+        connectTimeout: 10s
+        keepAlive:
+          time: 3600s
+          interval: 300s
+      http:
+        http1MaxPendingRequests: 200
+        http2MaxRequests: 2000
+        maxRequestsPerConnection: 1
+        idleTimeout: 3600s
+    outlierDetection:
+      consecutive5xxErrors: 5
+      interval: 60s
+      baseEjectionTime: 60s
+      maxEjectionPercent: 25
+---
+# External service destination rules
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: github-api-destination-rule
+  namespace: developer-portal
+spec:
+  host: api.github.com
+  trafficPolicy:
+    loadBalancer:
+      simple: ROUND_ROBIN
+    connectionPool:
+      tcp:
+        maxConnections: 10
+        connectTimeout: 10s
+      http:
+        http1MaxPendingRequests: 10
+        http2MaxRequests: 100
+        maxRequestsPerConnection: 2
+        maxRetries: 3
+        idleTimeout: 30s
+    outlierDetection:
+      consecutive5xxErrors: 5
+      interval: 30s
+      baseEjectionTime: 30s
+      maxEjectionPercent: 50
+---
+# Monitoring services destination rules
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: kiali-destination-rule
+  namespace: istio-system
+spec:
+  host: kiali.istio-system.svc.cluster.local
+  trafficPolicy:
+    loadBalancer:
+      simple: ROUND_ROBIN
+    connectionPool:
+      tcp:
+        maxConnections: 10
+      http:
+        http1MaxPendingRequests: 10
+        http2MaxRequests: 100
+---
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: jaeger-destination-rule
+  namespace: istio-system
+spec:
+  host: jaeger-query.istio-system.svc.cluster.local
+  trafficPolicy:
+    loadBalancer:
+      simple: ROUND_ROBIN
+    connectionPool:
+      tcp:
+        maxConnections: 20
+      http:
+        http1MaxPendingRequests: 20
+        http2MaxRequests: 200
+---
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: prometheus-destination-rule
+  namespace: istio-system
+spec:
+  host: prometheus.istio-system.svc.cluster.local
+  trafficPolicy:
+    loadBalancer:
+      simple: ROUND_ROBIN
+    connectionPool:
+      tcp:
+        maxConnections: 15
+      http:
+        http1MaxPendingRequests: 15
+        http2MaxRequests: 150

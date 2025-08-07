@@ -1,0 +1,1010 @@
+/**
+ * Advanced Distributed Tracing Manager
+ * 
+ * Production-ready distributed tracing with OpenTelemetry integration,
+ * span correlation, performance analysis, and multi-platform support.
+ */
+
+import { EventEmitter } from 'events';
+import { NodeSDK } from '@opentelemetry/sdk-node';
+import { Resource } from '@opentelemetry/resources';
+import { SemanticResourceAttributes } from '@opentelemetry/semantic-conventions';
+import { JaegerExporter } from '@opentelemetry/exporter-jaeger';
+import { PrometheusExporter } from '@opentelemetry/exporter-prometheus';
+import { getNodeAutoInstrumentations } from '@opentelemetry/auto-instrumentations-node';
+import * as api from '@opentelemetry/api';
+import { ObservabilityConfig } from './observability-config';
+
+export interface TraceSpan {
+  traceId: string;
+  spanId: string;
+  parentSpanId?: string;
+  operationName: string;
+  serviceName: string;
+  startTime: Date;
+  endTime?: Date;
+  duration?: number;
+  status: 'ok' | 'error' | 'timeout';
+  tags: Record<string, any>;
+  logs: Array<{
+    timestamp: Date;
+    level: 'info' | 'warn' | 'error';
+    message: string;
+    fields: Record<string, any>;
+  }>;
+  baggage: Record<string, string>;
+  references: Array<{
+    type: 'childOf' | 'followsFrom';
+    traceId: string;
+    spanId: string;
+  }>;
+}
+
+export interface TraceAnalysis {
+  trace: {
+    traceId: string;
+    totalDuration: number;
+    spanCount: number;
+    errorCount: number;
+    services: string[];
+    criticalPath: TraceSpan[];
+  };
+  performance: {
+    bottlenecks: Array<{
+      service: string;
+      operation: string;
+      duration: number;
+      percentage: number;
+    }>;
+    slowestSpans: TraceSpan[];
+    databaseQueries: Array<{
+      query: string;
+      duration: number;
+      service: string;
+    }>;
+  };
+  errors: Array<{
+    span: TraceSpan;
+    error: any;
+    context: Record<string, any>;
+  }>;
+  dependencies: Array<{
+    from: string;
+    to: string;
+    callCount: number;
+    avgLatency: number;
+  }>;
+}
+
+export interface TracingMetrics {
+  totalTraces: number;
+  totalSpans: number;
+  averageLatency: number;
+  errorRate: number;
+  servicesInvolved: number;
+  topOperations: Array<{
+    operation: string;
+    count: number;
+    avgDuration: number;
+  }>;
+  serviceDependencies: Record<string, string[]>;
+}
+
+export class TracingManager extends EventEmitter {
+  private config: ObservabilityConfig;
+  private sdk?: NodeSDK;
+  private tracer?: api.Tracer;
+  private isRunning = false;
+  
+  // Trace storage and analysis
+  private traces: Map<string, TraceSpan[]> = new Map();
+  private spanBuffer: TraceSpan[] = [];
+  private activeSpans: Map<string, TraceSpan> = new Map();
+  
+  // Performance tracking
+  private operationMetrics: Map<string, {
+    count: number;
+    totalDuration: number;
+    errorCount: number;
+  }> = new Map();
+  
+  // Service dependency graph
+  private serviceDependencies: Map<string, Set<string>> = new Map();
+  
+  private readonly MAX_TRACES = 1000;
+  private readonly BUFFER_SIZE = 100;
+  private bufferFlushInterval?: NodeJS.Timeout;
+
+  constructor(config: ObservabilityConfig) {
+    super();
+    this.config = config;
+    
+    this.initializeSDK();
+    this.setupTraceCollection();
+  }
+
+  /**
+   * Start the tracing manager
+   */
+  async start(): Promise<void> {
+    if (this.isRunning) return;
+    
+    try {
+      // Start OpenTelemetry SDK
+      this.sdk?.start();
+      
+      this.isRunning = true;
+      
+      // Start buffer flush interval
+      this.bufferFlushInterval = setInterval(() => {
+        this.flushSpanBuffer();
+      }, 5000); // Flush every 5 seconds
+      
+      // Get tracer instance
+      this.tracer = api.trace.getTracer(
+        this.config.serviceName,
+        this.config.version
+      );
+      
+      this.emit('started', { timestamp: new Date() });
+      console.log('🔍 Tracing Manager started');
+      
+    } catch (error) {
+      this.emit('error', { error, context: 'start' });
+      throw error;
+    }
+  }
+
+  /**
+   * Stop the tracing manager
+   */
+  async stop(): Promise<void> {
+    if (!this.isRunning) return;
+    
+    this.isRunning = false;
+    
+    // Clear intervals
+    if (this.bufferFlushInterval) {
+      clearInterval(this.bufferFlushInterval);
+    }
+    
+    // Flush remaining spans
+    this.flushSpanBuffer();
+    
+    // Stop SDK
+    try {
+      await this.sdk?.shutdown();
+    } catch (error) {
+      this.emit('error', { error, context: 'shutdown' });
+    }
+    
+    this.emit('stopped', { timestamp: new Date() });
+    console.log('🔍 Tracing Manager stopped');
+  }
+
+  /**
+   * Create a new span
+   */
+  createSpan(operationName: string, options: {
+    parentSpan?: api.Span;
+    tags?: Record<string, any>;
+    baggage?: Record<string, string>;
+  } = {}): api.Span {
+    if (!this.tracer) {
+      throw new Error('Tracing manager not started');
+    }
+
+    const { parentSpan, tags = {}, baggage = {} } = options;
+    
+    // Create span with OpenTelemetry
+    const span = this.tracer.startSpan(operationName, {
+      parent: parentSpan,
+      attributes: {
+        'service.name': this.config.serviceName,
+        'service.version': this.config.version,
+        'service.environment': this.config.environment,
+        ...tags,
+      },
+    });
+    
+    // Set baggage
+    let currentContext = api.context.active();
+    for (const [key, value] of Object.entries(baggage)) {
+      currentContext = api.baggage.setString(currentContext, key, value);
+    }
+    
+    // Track span internally
+    const spanContext = span.spanContext();
+    const traceSpan: TraceSpan = {
+      traceId: spanContext.traceId,
+      spanId: spanContext.spanId,
+      parentSpanId: parentSpan?.spanContext().spanId,
+      operationName,
+      serviceName: this.config.serviceName,
+      startTime: new Date(),
+      status: 'ok',
+      tags,
+      logs: [],
+      baggage,
+      references: [],
+    };
+    
+    this.activeSpans.set(spanContext.spanId, traceSpan);
+    
+    return span;
+  }
+
+  /**
+   * Finish a span
+   */
+  finishSpan(span: api.Span, options: {
+    status?: 'ok' | 'error' | 'timeout';
+    error?: Error;
+    tags?: Record<string, any>;
+  } = {}): void {
+    const { status = 'ok', error, tags = {} } = options;
+    const spanContext = span.spanContext();
+    const traceSpan = this.activeSpans.get(spanContext.spanId);
+    
+    if (traceSpan) {
+      traceSpan.endTime = new Date();
+      traceSpan.duration = traceSpan.endTime.getTime() - traceSpan.startTime.getTime();
+      traceSpan.status = status;
+      traceSpan.tags = { ...traceSpan.tags, ...tags };
+      
+      // Add error information
+      if (error) {
+        span.recordException(error);
+        traceSpan.logs.push({
+          timestamp: new Date(),
+          level: 'error',
+          message: error.message,
+          fields: {
+            'error.kind': error.name,
+            'error.object': error,
+            stack: error.stack,
+          },
+        });
+      }
+      
+      // Set span status
+      if (status === 'error') {
+        span.setStatus({
+          code: api.SpanStatusCode.ERROR,
+          message: error?.message || 'Operation failed',
+        });
+      } else {
+        span.setStatus({ code: api.SpanStatusCode.OK });
+      }
+      
+      // Add final attributes
+      span.setAttributes({
+        'span.duration_ms': traceSpan.duration,
+        'span.status': status,
+        ...tags,
+      });
+      
+      // Finish OpenTelemetry span
+      span.end();
+      
+      // Move to buffer for processing
+      this.spanBuffer.push(traceSpan);
+      this.activeSpans.delete(spanContext.spanId);
+      
+      // Update metrics
+      this.updateOperationMetrics(traceSpan);
+      
+      // Emit event
+      this.emit('span-finished', traceSpan);
+      
+      // Flush buffer if needed
+      if (this.spanBuffer.length >= this.BUFFER_SIZE) {
+        this.flushSpanBuffer();
+      }
+    }
+  }
+
+  /**
+   * Add log to active span
+   */
+  logToSpan(span: api.Span, level: 'info' | 'warn' | 'error', message: string, fields: Record<string, any> = {}): void {
+    const spanContext = span.spanContext();
+    const traceSpan = this.activeSpans.get(spanContext.spanId);
+    
+    if (traceSpan) {
+      traceSpan.logs.push({
+        timestamp: new Date(),
+        level,
+        message,
+        fields,
+      });
+      
+      // Also add as OpenTelemetry event
+      span.addEvent(message, {
+        level,
+        ...fields,
+      });
+    }
+  }
+
+  /**
+   * Set span tags
+   */
+  setSpanTags(span: api.Span, tags: Record<string, any>): void {
+    const spanContext = span.spanContext();
+    const traceSpan = this.activeSpans.get(spanContext.spanId);
+    
+    if (traceSpan) {
+      traceSpan.tags = { ...traceSpan.tags, ...tags };
+      
+      // Also set OpenTelemetry attributes
+      span.setAttributes(tags);
+    }
+  }
+
+  /**
+   * Trace HTTP request
+   */
+  traceHttpRequest(req: any, res: any, next: any): void {
+    const span = this.createSpan(`HTTP ${req.method} ${req.route?.path || req.path}`, {
+      tags: {
+        'http.method': req.method,
+        'http.url': req.url,
+        'http.route': req.route?.path || req.path,
+        'http.user_agent': req.headers['user-agent'],
+        'http.request_id': req.headers['x-request-id'],
+        'user.id': req.user?.id,
+      },
+    });
+    
+    // Store span in request for access in handlers
+    req.span = span;
+    req.traceId = span.spanContext().traceId;
+    
+    // Hook into response finish
+    const originalEnd = res.end;
+    res.end = function(chunk: any, encoding: any) {
+      res.end = originalEnd;
+      
+      const status = res.statusCode >= 400 ? 'error' : 'ok';
+      
+      span.setAttributes({
+        'http.status_code': res.statusCode,
+        'http.response_size': res.get('content-length') || 0,
+      });
+      
+      this.finishSpan(span, {
+        status,
+        tags: {
+          'http.status_code': res.statusCode,
+        },
+      });
+      
+      return originalEnd.call(res, chunk, encoding);
+    }.bind(this);
+    
+    next();
+  }
+
+  /**
+   * Trace database operation
+   */
+  traceDatabaseOperation<T>(operation: string, query: string, executor: () => Promise<T>): Promise<T> {
+    const span = this.createSpan(`db.${operation}`, {
+      tags: {
+        'db.type': 'sql',
+        'db.statement': query,
+        'db.operation': operation,
+        'component': 'database',
+      },
+    });
+
+    return api.context.with(api.trace.setSpan(api.context.active(), span), async () => {
+      try {
+        const startTime = Date.now();
+        const result = await executor();
+        const duration = Date.now() - startTime;
+        
+        this.finishSpan(span, {
+          status: 'ok',
+          tags: {
+            'db.duration_ms': duration,
+            'db.rows_affected': Array.isArray(result) ? result.length : 1,
+          },
+        });
+        
+        return result;
+        
+      } catch (error) {
+        this.finishSpan(span, {
+          status: 'error',
+          error: error as Error,
+        });
+        
+        throw error;
+      }
+    });
+  }
+
+  /**
+   * Trace external API call
+   */
+  traceExternalCall<T>(service: string, operation: string, executor: () => Promise<T>): Promise<T> {
+    const span = this.createSpan(`external.${service}.${operation}`, {
+      tags: {
+        'external.service': service,
+        'external.operation': operation,
+        'component': 'http-client',
+      },
+    });
+
+    return api.context.with(api.trace.setSpan(api.context.active(), span), async () => {
+      try {
+        const result = await executor();
+        
+        this.finishSpan(span, { status: 'ok' });
+        
+        // Track service dependency
+        this.addServiceDependency(this.config.serviceName, service);
+        
+        return result;
+        
+      } catch (error) {
+        this.finishSpan(span, {
+          status: 'error',
+          error: error as Error,
+        });
+        
+        throw error;
+      }
+    });
+  }
+
+  /**
+   * Get trace by ID
+   */
+  getTrace(traceId: string): TraceSpan[] | undefined {
+    return this.traces.get(traceId);
+  }
+
+  /**
+   * Get traces with filters
+   */
+  getTraces(filter: {
+    service?: string;
+    operation?: string;
+    status?: 'ok' | 'error' | 'timeout';
+    minDuration?: number;
+    maxDuration?: number;
+    timeRange?: { start: Date; end: Date };
+    limit?: number;
+  } = {}): TraceSpan[] {
+    const allSpans: TraceSpan[] = [];
+    
+    // Collect all spans
+    for (const spans of this.traces.values()) {
+      allSpans.push(...spans);
+    }
+    
+    // Add buffer spans
+    allSpans.push(...this.spanBuffer);
+    
+    // Apply filters
+    let filteredSpans = allSpans.filter(span => {
+      if (filter.service && span.serviceName !== filter.service) return false;
+      if (filter.operation && !span.operationName.includes(filter.operation)) return false;
+      if (filter.status && span.status !== filter.status) return false;
+      if (filter.minDuration && (!span.duration || span.duration < filter.minDuration)) return false;
+      if (filter.maxDuration && (!span.duration || span.duration > filter.maxDuration)) return false;
+      
+      if (filter.timeRange) {
+        const spanTime = span.startTime.getTime();
+        if (spanTime < filter.timeRange.start.getTime() || spanTime > filter.timeRange.end.getTime()) {
+          return false;
+        }
+      }
+      
+      return true;
+    });
+    
+    // Sort by start time (newest first)
+    filteredSpans.sort((a, b) => b.startTime.getTime() - a.startTime.getTime());
+    
+    // Apply limit
+    if (filter.limit) {
+      filteredSpans = filteredSpans.slice(0, filter.limit);
+    }
+    
+    return filteredSpans;
+  }
+
+  /**
+   * Analyze trace for performance insights
+   */
+  analyzeTrace(traceId: string): TraceAnalysis | null {
+    const spans = this.traces.get(traceId);
+    if (!spans || spans.length === 0) {
+      return null;
+    }
+    
+    const totalDuration = Math.max(...spans.map(s => s.duration || 0));
+    const errorSpans = spans.filter(s => s.status === 'error');
+    const services = Array.from(new Set(spans.map(s => s.serviceName)));
+    
+    // Find critical path (longest sequence)
+    const criticalPath = this.findCriticalPath(spans);
+    
+    // Find bottlenecks
+    const bottlenecks = spans
+      .filter(s => s.duration && s.duration > 0)
+      .map(s => ({
+        service: s.serviceName,
+        operation: s.operationName,
+        duration: s.duration!,
+        percentage: (s.duration! / totalDuration) * 100,
+      }))
+      .sort((a, b) => b.duration - a.duration)
+      .slice(0, 5);
+    
+    // Find slowest spans
+    const slowestSpans = spans
+      .filter(s => s.duration && s.duration > 0)
+      .sort((a, b) => (b.duration || 0) - (a.duration || 0))
+      .slice(0, 10);
+    
+    // Extract database queries
+    const databaseQueries = spans
+      .filter(s => s.tags['db.statement'])
+      .map(s => ({
+        query: s.tags['db.statement'],
+        duration: s.duration || 0,
+        service: s.serviceName,
+      }));
+    
+    // Extract errors
+    const errors = errorSpans.map(s => ({
+      span: s,
+      error: s.logs.find(l => l.level === 'error')?.fields?.['error.object'],
+      context: s.tags,
+    }));
+    
+    // Build dependencies
+    const dependencies = this.buildTraceDependencies(spans);
+    
+    return {
+      trace: {
+        traceId,
+        totalDuration,
+        spanCount: spans.length,
+        errorCount: errorSpans.length,
+        services,
+        criticalPath,
+      },
+      performance: {
+        bottlenecks,
+        slowestSpans,
+        databaseQueries,
+      },
+      errors,
+      dependencies,
+    };
+  }
+
+  /**
+   * Get tracing metrics
+   */
+  getMetrics(): TracingMetrics {
+    const allSpans: TraceSpan[] = [];
+    
+    // Collect all spans
+    for (const spans of this.traces.values()) {
+      allSpans.push(...spans);
+    }
+    allSpans.push(...this.spanBuffer);
+    
+    const totalTraces = this.traces.size;
+    const totalSpans = allSpans.length;
+    
+    // Calculate average latency
+    const spanDurations = allSpans.filter(s => s.duration).map(s => s.duration!);
+    const averageLatency = spanDurations.length > 0 
+      ? spanDurations.reduce((sum, d) => sum + d, 0) / spanDurations.length 
+      : 0;
+    
+    // Calculate error rate
+    const errorSpans = allSpans.filter(s => s.status === 'error');
+    const errorRate = totalSpans > 0 ? (errorSpans.length / totalSpans) * 100 : 0;
+    
+    // Count unique services
+    const servicesInvolved = new Set(allSpans.map(s => s.serviceName)).size;
+    
+    // Top operations
+    const operationCounts = new Map<string, { count: number; totalDuration: number }>();
+    
+    for (const span of allSpans) {
+      const key = `${span.serviceName}.${span.operationName}`;
+      if (!operationCounts.has(key)) {
+        operationCounts.set(key, { count: 0, totalDuration: 0 });
+      }
+      
+      const stats = operationCounts.get(key)!;
+      stats.count++;
+      stats.totalDuration += span.duration || 0;
+    }
+    
+    const topOperations = Array.from(operationCounts.entries())
+      .map(([operation, stats]) => ({
+        operation,
+        count: stats.count,
+        avgDuration: stats.totalDuration / stats.count,
+      }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 10);
+    
+    // Service dependencies
+    const serviceDependencies: Record<string, string[]> = {};
+    for (const [service, deps] of this.serviceDependencies) {
+      serviceDependencies[service] = Array.from(deps);
+    }
+    
+    return {
+      totalTraces,
+      totalSpans,
+      averageLatency,
+      errorRate,
+      servicesInvolved,
+      topOperations,
+      serviceDependencies,
+    };
+  }
+
+  /**
+   * Export traces for external systems
+   */
+  exportTraces(format: 'jaeger' | 'zipkin' | 'otlp', filter?: any): any {
+    const spans = this.getTraces(filter);
+    
+    switch (format) {
+      case 'jaeger':
+        return this.exportToJaeger(spans);
+      case 'zipkin':
+        return this.exportToZipkin(spans);
+      case 'otlp':
+        return this.exportToOTLP(spans);
+      default:
+        throw new Error(`Unsupported export format: ${format}`);
+    }
+  }
+
+  /**
+   * Initialize OpenTelemetry SDK
+   */
+  private initializeSDK(): void {
+    const resource = Resource.default().merge(
+      new Resource({
+        [SemanticResourceAttributes.SERVICE_NAME]: this.config.serviceName,
+        [SemanticResourceAttributes.SERVICE_VERSION]: this.config.version,
+        [SemanticResourceAttributes.DEPLOYMENT_ENVIRONMENT]: this.config.environment,
+      })
+    );
+
+    this.sdk = new NodeSDK({
+      resource,
+      instrumentations: [getNodeAutoInstrumentations({
+        // Configure auto-instrumentations
+        '@opentelemetry/instrumentation-fs': {
+          enabled: this.config.tracing.instrumentation.filesystem,
+        },
+      })],
+    });
+
+    // Configure exporters
+    if (this.config.tracing.exporters.jaeger) {
+      this.sdk.configureTracerProvider({
+        spanProcessors: [
+          new (require('@opentelemetry/sdk-trace-base')).BatchSpanProcessor(
+            new JaegerExporter(this.config.tracing.exporters.jaeger)
+          ),
+        ],
+      });
+    }
+  }
+
+  /**
+   * Setup trace collection
+   */
+  private setupTraceCollection(): void {
+    // Listen for span events from OpenTelemetry
+    // This is a simplified version - in practice, you'd use span processors
+  }
+
+  /**
+   * Flush span buffer
+   */
+  private flushSpanBuffer(): void {
+    if (this.spanBuffer.length === 0) return;
+    
+    const spansToProcess = [...this.spanBuffer];
+    this.spanBuffer = [];
+    
+    // Group spans by trace ID
+    for (const span of spansToProcess) {
+      if (!this.traces.has(span.traceId)) {
+        this.traces.set(span.traceId, []);
+      }
+      
+      this.traces.get(span.traceId)!.push(span);
+    }
+    
+    // Cleanup old traces
+    this.cleanupOldTraces();
+    
+    // Emit processed event
+    this.emit('spans-processed', { count: spansToProcess.length, timestamp: new Date() });
+  }
+
+  /**
+   * Update operation metrics
+   */
+  private updateOperationMetrics(span: TraceSpan): void {
+    const key = `${span.serviceName}.${span.operationName}`;
+    
+    if (!this.operationMetrics.has(key)) {
+      this.operationMetrics.set(key, { count: 0, totalDuration: 0, errorCount: 0 });
+    }
+    
+    const metrics = this.operationMetrics.get(key)!;
+    metrics.count++;
+    metrics.totalDuration += span.duration || 0;
+    
+    if (span.status === 'error') {
+      metrics.errorCount++;
+    }
+  }
+
+  /**
+   * Add service dependency
+   */
+  private addServiceDependency(from: string, to: string): void {
+    if (!this.serviceDependencies.has(from)) {
+      this.serviceDependencies.set(from, new Set());
+    }
+    
+    this.serviceDependencies.get(from)!.add(to);
+  }
+
+  /**
+   * Find critical path in trace
+   */
+  private findCriticalPath(spans: TraceSpan[]): TraceSpan[] {
+    // Build span hierarchy
+    const spanMap = new Map<string, TraceSpan>();
+    const children = new Map<string, string[]>();
+    
+    for (const span of spans) {
+      spanMap.set(span.spanId, span);
+      
+      if (span.parentSpanId) {
+        if (!children.has(span.parentSpanId)) {
+          children.set(span.parentSpanId, []);
+        }
+        children.get(span.parentSpanId)!.push(span.spanId);
+      }
+    }
+    
+    // Find root spans (no parent)
+    const rootSpans = spans.filter(s => !s.parentSpanId);
+    
+    if (rootSpans.length === 0) return [];
+    
+    // Find the longest path from root
+    const findLongestPath = (spanId: string): TraceSpan[] => {
+      const span = spanMap.get(spanId);
+      if (!span) return [];
+      
+      const childIds = children.get(spanId) || [];
+      if (childIds.length === 0) {
+        return [span];
+      }
+      
+      let longestChildPath: TraceSpan[] = [];
+      let maxDuration = 0;
+      
+      for (const childId of childIds) {
+        const childPath = findLongestPath(childId);
+        const pathDuration = childPath.reduce((sum, s) => sum + (s.duration || 0), 0);
+        
+        if (pathDuration > maxDuration) {
+          maxDuration = pathDuration;
+          longestChildPath = childPath;
+        }
+      }
+      
+      return [span, ...longestChildPath];
+    };
+    
+    return findLongestPath(rootSpans[0].spanId);
+  }
+
+  /**
+   * Build trace dependencies
+   */
+  private buildTraceDependencies(spans: TraceSpan[]): Array<{
+    from: string;
+    to: string;
+    callCount: number;
+    avgLatency: number;
+  }> {
+    const dependencies = new Map<string, {
+      callCount: number;
+      totalLatency: number;
+    }>();
+    
+    for (const span of spans) {
+      if (span.parentSpanId) {
+        const parentSpan = spans.find(s => s.spanId === span.parentSpanId);
+        if (parentSpan) {
+          const key = `${parentSpan.serviceName}->${span.serviceName}`;
+          
+          if (!dependencies.has(key)) {
+            dependencies.set(key, { callCount: 0, totalLatency: 0 });
+          }
+          
+          const dep = dependencies.get(key)!;
+          dep.callCount++;
+          dep.totalLatency += span.duration || 0;
+        }
+      }
+    }
+    
+    return Array.from(dependencies.entries()).map(([key, stats]) => {
+      const [from, to] = key.split('->');
+      return {
+        from,
+        to,
+        callCount: stats.callCount,
+        avgLatency: stats.totalLatency / stats.callCount,
+      };
+    });
+  }
+
+  /**
+   * Cleanup old traces
+   */
+  private cleanupOldTraces(): void {
+    if (this.traces.size <= this.MAX_TRACES) return;
+    
+    // Convert to array and sort by age
+    const traceEntries = Array.from(this.traces.entries());
+    traceEntries.sort((a, b) => {
+      const aTime = Math.min(...a[1].map(s => s.startTime.getTime()));
+      const bTime = Math.min(...b[1].map(s => s.startTime.getTime()));
+      return aTime - bTime; // Oldest first
+    });
+    
+    // Remove oldest traces
+    const toRemove = traceEntries.length - this.MAX_TRACES;
+    for (let i = 0; i < toRemove; i++) {
+      this.traces.delete(traceEntries[i][0]);
+    }
+  }
+
+  /**
+   * Export to Jaeger format
+   */
+  private exportToJaeger(spans: TraceSpan[]): any {
+    // Implementation for Jaeger format
+    return {
+      data: spans.map(span => ({
+        traceID: span.traceId,
+        spanID: span.spanId,
+        parentSpanID: span.parentSpanId,
+        operationName: span.operationName,
+        startTime: span.startTime.getTime() * 1000, // microseconds
+        duration: (span.duration || 0) * 1000, // microseconds
+        tags: Object.entries(span.tags).map(([key, value]) => ({
+          key,
+          value: String(value),
+          type: 'string',
+        })),
+        process: {
+          serviceName: span.serviceName,
+          tags: [],
+        },
+      })),
+    };
+  }
+
+  /**
+   * Export to Zipkin format
+   */
+  private exportToZipkin(spans: TraceSpan[]): any {
+    return spans.map(span => ({
+      traceId: span.traceId,
+      id: span.spanId,
+      parentId: span.parentSpanId,
+      name: span.operationName,
+      timestamp: span.startTime.getTime() * 1000, // microseconds
+      duration: (span.duration || 0) * 1000, // microseconds
+      localEndpoint: {
+        serviceName: span.serviceName,
+      },
+      tags: span.tags,
+    }));
+  }
+
+  /**
+   * Export to OTLP format
+   */
+  private exportToOTLP(spans: TraceSpan[]): any {
+    // Implementation for OTLP format
+    return {
+      resourceSpans: [{
+        resource: {
+          attributes: [{
+            key: 'service.name',
+            value: { stringValue: this.config.serviceName },
+          }],
+        },
+        instrumentationLibrarySpans: [{
+          spans: spans.map(span => ({
+            traceId: span.traceId,
+            spanId: span.spanId,
+            parentSpanId: span.parentSpanId,
+            name: span.operationName,
+            startTimeUnixNano: span.startTime.getTime() * 1000000, // nanoseconds
+            endTimeUnixNano: span.endTime ? span.endTime.getTime() * 1000000 : undefined,
+            attributes: Object.entries(span.tags).map(([key, value]) => ({
+              key,
+              value: { stringValue: String(value) },
+            })),
+            status: {
+              code: span.status === 'ok' ? 1 : 2, // OK = 1, ERROR = 2
+            },
+          })),
+        }],
+      }],
+    };
+  }
+
+  /**
+   * Get health status
+   */
+  async getHealth(): Promise<{ status: string; lastCheck: Date; details?: string }> {
+    try {
+      const isHealthy = this.isRunning && 
+                       this.spanBuffer.length < this.BUFFER_SIZE * 0.9 &&
+                       this.traces.size < this.MAX_TRACES * 0.9;
+      
+      return {
+        status: isHealthy ? 'healthy' : 'degraded',
+        lastCheck: new Date(),
+        details: isHealthy ? undefined : 'Buffer or storage nearing capacity',
+      };
+    } catch (error) {
+      return {
+        status: 'unhealthy',
+        lastCheck: new Date(),
+        details: error.message,
+      };
+    }
+  }
+
+  /**
+   * Update configuration
+   */
+  async updateConfig(config: ObservabilityConfig): Promise<void> {
+    this.config = config;
+    
+    // Reinitialize SDK if tracing config changed
+    if (this.isRunning) {
+      await this.stop();
+      this.initializeSDK();
+      await this.start();
+    } else {
+      this.initializeSDK();
+    }
+  }
+}
+
+export default TracingManager;

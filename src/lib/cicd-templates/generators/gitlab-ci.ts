@@ -1,0 +1,1124 @@
+/**
+ * GitLab CI Template Generator
+ * Generates production-ready GitLab CI/CD pipelines
+ */
+
+import { CICDTemplateConfig, GeneratedTemplate, TemplateMetadata } from '../';
+import { BaseTemplateGenerator } from './index';
+
+export class GitLabCIGenerator extends BaseTemplateGenerator {
+  getMetadata(): TemplateMetadata {
+    return {
+      name: 'GitLab CI/CD Pipeline',
+      version: '2.0.0',
+      description: 'Production-ready GitLab CI pipeline with advanced features',
+      author: 'Platform Team',
+      tags: ['gitlab-ci', 'ci/cd', 'automation'],
+      requiredSecrets: [
+        'CI_REGISTRY_USER',
+        'CI_REGISTRY_PASSWORD',
+        'SONAR_TOKEN',
+        'SNYK_TOKEN',
+        'SLACK_WEBHOOK',
+        'DEPLOY_TOKEN'
+      ],
+      estimatedDuration: 20,
+      costEstimate: {
+        compute: 0.0,  // GitLab shared runners
+        storage: 0.0,
+        network: 0.0
+      }
+    };
+  }
+  
+  generate(config: CICDTemplateConfig): GeneratedTemplate {
+    const metadata = this.getMetadata();
+    const files = new Map<string, string>();
+    
+    // Main GitLab CI file
+    const mainPipeline = this.generateMainPipeline(config);
+    files.set('.gitlab-ci.yml', mainPipeline);
+    
+    // Include files for modular pipeline
+    if (config.testingFrameworks && config.testingFrameworks.length > 0) {
+      files.set('.gitlab/ci/tests.yml', this.generateTestsInclude(config));
+    }
+    
+    if (config.securityScanning) {
+      files.set('.gitlab/ci/security.yml', this.generateSecurityInclude(config));
+    }
+    
+    if (config.environments && config.environments.length > 0) {
+      files.set('.gitlab/ci/deploy.yml', this.generateDeployInclude(config));
+    }
+    
+    // Quality gate configuration
+    if (config.qualityGates) {
+      files.set('.gitlab/ci/quality.yml', this.generateQualityInclude(config));
+    }
+    
+    // GitLab-specific configurations
+    files.set('.gitlab/merge_request_templates/Default.md', this.generateMRTemplate());
+    files.set('.gitlab/issue_templates/Bug.md', this.generateBugTemplate());
+    files.set('.gitlab/issue_templates/Feature.md', this.generateFeatureTemplate());
+    
+    // Documentation
+    const documentation = this.generateDocumentation(config);
+    
+    return {
+      metadata,
+      content: mainPipeline,
+      files,
+      documentation
+    };
+  }
+  
+  protected validatePlatformSpecific(config: CICDTemplateConfig): boolean {
+    return true;
+  }
+  
+  private generateMainPipeline(config: CICDTemplateConfig): string {
+    return `# GitLab CI/CD Pipeline
+# Generated for ${config.language} ${config.projectType} project
+
+default:
+  image: ${this.getDefaultImage(config.language)}
+  retry:
+    max: 2
+    when:
+      - unknown_failure
+      - api_failure
+      - runner_system_failure
+      - scheduler_failure
+
+variables:
+  FF_USE_FASTZIP: "true"
+  ARTIFACT_COMPRESSION_LEVEL: "fast"
+  CACHE_COMPRESSION_LEVEL: "fast"
+  TRANSFER_METER_FREQUENCY: "5s"
+  ${config.dockerEnabled ? `
+  DOCKER_DRIVER: overlay2
+  DOCKER_TLS_CERTDIR: "/certs"
+  DOCKER_HOST: tcp://docker:2376
+  DOCKER_TLS_VERIFY: 1
+  DOCKER_CERT_PATH: "$DOCKER_TLS_CERTDIR/client"
+  IMAGE_TAG: $CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA
+  IMAGE_TAG_LATEST: $CI_REGISTRY_IMAGE:latest` : ''}
+  ${this.getLanguageVariables(config.language)}
+
+cache:
+  key:
+    files:
+      - ${this.getLockFile(config.language)}
+    prefix: $CI_COMMIT_REF_SLUG
+  paths:
+    - ${this.getCachePath(config.language)}
+  policy: pull-push
+
+stages:
+  - .pre
+  - build
+  - test
+  - security
+  - quality
+  - package
+  - deploy
+  - .post
+
+workflow:
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      variables:
+        IS_MR: "true"
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      variables:
+        IS_DEFAULT: "true"
+    - if: '$CI_COMMIT_TAG'
+      variables:
+        IS_TAG: "true"
+    - when: always
+
+include:
+  - template: Security/SAST.gitlab-ci.yml
+  - template: Security/Secret-Detection.gitlab-ci.yml
+  - template: Security/Dependency-Scanning.gitlab-ci.yml
+  - template: Security/Container-Scanning.gitlab-ci.yml
+  - template: Security/License-Scanning.gitlab-ci.yml
+  ${config.testingFrameworks ? '- local: .gitlab/ci/tests.yml' : ''}
+  ${config.securityScanning ? '- local: .gitlab/ci/security.yml' : ''}
+  ${config.qualityGates ? '- local: .gitlab/ci/quality.yml' : ''}
+  ${config.environments ? '- local: .gitlab/ci/deploy.yml' : ''}
+
+# ============================================
+# Pre-stage: Initialize and validate
+# ============================================
+
+validate:config:
+  stage: .pre
+  script:
+    - echo "Validating CI configuration..."
+    - |
+      if [ -f ".gitlab-ci.yml" ]; then
+        gitlab-ci-lint .gitlab-ci.yml
+      fi
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      changes:
+        - .gitlab-ci.yml
+        - .gitlab/ci/*.yml
+
+# ============================================
+# Build Stage
+# ============================================
+
+build:app:
+  stage: build
+  image: ${this.getBuildImage(config.language)}
+  before_script:
+    - ${this.getBeforeScript(config.language)}
+  script:
+    - echo "Building application..."
+    - ${this.getInstallCommand(config.language)}
+    - ${this.getBuildCommand(config.language)}
+    - echo "Build completed successfully"
+  artifacts:
+    name: "build-$CI_COMMIT_SHORT_SHA"
+    paths:
+      - ${this.getBuildArtifacts(config.language)}
+    expire_in: 1 week
+    reports:
+      dotenv: build.env
+  coverage: '/Total coverage: \\d+\\.\\d+%/'
+  rules:
+    - if: '$CI_COMMIT_BRANCH || $CI_COMMIT_TAG'
+
+${config.dockerEnabled ? this.generateDockerBuild(config) : ''}
+
+# ============================================
+# Test Stage
+# ============================================
+
+test:unit:
+  stage: test
+  needs: ["build:app"]
+  script:
+    - echo "Running unit tests..."
+    - ${this.getTestCommand(config.language, 'unit')}
+    - ${this.getCoverageCommand(config.language)}
+  artifacts:
+    when: always
+    paths:
+      - coverage/
+      - test-results/
+    reports:
+      junit: test-results/junit.xml
+      coverage_report:
+        coverage_format: cobertura
+        path: coverage/cobertura-coverage.xml
+  coverage: '/Lines\\s*:\\s*(\\d+\\.\\d+)%/'
+  rules:
+    - if: '$CI_COMMIT_BRANCH || $CI_COMMIT_TAG'
+
+test:integration:
+  stage: test
+  needs: ["build:app"]
+  services:
+    - postgres:15
+    - redis:7
+  variables:
+    POSTGRES_DB: test
+    POSTGRES_USER: test
+    POSTGRES_PASSWORD: test
+    DATABASE_URL: "postgresql://test:test@postgres:5432/test"
+    REDIS_URL: "redis://redis:6379"
+  script:
+    - echo "Running integration tests..."
+    - ${this.getDBSetupCommand(config.language)}
+    - ${this.getTestCommand(config.language, 'integration')}
+  artifacts:
+    when: always
+    paths:
+      - test-results/
+    reports:
+      junit: test-results/integration.xml
+  rules:
+    - if: '$CI_COMMIT_BRANCH || $CI_COMMIT_TAG'
+
+${config.projectType === 'frontend' ? this.generateE2ETest(config) : ''}
+
+${config.performanceTesting ? this.generatePerformanceTest(config) : ''}
+
+# ============================================
+# Security Stage
+# ============================================
+
+security:scan:
+  stage: security
+  needs: ["build:app"]
+  script:
+    - echo "Running security scans..."
+    - ${this.getDependencyScanCommand(config.language)}
+    - ${this.getLicenseCheckCommand(config.language)}
+  allow_failure: true
+  artifacts:
+    when: always
+    paths:
+      - security-report/
+    reports:
+      sast: gl-sast-report.json
+      dependency_scanning: gl-dependency-scanning-report.json
+      license_scanning: gl-license-scanning-report.json
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH || $CI_COMMIT_TAG'
+
+${config.integrations?.sonarqube ? this.generateSonarQubeJob(config) : ''}
+
+${config.integrations?.snyk ? this.generateSnykJob(config) : ''}
+
+# ============================================
+# Quality Stage
+# ============================================
+
+quality:lint:
+  stage: quality
+  needs: []
+  script:
+    - echo "Running linters..."
+    - ${this.getLintCommand(config.language)}
+    - ${this.getFormatCommand(config.language)}
+  allow_failure: true
+  rules:
+    - if: '$CI_MERGE_REQUEST_ID'
+
+quality:complexity:
+  stage: quality
+  needs: ["build:app"]
+  script:
+    - echo "Analyzing code complexity..."
+    - ${this.getComplexityCommand(config.language)}
+  allow_failure: true
+  artifacts:
+    paths:
+      - complexity-report/
+  rules:
+    - if: '$CI_MERGE_REQUEST_ID'
+
+${config.qualityGates ? this.generateQualityGates(config) : ''}
+
+# ============================================
+# Package Stage
+# ============================================
+
+${config.dockerEnabled ? this.generatePackageStage(config) : ''}
+
+# ============================================
+# Deploy Stage
+# ============================================
+
+${config.environments ? this.generateDeployStages(config) : ''}
+
+# ============================================
+# Post Stage
+# ============================================
+
+notify:slack:
+  stage: .post
+  image: alpine:latest
+  needs: []
+  before_script:
+    - apk add --no-cache curl
+  script:
+    - |
+      if [ "$CI_JOB_STATUS" == "success" ]; then
+        STATUS_EMOJI="✅"
+        COLOR="good"
+      else
+        STATUS_EMOJI="❌"
+        COLOR="danger"
+      fi
+      
+      curl -X POST $SLACK_WEBHOOK \
+        -H 'Content-Type: application/json' \
+        -d "{
+          'attachments': [{
+            'color': '$COLOR',
+            'title': '$STATUS_EMOJI Pipeline $CI_PIPELINE_ID',
+            'text': 'Project: $CI_PROJECT_NAME\\nBranch: $CI_COMMIT_REF_NAME\\nCommit: $CI_COMMIT_SHORT_SHA\\nAuthor: $GITLAB_USER_NAME',
+            'footer': 'GitLab CI',
+            'footer_icon': 'https://about.gitlab.com/images/press/logo/png/gitlab-icon-rgb.png',
+            'ts': $(date +%s)
+          }]
+        }"
+  when: always
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $SLACK_WEBHOOK'
+
+cleanup:artifacts:
+  stage: .post
+  image: alpine:latest
+  needs: []
+  script:
+    - echo "Cleaning up old artifacts..."
+    - |
+      # Clean up artifacts older than 7 days
+      find . -name "*.tar.gz" -mtime +7 -delete
+  when: always
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      when: on_success
+`;
+  }
+  
+  private generateTestsInclude(config: CICDTemplateConfig): string {
+    return `# Test Jobs Include File
+
+.test_template:
+  stage: test
+  needs: ["build:app"]
+  artifacts:
+    when: always
+    reports:
+      junit: test-results/junit.xml
+    paths:
+      - test-results/
+      - coverage/
+
+test:smoke:
+  extends: .test_template
+  script:
+    - echo "Running smoke tests..."
+    - ${this.getTestCommand(config.language, 'smoke')}
+  rules:
+    - if: '$CI_COMMIT_BRANCH || $CI_COMMIT_TAG'
+
+test:regression:
+  extends: .test_template
+  script:
+    - echo "Running regression tests..."
+    - ${this.getTestCommand(config.language, 'regression')}
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+
+test:accessibility:
+  extends: .test_template
+  script:
+    - echo "Running accessibility tests..."
+    - npx pa11y-ci
+  rules:
+    - if: '$CI_MERGE_REQUEST_ID'
+      changes:
+        - "**/*.{jsx,tsx,html}"
+`;
+  }
+  
+  private generateSecurityInclude(config: CICDTemplateConfig): string {
+    return `# Security Jobs Include File
+
+.security_template:
+  stage: security
+  needs: ["build:app"]
+  allow_failure: true
+  artifacts:
+    when: always
+    paths:
+      - security-reports/
+
+security:owasp:
+  extends: .security_template
+  script:
+    - echo "Running OWASP dependency check..."
+    - |
+      case "${config.language}" in
+        nodejs|typescript|react)
+          npm audit --audit-level=moderate
+          npx owasp-dependency-check --project "$CI_PROJECT_NAME" --scan . --format JSON --out security-reports/
+          ;;
+        python)
+          safety check --json > security-reports/safety-report.json
+          ;;
+        java)
+          mvn org.owasp:dependency-check-maven:check
+          ;;
+        *)
+          echo "OWASP check not configured for ${config.language}"
+          ;;
+      esac
+
+security:secrets:
+  extends: .security_template
+  script:
+    - echo "Scanning for secrets..."
+    - |
+      # Install and run truffleHog
+      pip install truffleHog
+      truffleHog --regex --entropy=False --json . > security-reports/secrets-report.json
+
+security:container:
+  extends: .security_template
+  image: docker:latest
+  services:
+    - docker:dind
+  script:
+    - echo "Scanning container image..."
+    - |
+      # Install trivy
+      apk add --no-cache curl
+      curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
+      
+      # Scan the image
+      trivy image --format json --output security-reports/trivy-report.json $IMAGE_TAG
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $DOCKER_ENABLED == "true"'
+`;
+  }
+  
+  private generateDeployInclude(config: CICDTemplateConfig): string {
+    return `# Deployment Jobs Include File
+
+.deploy_template:
+  stage: deploy
+  image: alpine/helm:latest
+  before_script:
+    - apk add --no-cache curl kubectl
+    - kubectl version --client
+  artifacts:
+    reports:
+      environment: deploy-report.json
+
+${config.environments?.map(env => `
+deploy:${env.name}:
+  extends: .deploy_template
+  environment:
+    name: ${env.name}
+    url: ${env.url || `https://${env.name}.example.com`}
+    on_stop: stop:${env.name}
+  script:
+    - echo "Deploying to ${env.name}..."
+    - |
+      # Configure kubectl
+      kubectl config set-cluster k8s --server="$K8S_SERVER"
+      kubectl config set-credentials gitlab --token="$K8S_TOKEN"
+      kubectl config set-context default --cluster=k8s --user=gitlab --namespace=${env.name}
+      kubectl config use-context default
+      
+      # Deploy using ${config.deploymentStrategy || 'rolling'} strategy
+      ${this.getDeploymentScript(config.deploymentStrategy || 'rolling', env)}
+      
+      # Verify deployment
+      kubectl rollout status deployment/app -n ${env.name}
+      
+      # Run smoke tests
+      curl -f ${env.url || `https://${env.name}.example.com`}/health || exit 1
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "${this.getEnvironmentBranch(env)}"'
+      when: ${env.approvalRequired ? 'manual' : 'on_success'}
+    - if: '$CI_COMMIT_TAG && "${env.type}" == "production"'
+      when: manual
+
+stop:${env.name}:
+  extends: .deploy_template
+  environment:
+    name: ${env.name}
+    action: stop
+  script:
+    - echo "Stopping ${env.name} environment..."
+    - kubectl delete deployment/app -n ${env.name}
+  when: manual
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "${this.getEnvironmentBranch(env)}"'
+`).join('')}
+`;
+  }
+  
+  private generateQualityInclude(config: CICDTemplateConfig): string {
+    const gates = config.qualityGates!;
+    return `# Quality Gates Include File
+
+quality:gates:
+  stage: quality
+  needs: ["test:unit", "test:integration"]
+  script:
+    - echo "Checking quality gates..."
+    ${gates.codeCoverage ? `
+    - |
+      COVERAGE=$(cat coverage/coverage.txt | grep -oP 'Total: \\K[0-9.]+')
+      if (( $(echo "$COVERAGE < ${gates.codeCoverage}" | bc -l) )); then
+        echo "Coverage $COVERAGE% is below threshold ${gates.codeCoverage}%"
+        exit 1
+      fi` : ''}
+    ${gates.duplicateCode ? `
+    - |
+      DUPLICATES=$(jscpd . --reporters json --silent | jq .statistics.total.percentage)
+      if (( $(echo "$DUPLICATES > ${gates.duplicateCode}" | bc -l) )); then
+        echo "Duplicate code $DUPLICATES% exceeds threshold ${gates.duplicateCode}%"
+        exit 1
+      fi` : ''}
+    ${gates.complexity ? `
+    - |
+      COMPLEXITY=$(${this.getComplexityCommand(config.language)} | grep -oP 'Average: \\K[0-9.]+')
+      if (( $(echo "$COMPLEXITY > ${gates.complexity}" | bc -l) )); then
+        echo "Complexity $COMPLEXITY exceeds threshold ${gates.complexity}"
+        exit 1
+      fi` : ''}
+  artifacts:
+    reports:
+      metrics: metrics.txt
+  rules:
+    - if: '$CI_MERGE_REQUEST_ID'
+`;
+  }
+  
+  private generateDockerBuild(config: CICDTemplateConfig): string {
+    return `
+build:docker:
+  stage: build
+  image: docker:latest
+  services:
+    - docker:dind
+  before_script:
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+  script:
+    - echo "Building Docker image..."
+    - |
+      docker build \
+        --build-arg VERSION=$CI_COMMIT_SHORT_SHA \
+        --build-arg BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ') \
+        --build-arg VCS_REF=$CI_COMMIT_SHA \
+        --cache-from $CI_REGISTRY_IMAGE:latest \
+        --tag $IMAGE_TAG \
+        --tag $IMAGE_TAG_LATEST \
+        .
+    - docker push $IMAGE_TAG
+    - |
+      if [ "$CI_COMMIT_BRANCH" == "$CI_DEFAULT_BRANCH" ]; then
+        docker push $IMAGE_TAG_LATEST
+      fi
+  artifacts:
+    reports:
+      container_scanning: gl-container-scanning-report.json
+  rules:
+    - if: '$CI_COMMIT_BRANCH || $CI_COMMIT_TAG'`;
+  }
+  
+  private generateE2ETest(config: CICDTemplateConfig): string {
+    return `
+test:e2e:
+  stage: test
+  needs: ["build:app"]
+  image: mcr.microsoft.com/playwright:focal
+  services:
+    - name: $IMAGE_TAG
+      alias: app
+  variables:
+    APP_URL: "http://app:3000"
+  script:
+    - echo "Running E2E tests..."
+    - npm ci
+    - npx playwright install
+    - npx playwright test
+  artifacts:
+    when: always
+    paths:
+      - playwright-report/
+      - test-results/
+    reports:
+      junit: test-results/e2e.xml
+  rules:
+    - if: '$CI_MERGE_REQUEST_ID || $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'`;
+  }
+  
+  private generatePerformanceTest(config: CICDTemplateConfig): string {
+    return `
+test:performance:
+  stage: test
+  needs: ["build:app"]
+  image: loadimpact/k6:latest
+  script:
+    - echo "Running performance tests..."
+    - k6 run tests/performance/load-test.js --out json=performance-results.json
+    - k6 run tests/performance/stress-test.js --out json=stress-results.json
+  artifacts:
+    paths:
+      - performance-results.json
+      - stress-results.json
+    reports:
+      performance: performance-results.json
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'`;
+  }
+  
+  private generateSonarQubeJob(config: CICDTemplateConfig): string {
+    return `
+quality:sonarqube:
+  stage: quality
+  needs: ["test:unit"]
+  image: sonarsource/sonar-scanner-cli:latest
+  variables:
+    SONAR_USER_HOME: "\${CI_PROJECT_DIR}/.sonar"
+    GIT_DEPTH: "0"
+  cache:
+    key: "\${CI_JOB_NAME}"
+    paths:
+      - .sonar/cache
+  script:
+    - sonar-scanner
+      -Dsonar.projectKey=$CI_PROJECT_NAME
+      -Dsonar.sources=.
+      -Dsonar.host.url=$SONAR_HOST_URL
+      -Dsonar.login=$SONAR_TOKEN
+  allow_failure: true
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'`;
+  }
+  
+  private generateSnykJob(config: CICDTemplateConfig): string {
+    return `
+security:snyk:
+  stage: security
+  needs: ["build:app"]
+  image: snyk/snyk:${config.language}
+  script:
+    - snyk test --severity-threshold=high
+    - snyk monitor
+  allow_failure: true
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'`;
+  }
+  
+  private generateQualityGates(config: CICDTemplateConfig): string {
+    return `
+quality:gates:check:
+  stage: quality
+  needs: ["test:unit", "quality:complexity"]
+  script:
+    - echo "Checking quality gates..."
+    - |
+      # Check all quality gates
+      FAILED=0
+      
+      ${config.qualityGates?.codeCoverage ? `
+      # Check code coverage
+      COVERAGE=$(cat coverage/coverage-summary.json | jq .total.lines.pct)
+      if (( $(echo "$COVERAGE < ${config.qualityGates.codeCoverage}" | bc -l) )); then
+        echo "❌ Code coverage $COVERAGE% is below threshold ${config.qualityGates.codeCoverage}%"
+        FAILED=1
+      else
+        echo "✅ Code coverage $COVERAGE% meets threshold"
+      fi` : ''}
+      
+      ${config.qualityGates?.duplicateCode ? `
+      # Check duplicate code
+      DUPLICATES=$(cat duplication-report.json | jq .percentage)
+      if (( $(echo "$DUPLICATES > ${config.qualityGates.duplicateCode}" | bc -l) )); then
+        echo "❌ Duplicate code $DUPLICATES% exceeds threshold ${config.qualityGates.duplicateCode}%"
+        FAILED=1
+      else
+        echo "✅ Duplicate code $DUPLICATES% within threshold"
+      fi` : ''}
+      
+      exit $FAILED
+  rules:
+    - if: '$CI_MERGE_REQUEST_ID'`;
+  }
+  
+  private generatePackageStage(config: CICDTemplateConfig): string {
+    return `
+package:helm:
+  stage: package
+  needs: ["build:docker"]
+  image: alpine/helm:latest
+  script:
+    - echo "Packaging Helm chart..."
+    - helm package ./charts/app --version $CI_COMMIT_SHORT_SHA
+    - helm push app-$CI_COMMIT_SHORT_SHA.tgz oci://$CI_REGISTRY
+  artifacts:
+    paths:
+      - "*.tgz"
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH || $CI_COMMIT_TAG'
+
+package:artifacts:
+  stage: package
+  needs: ["build:app"]
+  script:
+    - echo "Creating release artifacts..."
+    - tar -czf release-$CI_COMMIT_SHORT_SHA.tar.gz ${this.getBuildArtifacts(config.language)}
+  artifacts:
+    paths:
+      - "release-*.tar.gz"
+    expire_in: 30 days
+  rules:
+    - if: '$CI_COMMIT_TAG'`;
+  }
+  
+  private generateDeployStages(config: CICDTemplateConfig): string {
+    if (!config.environments) return '';
+    
+    return config.environments.map(env => `
+deploy:${env.name}:
+  stage: deploy
+  needs: ["build:docker", "test:unit", "test:integration", "security:scan"]
+  environment:
+    name: ${env.name}
+    url: ${env.url || `https://${env.name}.example.com`}
+  before_script:
+    - echo "Preparing deployment to ${env.name}..."
+  script:
+    - echo "Deploying to ${env.name} using ${config.deploymentStrategy || 'rolling'} strategy..."
+    - |
+      ${this.getDeploymentScript(config.deploymentStrategy || 'rolling', env)}
+  after_script:
+    - echo "Deployment to ${env.name} completed"
+  ${env.approvalRequired ? 'when: manual' : ''}
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "${this.getEnvironmentBranch(env)}"'
+    ${env.type === 'production' ? '- if: \'$CI_COMMIT_TAG\'' : ''}
+`).join('');
+  }
+  
+  private getDeploymentScript(strategy: string, env: any): string {
+    switch (strategy) {
+      case 'blue-green':
+        return `
+      # Blue-Green deployment
+      kubectl apply -f k8s/deployment-green.yaml -n ${env.name}
+      kubectl wait --for=condition=available --timeout=300s deployment/app-green -n ${env.name}
+      kubectl patch service app -p '{"spec":{"selector":{"version":"green"}}}' -n ${env.name}
+      kubectl delete deployment app-blue -n ${env.name} || true
+      kubectl label deployment app-green version=blue --overwrite -n ${env.name}`;
+      
+      case 'canary':
+        return `
+      # Canary deployment
+      kubectl apply -f k8s/deployment-canary.yaml -n ${env.name}
+      kubectl wait --for=condition=available --timeout=300s deployment/app-canary -n ${env.name}
+      kubectl patch service app -p '{"spec":{"sessionAffinity":"ClientIP"}}' -n ${env.name}
+      sleep 60
+      kubectl scale deployment app-canary --replicas=3 -n ${env.name}
+      sleep 120
+      kubectl delete deployment app-stable -n ${env.name}
+      kubectl label deployment app-canary version=stable --overwrite -n ${env.name}`;
+      
+      default:
+        return `
+      # Rolling deployment
+      kubectl set image deployment/app app=$IMAGE_TAG -n ${env.name}
+      kubectl rollout status deployment/app -n ${env.name}`;
+    }
+  }
+  
+  // Helper methods
+  private getDefaultImage(language: string): string {
+    const images: Record<string, string> = {
+      'nodejs': 'node:20-alpine',
+      'typescript': 'node:20-alpine',
+      'react': 'node:20-alpine',
+      'python': 'python:3.11-slim',
+      'java': 'openjdk:17-slim',
+      'golang': 'golang:1.21-alpine',
+      'dotnet': 'mcr.microsoft.com/dotnet/sdk:8.0',
+      'rust': 'rust:1.75-slim',
+      'ruby': 'ruby:3.2-slim',
+      'php': 'php:8.2-cli'
+    };
+    return images[language] || 'alpine:latest';
+  }
+  
+  private getBuildImage(language: string): string {
+    return this.getDefaultImage(language);
+  }
+  
+  private getLanguageVariables(language: string): string {
+    const vars: Record<string, string> = {
+      'nodejs': `
+  NODE_ENV: "production"
+  NPM_CONFIG_CACHE: "$CI_PROJECT_DIR/.npm"
+  CYPRESS_CACHE_FOLDER: "$CI_PROJECT_DIR/cache/Cypress"`,
+      'python': `
+  PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
+  PIPENV_VENV_IN_PROJECT: "true"`,
+      'java': `
+  MAVEN_OPTS: "-Dmaven.repo.local=$CI_PROJECT_DIR/.m2/repository"
+  MAVEN_CLI_OPTS: "--batch-mode --errors --fail-at-end --show-version"`,
+      'golang': `
+  GO111MODULE: "on"
+  GOPATH: "$CI_PROJECT_DIR/.go"
+  GOCACHE: "$CI_PROJECT_DIR/.go-build"`,
+      'dotnet': `
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: "true"
+  DOTNET_CLI_TELEMETRY_OPTOUT: "true"
+  NUGET_PACKAGES: "$CI_PROJECT_DIR/.nuget"`,
+      'rust': `
+  CARGO_HOME: "$CI_PROJECT_DIR/.cargo"
+  RUSTUP_HOME: "$CI_PROJECT_DIR/.rustup"`,
+    };
+    return vars[language] || '';
+  }
+  
+  private getBeforeScript(language: string): string {
+    const scripts: Record<string, string> = {
+      'nodejs': 'npm config set cache $NPM_CONFIG_CACHE',
+      'python': 'pip config set global.cache-dir $PIP_CACHE_DIR',
+      'java': 'echo "Maven configured"',
+      'golang': 'go version',
+      'dotnet': 'dotnet --version',
+      'rust': 'rustc --version',
+      'ruby': 'ruby --version',
+      'php': 'php --version'
+    };
+    return scripts[language] || 'echo "Environment ready"';
+  }
+  
+  private getEnvironmentBranch(env: any): string {
+    const branches: Record<string, string> = {
+      'production': 'main',
+      'staging': 'staging',
+      'development': 'develop',
+      'qa': 'qa',
+      'dr': 'dr'
+    };
+    return branches[env.type] || 'develop';
+  }
+  
+  private getLicenseCheckCommand(language: string): string {
+    const commands: Record<string, string> = {
+      'nodejs': 'npx license-checker --production --onlyAllow "MIT;Apache-2.0;BSD-3-Clause;ISC"',
+      'python': 'pip-licenses --from=mixed --order=license --format=json --fail-on="GPL"',
+      'java': 'mvn license:add-third-party',
+      'golang': 'go-licenses check ./...',
+      'dotnet': 'dotnet-project-licenses -i .',
+      'rust': 'cargo-license',
+      'ruby': 'bundle exec license_finder',
+      'php': 'composer licenses --format=json'
+    };
+    return commands[language] || 'echo "License check not configured"';
+  }
+  
+  private getDBSetupCommand(language: string): string {
+    const commands: Record<string, string> = {
+      'nodejs': 'npm run db:migrate',
+      'typescript': 'npm run db:migrate',
+      'python': 'python manage.py migrate',
+      'java': 'mvn flyway:migrate',
+      'golang': 'migrate -path db/migrations -database $DATABASE_URL up',
+      'dotnet': 'dotnet ef database update',
+      'rust': 'diesel migration run',
+      'ruby': 'bundle exec rake db:migrate',
+      'php': 'php artisan migrate'
+    };
+    return commands[language] || 'echo "Database setup"';
+  }
+  
+  private generateMRTemplate(): string {
+    return `## What does this MR do?
+<!-- Briefly describe what this MR is about -->
+
+## Related issues
+<!-- Link related issues below. Use "Closes #XYZ" to auto-close issues -->
+
+## Type of change
+- [ ] Bug fix (non-breaking change which fixes an issue)
+- [ ] New feature (non-breaking change which adds functionality)
+- [ ] Breaking change (fix or feature that would cause existing functionality to not work as expected)
+- [ ] Documentation update
+- [ ] Performance improvement
+- [ ] Refactoring
+
+## Checklist
+- [ ] I have performed a self-review of my own code
+- [ ] I have added tests that prove my fix is effective or that my feature works
+- [ ] New and existing unit tests pass locally with my changes
+- [ ] I have updated the documentation accordingly
+
+## Screenshots (if applicable)
+<!-- Add screenshots to help explain your changes -->
+
+## Performance impact
+<!-- Describe any performance impact of your changes -->
+
+## Security impact
+<!-- Describe any security implications of your changes -->`;
+  }
+  
+  private generateBugTemplate(): string {
+    return `## Summary
+<!-- Summarize the bug encountered concisely -->
+
+## Steps to reproduce
+<!-- How one can reproduce the issue -->
+
+## What is the expected correct behavior?
+<!-- What you should see instead -->
+
+## Relevant logs and/or screenshots
+<!-- Paste any relevant logs - please use code blocks (\`\`\`) to format console output, logs, and code -->
+
+## Environment
+- GitLab version:
+- Browser:
+- OS:
+
+## Possible fixes
+<!-- If you can, link to the line of code that might be responsible for the problem -->
+
+/label ~bug`;
+  }
+  
+  private generateFeatureTemplate(): string {
+    return `## Problem to solve
+<!-- What problem do we solve? -->
+
+## Intended users
+<!-- Who will use this feature? -->
+
+## Proposal
+<!-- How do we solve the problem? -->
+
+## Further details
+<!-- Include any mockups, diagrams, or other materials -->
+
+## Availability & Testing
+<!-- How do we test this feature? -->
+
+## What does success look like?
+<!-- Define both the success metrics and acceptance criteria -->
+
+/label ~"feature request"`;
+  }
+  
+  private generateDocumentation(config: CICDTemplateConfig): string {
+    return `# GitLab CI/CD Pipeline Documentation
+
+## Overview
+This repository uses GitLab CI/CD for continuous integration and deployment.
+
+## Pipeline Structure
+
+### Stages
+1. **.pre**: Validation and initialization
+2. **build**: Build application and Docker images
+3. **test**: Run unit, integration, and E2E tests
+4. **security**: Security scanning and vulnerability checks
+5. **quality**: Code quality and complexity analysis
+6. **package**: Create deployment artifacts
+7. **deploy**: Deploy to environments
+8. **.post**: Cleanup and notifications
+
+## Configuration
+
+### Variables
+Required CI/CD variables:
+${this.getMetadata().requiredSecrets?.map(s => `- \`${s}\``).join('\\n')}
+
+### Caching
+Cache is configured for:
+- Dependencies (${this.getCachePath(config.language)})
+- Docker layers
+- Build artifacts
+
+## Testing
+
+### Test Types
+- **Unit Tests**: \`test:unit\`
+- **Integration Tests**: \`test:integration\`
+- **E2E Tests**: \`test:e2e\` (frontend projects)
+- **Performance Tests**: \`test:performance\`
+
+### Coverage
+Minimum coverage: ${config.coverageThreshold || 80}%
+
+## Security
+
+### Scanning Types
+- SAST (Static Application Security Testing)
+- Dependency scanning
+- Container scanning
+- Secret detection
+- License compliance
+
+## Quality Gates
+${config.qualityGates ? Object.entries(config.qualityGates)
+  .map(([key, value]) => `- **${key}**: ${value}`)
+  .join('\\n') : 'No quality gates configured.'}
+
+## Deployment
+
+### Environments
+${config.environments?.map(env => `
+#### ${env.name}
+- **URL**: ${env.url || 'TBD'}
+- **Branch**: ${this.getEnvironmentBranch(env)}
+- **Approval**: ${env.approvalRequired ? 'Required' : 'Automatic'}
+`).join('')}
+
+### Strategy
+Using ${config.deploymentStrategy || 'rolling'} deployment strategy.
+
+## Monitoring
+${config.integrations ? `
+### Integrations
+${Object.entries(config.integrations)
+  .filter(([_, enabled]) => enabled)
+  .map(([service]) => `- ${service}`)
+  .join('\\n')}
+` : 'No monitoring integrations configured.'}
+
+## Troubleshooting
+
+### Pipeline Failures
+1. Check the job logs for detailed error messages
+2. Verify all required variables are set
+3. Check if dependencies are properly cached
+4. Ensure Docker service is available (for Docker builds)
+
+### Common Issues
+
+#### Build Failures
+- Check dependency versions
+- Verify build cache is not corrupted
+- Ensure sufficient runner resources
+
+#### Test Failures
+- Review test logs for specific failures
+- Check if test database is properly configured
+- Verify service dependencies are running
+
+#### Deployment Failures
+- Verify deployment credentials
+- Check target environment status
+- Review deployment logs
+
+## Local Development
+
+### Running Pipeline Locally
+\`\`\`bash
+# Install gitlab-runner
+brew install gitlab-runner  # macOS
+# or
+apt-get install gitlab-runner  # Linux
+
+# Execute pipeline
+gitlab-runner exec docker build:app
+\`\`\`
+
+### Testing Changes
+\`\`\`bash
+# Validate .gitlab-ci.yml
+gitlab-ci-lint .gitlab-ci.yml
+
+# Test specific job
+gitlab-runner exec docker test:unit
+\`\`\`
+
+## Contributing
+1. Create a feature branch
+2. Make your changes
+3. Ensure all tests pass
+4. Create a merge request
+5. Wait for pipeline to complete
+6. Request review
+
+## Support
+Contact the Platform Team for assistance.`;
+  }
+}

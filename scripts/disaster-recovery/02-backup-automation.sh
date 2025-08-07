@@ -1,0 +1,566 @@
+#!/bin/bash
+
+# Backup Automation Script for Backstage Disaster Recovery
+# This script handles automated backups of all critical data stores and configurations
+
+set -euo pipefail
+
+# Source DR configuration
+source "$(dirname "$0")/01-dr-config.sh"
+
+# Backup specific configuration
+BACKUP_TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+BACKUP_TAG="${BACKUP_TAG:-${BACKUP_TIMESTAMP}}"
+PARALLEL_JOBS="${PARALLEL_JOBS:-4}"
+COMPRESSION_LEVEL="${COMPRESSION_LEVEL:-6}"
+
+# Initialize backup logging
+setup_logging "INFO"
+
+# Create backup manifest
+create_backup_manifest() {
+    local backup_dir="$1"
+    local backup_tag="$2"
+    
+    cat > "${backup_dir}/manifest.yaml" <<EOF
+apiVersion: backup.backstage.io/v1
+kind: BackupManifest
+metadata:
+  name: backstage-backup-${backup_tag}
+  timestamp: $(date -Iseconds)
+  tag: ${backup_tag}
+spec:
+  rpo_target: ${TARGET_RPO}
+  retention: ${BACKUP_RETENTION}
+  components:
+    database:
+      engine: postgresql
+      version: "15"
+      size_estimate: ""
+      backup_method: pg_dump
+      compression: gzip
+    cache:
+      engine: redis
+      version: "7"
+      backup_method: rdb_snapshot
+      compression: gzip
+    kubernetes:
+      version: "1.28"
+      backup_method: velero
+      namespaces:
+        - developer-portal
+        - developer-portal-staging
+        - istio-system
+    files:
+      storage: s3
+      backup_method: aws_s3_sync
+      encryption: aes256
+    certificates:
+      backup_method: kubectl_secrets
+      encryption: gpg
+  verification:
+    checksum_algorithm: sha256
+    integrity_check: true
+    restore_test: false
+status:
+  phase: "InProgress"
+  start_time: $(date -Iseconds)
+  components_status: {}
+EOF
+}
+
+# Database backup function
+backup_database() {
+    local backup_dir="$1"
+    local backup_tag="$2"
+    
+    log "INFO" "Starting database backup for tag: ${backup_tag}"
+    
+    local db_backup_dir="${backup_dir}/database"
+    mkdir -p "${db_backup_dir}"
+    
+    # PostgreSQL backup
+    log "INFO" "Backing up PostgreSQL database..."
+    
+    local pg_backup_file="${db_backup_dir}/postgres-${backup_tag}.sql"
+    local pg_backup_file_gz="${pg_backup_file}.gz"
+    
+    # Create database backup with parallel jobs
+    PGPASSWORD="${POSTGRES_PASSWORD}" pg_dump \
+        -h "${POSTGRES_PRIMARY_HOST}" \
+        -p "${POSTGRES_PORT}" \
+        -U "${POSTGRES_USER:-postgres}" \
+        -d "${POSTGRES_DB}" \
+        --verbose \
+        --no-password \
+        --format=custom \
+        --jobs="${PARALLEL_JOBS}" \
+        --file="${pg_backup_file}.custom" \
+        2>&1 | tee "${db_backup_dir}/postgres-backup-${backup_tag}.log"
+    
+    # Also create SQL format backup for easier inspection
+    PGPASSWORD="${POSTGRES_PASSWORD}" pg_dump \
+        -h "${POSTGRES_PRIMARY_HOST}" \
+        -p "${POSTGRES_PORT}" \
+        -U "${POSTGRES_USER:-postgres}" \
+        -d "${POSTGRES_DB}" \
+        --verbose \
+        --no-password \
+        --format=plain \
+        --no-owner \
+        --no-privileges \
+        > "${pg_backup_file}" \
+        2>&1
+    
+    # Compress SQL backup
+    gzip -${COMPRESSION_LEVEL} "${pg_backup_file}"
+    
+    # Create checksums
+    sha256sum "${pg_backup_file_gz}" > "${pg_backup_file_gz}.sha256"
+    sha256sum "${pg_backup_file}.custom" > "${pg_backup_file}.custom.sha256"
+    
+    # Get backup size
+    local backup_size=$(du -sh "${pg_backup_file_gz}" | cut -f1)
+    log "INFO" "PostgreSQL backup completed. Size: ${backup_size}"
+    
+    # Backup database schema separately for quick restore
+    PGPASSWORD="${POSTGRES_PASSWORD}" pg_dump \
+        -h "${POSTGRES_PRIMARY_HOST}" \
+        -p "${POSTGRES_PORT}" \
+        -U "${POSTGRES_USER:-postgres}" \
+        -d "${POSTGRES_DB}" \
+        --schema-only \
+        --no-owner \
+        --no-privileges \
+        > "${db_backup_dir}/postgres-schema-${backup_tag}.sql"
+    
+    gzip -${COMPRESSION_LEVEL} "${db_backup_dir}/postgres-schema-${backup_tag}.sql"
+    
+    # Backup global objects (roles, tablespaces, etc.)
+    PGPASSWORD="${POSTGRES_PASSWORD}" pg_dumpall \
+        -h "${POSTGRES_PRIMARY_HOST}" \
+        -p "${POSTGRES_PORT}" \
+        -U "${POSTGRES_USER:-postgres}" \
+        --globals-only \
+        --no-password \
+        > "${db_backup_dir}/postgres-globals-${backup_tag}.sql"
+    
+    gzip -${COMPRESSION_LEVEL} "${db_backup_dir}/postgres-globals-${backup_tag}.sql"
+    
+    # Test backup integrity
+    log "INFO" "Testing PostgreSQL backup integrity..."
+    if pg_restore --list "${pg_backup_file}.custom" > /dev/null 2>&1; then
+        log "INFO" "PostgreSQL backup integrity check passed"
+    else
+        log "ERROR" "PostgreSQL backup integrity check failed"
+        return 1
+    fi
+}
+
+# Redis backup function
+backup_redis() {
+    local backup_dir="$1"
+    local backup_tag="$2"
+    
+    log "INFO" "Starting Redis backup for tag: ${backup_tag}"
+    
+    local redis_backup_dir="${backup_dir}/cache"
+    mkdir -p "${redis_backup_dir}"
+    
+    # Force Redis to save current state
+    redis-cli -h "${REDIS_PRIMARY_HOST}" -p "${REDIS_PORT}" BGSAVE
+    
+    # Wait for background save to complete
+    local save_in_progress=1
+    local wait_count=0
+    while [[ $save_in_progress -eq 1 && $wait_count -lt 30 ]]; do
+        if redis-cli -h "${REDIS_PRIMARY_HOST}" -p "${REDIS_PORT}" LASTSAVE | \
+           redis-cli -h "${REDIS_PRIMARY_HOST}" -p "${REDIS_PORT}" LASTSAVE | \
+           awk 'NR==1{first=$1} NR==2{if($1>first) exit 0; else exit 1}'; then
+            save_in_progress=0
+        else
+            sleep 2
+            ((wait_count++))
+        fi
+    done
+    
+    if [[ $save_in_progress -eq 1 ]]; then
+        log "WARNING" "Redis background save taking longer than expected"
+    fi
+    
+    # Create Redis backup using DUMP/RESTORE method for all keys
+    local redis_backup_file="${redis_backup_dir}/redis-${backup_tag}.rdb"
+    
+    # Get all keys and create dump
+    redis-cli -h "${REDIS_PRIMARY_HOST}" -p "${REDIS_PORT}" --rdb "${redis_backup_file}" 2>&1 | \
+        tee "${redis_backup_dir}/redis-backup-${backup_tag}.log"
+    
+    # Compress Redis backup
+    gzip -${COMPRESSION_LEVEL} "${redis_backup_file}"
+    
+    # Create checksum
+    sha256sum "${redis_backup_file}.gz" > "${redis_backup_file}.gz.sha256"
+    
+    # Get backup size and key count
+    local backup_size=$(du -sh "${redis_backup_file}.gz" | cut -f1)
+    local key_count=$(redis-cli -h "${REDIS_PRIMARY_HOST}" -p "${REDIS_PORT}" DBSIZE)
+    
+    log "INFO" "Redis backup completed. Size: ${backup_size}, Keys: ${key_count}"
+    
+    # Create Redis configuration backup
+    redis-cli -h "${REDIS_PRIMARY_HOST}" -p "${REDIS_PORT}" CONFIG GET '*' > \
+        "${redis_backup_dir}/redis-config-${backup_tag}.txt"
+}
+
+# Kubernetes resources backup
+backup_kubernetes() {
+    local backup_dir="$1"
+    local backup_tag="$2"
+    
+    log "INFO" "Starting Kubernetes resources backup for tag: ${backup_tag}"
+    
+    local k8s_backup_dir="${backup_dir}/kubernetes"
+    mkdir -p "${k8s_backup_dir}"
+    
+    # Switch to primary cluster context
+    kubectl config use-context "${PRIMARY_CLUSTER}"
+    
+    # Backup specific namespaces
+    local namespaces=("developer-portal" "developer-portal-staging" "istio-system")
+    
+    for ns in "${namespaces[@]}"; do
+        log "INFO" "Backing up namespace: ${ns}"
+        
+        local ns_backup_dir="${k8s_backup_dir}/${ns}"
+        mkdir -p "${ns_backup_dir}"
+        
+        # Get all resources in namespace
+        kubectl get all,configmaps,secrets,ingresses,networkpolicies,servicemonitors,prometheusrules \
+            -n "${ns}" -o yaml > "${ns_backup_dir}/all-resources.yaml" 2>/dev/null || true
+        
+        # Backup custom resources
+        local crds=(
+            "virtualservices.networking.istio.io"
+            "destinationrules.networking.istio.io"
+            "gateways.networking.istio.io"
+            "peerauthentications.security.istio.io"
+            "authorizationpolicies.security.istio.io"
+            "kialis.kiali.io"
+            "jaegers.jaegertracing.io"
+        )
+        
+        for crd in "${crds[@]}"; do
+            if kubectl get crd "${crd}" >/dev/null 2>&1; then
+                kubectl get "${crd}" -n "${ns}" -o yaml > \
+                    "${ns_backup_dir}/${crd}.yaml" 2>/dev/null || true
+            fi
+        done
+        
+        # Backup persistent volume claims
+        kubectl get pvc -n "${ns}" -o yaml > "${ns_backup_dir}/pvcs.yaml" 2>/dev/null || true
+        
+        # Backup storage classes used
+        kubectl get storageclass -o yaml > "${ns_backup_dir}/storageclasses.yaml" 2>/dev/null || true
+    done
+    
+    # Backup cluster-wide resources
+    log "INFO" "Backing up cluster-wide resources..."
+    kubectl get nodes -o yaml > "${k8s_backup_dir}/nodes.yaml"
+    kubectl get clusterroles,clusterrolebindings -o yaml > "${k8s_backup_dir}/cluster-rbac.yaml"
+    kubectl get customresourcedefinitions -o yaml > "${k8s_backup_dir}/crds.yaml"
+    
+    # Create Kubernetes backup archive
+    tar -czf "${k8s_backup_dir}/kubernetes-${backup_tag}.tar.gz" \
+        -C "${k8s_backup_dir}" \
+        --exclude="*.tar.gz" \
+        .
+    
+    # Create checksum
+    sha256sum "${k8s_backup_dir}/kubernetes-${backup_tag}.tar.gz" > \
+        "${k8s_backup_dir}/kubernetes-${backup_tag}.tar.gz.sha256"
+    
+    local backup_size=$(du -sh "${k8s_backup_dir}/kubernetes-${backup_tag}.tar.gz" | cut -f1)
+    log "INFO" "Kubernetes resources backup completed. Size: ${backup_size}"
+}
+
+# Certificates and secrets backup
+backup_certificates() {
+    local backup_dir="$1"
+    local backup_tag="$2"
+    
+    log "INFO" "Starting certificates backup for tag: ${backup_tag}"
+    
+    local cert_backup_dir="${backup_dir}/certificates"
+    mkdir -p "${cert_backup_dir}"
+    
+    # Switch to primary cluster context
+    kubectl config use-context "${PRIMARY_CLUSTER}"
+    
+    # Backup TLS secrets
+    local namespaces=("developer-portal" "developer-portal-staging" "istio-system")
+    
+    for ns in "${namespaces[@]}"; do
+        log "INFO" "Backing up certificates from namespace: ${ns}"
+        
+        # Get TLS secrets
+        kubectl get secrets -n "${ns}" -o json | \
+        jq '.items[] | select(.type=="kubernetes.io/tls")' > \
+            "${cert_backup_dir}/tls-secrets-${ns}-${backup_tag}.json"
+        
+        # Get Istio certificates
+        kubectl get secrets -n "${ns}" -o json | \
+        jq '.items[] | select(.metadata.labels."istio.io/config"=="true")' >> \
+            "${cert_backup_dir}/istio-certs-${ns}-${backup_tag}.json"
+    done
+    
+    # Encrypt sensitive certificate data
+    if command -v gpg >/dev/null 2>&1 && [[ -n "${GPG_KEY_ID:-}" ]]; then
+        for file in "${cert_backup_dir}"/*.json; do
+            gpg --trust-model always --encrypt -r "${GPG_KEY_ID}" --output "${file}.gpg" "${file}"
+            rm "${file}"  # Remove unencrypted version
+        done
+        log "INFO" "Certificates encrypted with GPG key: ${GPG_KEY_ID}"
+    else
+        log "WARNING" "GPG not available or key not configured - certificates stored unencrypted"
+    fi
+    
+    # Create certificates backup archive
+    tar -czf "${cert_backup_dir}/certificates-${backup_tag}.tar.gz" \
+        -C "${cert_backup_dir}" \
+        --exclude="*.tar.gz" \
+        .
+    
+    sha256sum "${cert_backup_dir}/certificates-${backup_tag}.tar.gz" > \
+        "${cert_backup_dir}/certificates-${backup_tag}.tar.gz.sha256"
+}
+
+# File storage backup
+backup_file_storage() {
+    local backup_dir="$1"
+    local backup_tag="$2"
+    
+    log "INFO" "Starting file storage backup for tag: ${backup_tag}"
+    
+    local files_backup_dir="${backup_dir}/files"
+    mkdir -p "${files_backup_dir}"
+    
+    # Backup application files from S3 if configured
+    if [[ -n "${APP_S3_BUCKET:-}" ]]; then
+        log "INFO" "Backing up application files from S3..."
+        aws s3 sync "s3://${APP_S3_BUCKET}/" "${files_backup_dir}/app-files/" \
+            --delete --storage-class STANDARD_IA
+    fi
+    
+    # Backup configuration files
+    log "INFO" "Backing up configuration files..."
+    local config_backup_dir="${files_backup_dir}/config"
+    mkdir -p "${config_backup_dir}"
+    
+    # Copy DR configuration
+    cp -r "${DR_CONFIG_DIR}/config" "${config_backup_dir}/dr-config"
+    
+    # Backup Backstage app-config files
+    kubectl config use-context "${PRIMARY_CLUSTER}"
+    kubectl get configmap backstage-app-config -n developer-portal -o yaml > \
+        "${config_backup_dir}/backstage-app-config.yaml" 2>/dev/null || true
+    
+    # Create files backup archive
+    if [[ -d "${files_backup_dir}" ]]; then
+        tar -czf "${files_backup_dir}/files-${backup_tag}.tar.gz" \
+            -C "${files_backup_dir}" \
+            --exclude="*.tar.gz" \
+            .
+        
+        sha256sum "${files_backup_dir}/files-${backup_tag}.tar.gz" > \
+            "${files_backup_dir}/files-${backup_tag}.tar.gz.sha256"
+    fi
+}
+
+# Upload backup to S3
+upload_backup_to_s3() {
+    local backup_dir="$1"
+    local backup_tag="$2"
+    
+    log "INFO" "Uploading backup to S3 for tag: ${backup_tag}"
+    
+    local s3_backup_path="s3://${S3_BACKUP_BUCKET}/${S3_BACKUP_PREFIX}/${backup_tag}/"
+    
+    # Upload with server-side encryption
+    aws s3 sync "${backup_dir}/" "${s3_backup_path}" \
+        --storage-class STANDARD_IA \
+        --server-side-encryption AES256 \
+        --metadata "backup-tag=${backup_tag},timestamp=$(date -Iseconds),rpo=${TARGET_RPO}"
+    
+    # Upload manifest file
+    aws s3 cp "${backup_dir}/manifest.yaml" "${s3_backup_path}manifest.yaml" \
+        --server-side-encryption AES256
+    
+    # Create backup inventory
+    aws s3 ls "${s3_backup_path}" --recursive > "${backup_dir}/s3-inventory.txt"
+    aws s3 cp "${backup_dir}/s3-inventory.txt" "${s3_backup_path}s3-inventory.txt"
+    
+    log "INFO" "Backup uploaded to S3: ${s3_backup_path}"
+}
+
+# Cleanup old backups
+cleanup_old_backups() {
+    log "INFO" "Cleaning up old backups..."
+    
+    # Cleanup local backups (keep last 7 days)
+    find "${DR_BACKUP_DIR}" -type d -name "*-*" -mtime +7 -exec rm -rf {} + 2>/dev/null || true
+    
+    # Cleanup S3 backups (lifecycle policy handles this, but we can also do manual cleanup)
+    local retention_days=30
+    local cutoff_date=$(date -d "${retention_days} days ago" +%Y%m%d)
+    
+    aws s3 ls "s3://${S3_BACKUP_BUCKET}/${S3_BACKUP_PREFIX}/" | \
+    while read -r line; do
+        local backup_date=$(echo "${line}" | awk '{print $2}' | cut -d- -f1)
+        if [[ "${backup_date}" < "${cutoff_date}" ]]; then
+            local backup_path=$(echo "${line}" | awk '{print $2}' | tr -d '/')
+            log "INFO" "Removing old backup: ${backup_path}"
+            aws s3 rm "s3://${S3_BACKUP_BUCKET}/${S3_BACKUP_PREFIX}/${backup_path}/" --recursive
+        fi
+    done
+}
+
+# Verify backup integrity
+verify_backup() {
+    local backup_dir="$1"
+    local backup_tag="$2"
+    
+    log "INFO" "Verifying backup integrity for tag: ${backup_tag}"
+    
+    # Verify checksums
+    local verification_failed=false
+    
+    find "${backup_dir}" -name "*.sha256" -type f | while read -r checksum_file; do
+        local file_to_check="${checksum_file%.sha256}"
+        if [[ -f "${file_to_check}" ]]; then
+            if cd "$(dirname "${checksum_file}")" && sha256sum -c "$(basename "${checksum_file}")" >/dev/null 2>&1; then
+                log "INFO" "Checksum verified: $(basename "${file_to_check}")"
+            else
+                log "ERROR" "Checksum verification failed: $(basename "${file_to_check}")"
+                verification_failed=true
+            fi
+        fi
+    done
+    
+    if [[ "${verification_failed}" == "true" ]]; then
+        log "ERROR" "Backup verification failed"
+        return 1
+    fi
+    
+    # Update manifest with verification status
+    yq eval '.status.verification_status = "passed"' -i "${backup_dir}/manifest.yaml"
+    yq eval '.status.verification_time = "'$(date -Iseconds)'"' -i "${backup_dir}/manifest.yaml"
+    
+    log "INFO" "Backup verification completed successfully"
+}
+
+# Send backup notification
+send_backup_notification() {
+    local backup_tag="$1"
+    local status="$2"
+    local backup_size="${3:-unknown}"
+    
+    local message="Backstage backup ${status} - Tag: ${backup_tag}, Size: ${backup_size}"
+    
+    if [[ "${status}" == "completed" ]]; then
+        message="✅ ${message}"
+    else
+        message="❌ ${message}"
+    fi
+    
+    # Send Slack notification
+    if [[ -n "${SLACK_WEBHOOK_URL}" ]]; then
+        curl -X POST "${SLACK_WEBHOOK_URL}" \
+            -H 'Content-type: application/json' \
+            --data "{\"text\":\"${message}\"}" >/dev/null 2>&1 || true
+    fi
+    
+    # Send email notification
+    if [[ -n "${EMAIL_ALERTS}" ]] && command -v mail >/dev/null 2>&1; then
+        echo "${message}" | mail -s "Backstage Backup ${status^}" "${EMAIL_ALERTS}" || true
+    fi
+    
+    log "INFO" "${message}"
+}
+
+# Main backup function
+main() {
+    log "INFO" "Starting Backstage backup process - Tag: ${BACKUP_TAG}"
+    
+    # Create backup directory
+    local backup_dir="${DR_BACKUP_DIR}/${BACKUP_TAG}"
+    mkdir -p "${backup_dir}"
+    
+    # Create backup manifest
+    create_backup_manifest "${backup_dir}" "${BACKUP_TAG}"
+    
+    # Track start time
+    local start_time=$(date +%s)
+    
+    # Perform backups in parallel where possible
+    {
+        backup_database "${backup_dir}" "${BACKUP_TAG}" &
+        local db_pid=$!
+        
+        backup_redis "${backup_dir}" "${BACKUP_TAG}" &
+        local redis_pid=$!
+        
+        backup_kubernetes "${backup_dir}" "${BACKUP_TAG}" &
+        local k8s_pid=$!
+        
+        backup_certificates "${backup_dir}" "${BACKUP_TAG}" &
+        local cert_pid=$!
+        
+        # Wait for parallel jobs to complete
+        wait ${db_pid} && log "INFO" "Database backup completed"
+        wait ${redis_pid} && log "INFO" "Redis backup completed"
+        wait ${k8s_pid} && log "INFO" "Kubernetes backup completed"  
+        wait ${cert_pid} && log "INFO" "Certificates backup completed"
+        
+        # Sequential operations
+        backup_file_storage "${backup_dir}" "${BACKUP_TAG}"
+    }
+    
+    # Calculate total backup size
+    local total_size=$(du -sh "${backup_dir}" | cut -f1)
+    
+    # Verify backup integrity
+    if verify_backup "${backup_dir}" "${BACKUP_TAG}"; then
+        # Upload to S3
+        upload_backup_to_s3 "${backup_dir}" "${BACKUP_TAG}"
+        
+        # Update manifest with completion status
+        yq eval '.status.phase = "Completed"' -i "${backup_dir}/manifest.yaml"
+        yq eval '.status.end_time = "'$(date -Iseconds)'"' -i "${backup_dir}/manifest.yaml"
+        yq eval '.status.total_size = "'${total_size}'"' -i "${backup_dir}/manifest.yaml"
+        
+        # Calculate duration
+        local end_time=$(date +%s)
+        local duration=$((end_time - start_time))
+        yq eval '.status.duration = "'${duration}s'"' -i "${backup_dir}/manifest.yaml"
+        
+        send_backup_notification "${BACKUP_TAG}" "completed" "${total_size}"
+        log "INFO" "Backup process completed successfully - Duration: ${duration}s, Size: ${total_size}"
+        
+        # Cleanup old backups
+        cleanup_old_backups
+        
+    else
+        # Mark backup as failed
+        yq eval '.status.phase = "Failed"' -i "${backup_dir}/manifest.yaml"
+        yq eval '.status.end_time = "'$(date -Iseconds)'"' -i "${backup_dir}/manifest.yaml"
+        
+        send_backup_notification "${BACKUP_TAG}" "failed" "${total_size}"
+        log "ERROR" "Backup process failed"
+        exit 1
+    fi
+}
+
+# Execute main function if script is run directly
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    main "$@"
+fi

@@ -1,0 +1,770 @@
+#!/bin/bash
+
+# Restore Automation Script for Backstage Disaster Recovery
+# This script handles automated restoration of all critical data stores and configurations
+
+set -euo pipefail
+
+# Source DR configuration
+source "$(dirname "$0")/01-dr-config.sh"
+
+# Restore specific configuration
+RESTORE_TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+DRY_RUN=false
+FORCE_RESTORE=false
+RESTORE_COMPONENTS=""
+BACKUP_TAG=""
+PARALLEL_JOBS="${PARALLEL_JOBS:-4}"
+
+# Initialize restore logging
+setup_logging "INFO"
+
+# Parse command line arguments
+parse_arguments() {
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --backup-tag)
+                BACKUP_TAG="$2"
+                shift 2
+                ;;
+            --components)
+                RESTORE_COMPONENTS="$2"
+                shift 2
+                ;;
+            --dry-run)
+                DRY_RUN=true
+                shift
+                ;;
+            --force)
+                FORCE_RESTORE=true
+                shift
+                ;;
+            --help)
+                show_restore_usage
+                exit 0
+                ;;
+            *)
+                log "ERROR" "Unknown argument: $1"
+                show_restore_usage
+                exit 1
+                ;;
+        esac
+    done
+}
+
+# Show restore usage
+show_restore_usage() {
+    cat <<EOF
+Usage: $0 [options]
+
+Options:
+    --backup-tag TAG       Restore from specific backup tag
+    --components LIST      Comma-separated list of components to restore
+                          (database,cache,kubernetes,files,certificates)
+    --dry-run             Show what would be restored without executing
+    --force               Skip safety confirmations
+    --help                Show this help message
+
+Examples:
+    $0 --backup-tag 20231201-120000
+    $0 --components database,cache --dry-run
+    $0 --backup-tag 20231201-120000 --force
+EOF
+}
+
+# List available backups
+list_available_backups() {
+    log "INFO" "Listing available backups..."
+    
+    echo "=== Available Backups ==="
+    
+    # List local backups
+    if [[ -d "${DR_BACKUP_DIR}" ]]; then
+        echo "Local Backups:"
+        find "${DR_BACKUP_DIR}" -maxdepth 1 -type d -name "*-*" | \
+        while read -r backup_dir; do
+            local backup_tag=$(basename "${backup_dir}")
+            local manifest="${backup_dir}/manifest.yaml"
+            if [[ -f "${manifest}" ]]; then
+                local timestamp=$(yq eval '.metadata.timestamp' "${manifest}")
+                local status=$(yq eval '.status.phase' "${manifest}")
+                local size=$(yq eval '.status.total_size // "unknown"' "${manifest}")
+                echo "  ${backup_tag} | ${timestamp} | ${status} | ${size}"
+            else
+                echo "  ${backup_tag} | unknown | no manifest"
+            fi
+        done
+        echo ""
+    fi
+    
+    # List S3 backups
+    echo "S3 Backups:"
+    aws s3 ls "s3://${S3_BACKUP_BUCKET}/${S3_BACKUP_PREFIX}/" | \
+    grep "PRE" | awk '{print $2}' | tr -d '/' | \
+    while read -r backup_tag; do
+        local manifest_url="s3://${S3_BACKUP_BUCKET}/${S3_BACKUP_PREFIX}/${backup_tag}/manifest.yaml"
+        if aws s3 ls "${manifest_url}" >/dev/null 2>&1; then
+            echo "  ${backup_tag} | S3 | available"
+        else
+            echo "  ${backup_tag} | S3 | no manifest"
+        fi
+    done
+}
+
+# Download backup from S3
+download_backup_from_s3() {
+    local backup_tag="$1"
+    local local_backup_dir="${DR_BACKUP_DIR}/${backup_tag}"
+    
+    log "INFO" "Downloading backup from S3: ${backup_tag}"
+    
+    # Create local backup directory
+    mkdir -p "${local_backup_dir}"
+    
+    # Download from S3
+    local s3_backup_path="s3://${S3_BACKUP_BUCKET}/${S3_BACKUP_PREFIX}/${backup_tag}/"
+    
+    aws s3 sync "${s3_backup_path}" "${local_backup_dir}/" \
+        --exclude "*" \
+        --include "manifest.yaml" \
+        --include "*.tar.gz" \
+        --include "*.gz" \
+        --include "*.custom" \
+        --include "*.sha256"
+    
+    # Verify download
+    if [[ ! -f "${local_backup_dir}/manifest.yaml" ]]; then
+        log "ERROR" "Failed to download backup manifest from S3"
+        return 1
+    fi
+    
+    log "INFO" "Backup downloaded successfully from S3"
+    return 0
+}
+
+# Validate backup before restore
+validate_backup() {
+    local backup_tag="$1"
+    local backup_dir="${DR_BACKUP_DIR}/${backup_tag}"
+    
+    log "INFO" "Validating backup: ${backup_tag}"
+    
+    # Check if backup exists
+    if [[ ! -d "${backup_dir}" ]]; then
+        log "INFO" "Backup not found locally, attempting to download from S3..."
+        if ! download_backup_from_s3 "${backup_tag}"; then
+            log "ERROR" "Backup not found: ${backup_tag}"
+            return 1
+        fi
+    fi
+    
+    # Check manifest
+    local manifest="${backup_dir}/manifest.yaml"
+    if [[ ! -f "${manifest}" ]]; then
+        log "ERROR" "Backup manifest not found: ${manifest}"
+        return 1
+    fi
+    
+    # Verify backup status
+    local backup_status=$(yq eval '.status.phase' "${manifest}")
+    if [[ "${backup_status}" != "Completed" ]]; then
+        log "WARNING" "Backup status is not completed: ${backup_status}"
+        if [[ "${FORCE_RESTORE}" != "true" ]]; then
+            log "ERROR" "Use --force to restore from incomplete backup"
+            return 1
+        fi
+    fi
+    
+    # Verify checksums for critical files
+    local verification_failed=false
+    find "${backup_dir}" -name "*.sha256" -type f | while read -r checksum_file; do
+        local file_to_check="${checksum_file%.sha256}"
+        if [[ -f "${file_to_check}" ]]; then
+            if cd "$(dirname "${checksum_file}")" && sha256sum -c "$(basename "${checksum_file}")" >/dev/null 2>&1; then
+                log "DEBUG" "Checksum verified: $(basename "${file_to_check}")"
+            else
+                log "ERROR" "Checksum verification failed: $(basename "${file_to_check}")"
+                verification_failed=true
+            fi
+        fi
+    done
+    
+    if [[ "${verification_failed}" == "true" ]]; then
+        log "ERROR" "Backup verification failed"
+        return 1
+    fi
+    
+    log "INFO" "Backup validation completed successfully"
+    return 0
+}
+
+# Restore database
+restore_database() {
+    local backup_dir="$1"
+    local backup_tag="$2"
+    
+    log "INFO" "Starting database restore from backup: ${backup_tag}"
+    
+    local db_backup_dir="${backup_dir}/database"
+    
+    if [[ ! -d "${db_backup_dir}" ]]; then
+        log "WARNING" "Database backup not found in: ${db_backup_dir}"
+        return 0
+    fi
+    
+    # Find PostgreSQL backup files
+    local pg_custom_backup="${db_backup_dir}/postgres-${backup_tag}.sql.custom"
+    local pg_sql_backup="${db_backup_dir}/postgres-${backup_tag}.sql.gz"
+    local pg_schema_backup="${db_backup_dir}/postgres-schema-${backup_tag}.sql.gz"
+    local pg_globals_backup="${db_backup_dir}/postgres-globals-${backup_tag}.sql.gz"
+    
+    if [[ "${DRY_RUN}" == "true" ]]; then
+        log "INFO" "[DRY RUN] Would restore PostgreSQL database from:"
+        [[ -f "${pg_custom_backup}" ]] && log "INFO" "[DRY RUN]   - Custom format: ${pg_custom_backup}"
+        [[ -f "${pg_sql_backup}" ]] && log "INFO" "[DRY RUN]   - SQL format: ${pg_sql_backup}"
+        return 0
+    fi
+    
+    # Create database backup before restore
+    log "INFO" "Creating pre-restore database backup..."
+    local pre_restore_backup="${DR_BACKUP_DIR}/pre-restore-${RESTORE_TIMESTAMP}"
+    mkdir -p "${pre_restore_backup}"
+    
+    PGPASSWORD="${POSTGRES_PASSWORD}" pg_dump \
+        -h "${POSTGRES_DR_HOST}" \
+        -p "${POSTGRES_PORT}" \
+        -U "${POSTGRES_USER:-postgres}" \
+        -d "${POSTGRES_DB}" \
+        --format=custom \
+        --file="${pre_restore_backup}/pre-restore-postgres.custom" \
+        2>/dev/null || log "WARNING" "Failed to create pre-restore backup"
+    
+    # Stop applications to prevent write conflicts
+    log "INFO" "Scaling down applications before database restore..."
+    kubectl config use-context "${DR_CLUSTER}"
+    kubectl scale deployment --all --replicas=0 -n developer-portal 2>/dev/null || true
+    kubectl scale deployment --all --replicas=0 -n developer-portal-staging 2>/dev/null || true
+    
+    # Wait for applications to scale down
+    sleep 30
+    
+    # Restore global objects first
+    if [[ -f "${pg_globals_backup}" ]]; then
+        log "INFO" "Restoring PostgreSQL global objects..."
+        gunzip -c "${pg_globals_backup}" | \
+        PGPASSWORD="${POSTGRES_PASSWORD}" psql \
+            -h "${POSTGRES_DR_HOST}" \
+            -p "${POSTGRES_PORT}" \
+            -U "${POSTGRES_USER:-postgres}" \
+            -d postgres \
+            2>&1 | tee "${db_backup_dir}/restore-globals-${RESTORE_TIMESTAMP}.log"
+    fi
+    
+    # Drop and recreate database
+    log "INFO" "Recreating database for clean restore..."
+    PGPASSWORD="${POSTGRES_PASSWORD}" psql \
+        -h "${POSTGRES_DR_HOST}" \
+        -p "${POSTGRES_PORT}" \
+        -U "${POSTGRES_USER:-postgres}" \
+        -d postgres \
+        -c "DROP DATABASE IF EXISTS ${POSTGRES_DB};" \
+        -c "CREATE DATABASE ${POSTGRES_DB} OWNER ${POSTGRES_USER:-postgres};"
+    
+    # Restore database
+    if [[ -f "${pg_custom_backup}" ]]; then
+        log "INFO" "Restoring PostgreSQL database from custom format..."
+        PGPASSWORD="${POSTGRES_PASSWORD}" pg_restore \
+            -h "${POSTGRES_DR_HOST}" \
+            -p "${POSTGRES_PORT}" \
+            -U "${POSTGRES_USER:-postgres}" \
+            -d "${POSTGRES_DB}" \
+            --verbose \
+            --clean \
+            --if-exists \
+            --no-owner \
+            --no-privileges \
+            --jobs="${PARALLEL_JOBS}" \
+            "${pg_custom_backup}" \
+            2>&1 | tee "${db_backup_dir}/restore-${RESTORE_TIMESTAMP}.log"
+    elif [[ -f "${pg_sql_backup}" ]]; then
+        log "INFO" "Restoring PostgreSQL database from SQL format..."
+        gunzip -c "${pg_sql_backup}" | \
+        PGPASSWORD="${POSTGRES_PASSWORD}" psql \
+            -h "${POSTGRES_DR_HOST}" \
+            -p "${POSTGRES_PORT}" \
+            -U "${POSTGRES_USER:-postgres}" \
+            -d "${POSTGRES_DB}" \
+            2>&1 | tee "${db_backup_dir}/restore-${RESTORE_TIMESTAMP}.log"
+    else
+        log "ERROR" "No PostgreSQL backup file found"
+        return 1
+    fi
+    
+    # Verify database restore
+    log "INFO" "Verifying database restore..."
+    local table_count=$(PGPASSWORD="${POSTGRES_PASSWORD}" psql \
+        -h "${POSTGRES_DR_HOST}" \
+        -p "${POSTGRES_PORT}" \
+        -U "${POSTGRES_USER:-postgres}" \
+        -d "${POSTGRES_DB}" \
+        -t -c "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public';" 2>/dev/null | tr -d ' ')
+    
+    if [[ "${table_count}" -gt 0 ]]; then
+        log "INFO" "Database restore completed successfully. Tables restored: ${table_count}"
+    else
+        log "ERROR" "Database restore verification failed - no tables found"
+        return 1
+    fi
+}
+
+# Restore Redis cache
+restore_redis() {
+    local backup_dir="$1"
+    local backup_tag="$2"
+    
+    log "INFO" "Starting Redis restore from backup: ${backup_tag}"
+    
+    local redis_backup_dir="${backup_dir}/cache"
+    local redis_backup_file="${redis_backup_dir}/redis-${backup_tag}.rdb.gz"
+    
+    if [[ ! -f "${redis_backup_file}" ]]; then
+        log "WARNING" "Redis backup not found: ${redis_backup_file}"
+        return 0
+    fi
+    
+    if [[ "${DRY_RUN}" == "true" ]]; then
+        log "INFO" "[DRY RUN] Would restore Redis from: ${redis_backup_file}"
+        return 0
+    fi
+    
+    # Create temporary directory for restore
+    local temp_dir=$(mktemp -d)
+    local restored_rdb="${temp_dir}/dump.rdb"
+    
+    # Extract Redis backup
+    gunzip -c "${redis_backup_file}" > "${restored_rdb}"
+    
+    # Stop Redis applications
+    log "INFO" "Scaling down applications before Redis restore..."
+    kubectl config use-context "${DR_CLUSTER}"
+    kubectl scale deployment --all --replicas=0 -n developer-portal 2>/dev/null || true
+    kubectl scale deployment --all --replicas=0 -n developer-portal-staging 2>/dev/null || true
+    
+    # Backup current Redis state
+    log "INFO" "Creating pre-restore Redis backup..."
+    redis-cli -h "${REDIS_DR_HOST}" -p "${REDIS_PORT}" BGSAVE 2>/dev/null || true
+    sleep 5
+    
+    # Flush current Redis data
+    log "INFO" "Flushing current Redis data..."
+    redis-cli -h "${REDIS_DR_HOST}" -p "${REDIS_PORT}" FLUSHALL
+    
+    # Restore Redis data using redis-cli --rdb
+    log "INFO" "Restoring Redis data..."
+    if redis-cli -h "${REDIS_DR_HOST}" -p "${REDIS_PORT}" --rdb "${restored_rdb}" >/dev/null 2>&1; then
+        log "INFO" "Redis restore completed successfully"
+    else
+        log "ERROR" "Redis restore failed"
+        rm -rf "${temp_dir}"
+        return 1
+    fi
+    
+    # Verify Redis restore
+    local key_count=$(redis-cli -h "${REDIS_DR_HOST}" -p "${REDIS_PORT}" DBSIZE 2>/dev/null || echo "0")
+    log "INFO" "Redis restore verification completed. Keys restored: ${key_count}"
+    
+    # Cleanup
+    rm -rf "${temp_dir}"
+}
+
+# Restore Kubernetes resources
+restore_kubernetes() {
+    local backup_dir="$1"
+    local backup_tag="$2"
+    
+    log "INFO" "Starting Kubernetes restore from backup: ${backup_tag}"
+    
+    local k8s_backup_dir="${backup_dir}/kubernetes"
+    
+    if [[ ! -d "${k8s_backup_dir}" ]]; then
+        log "WARNING" "Kubernetes backup not found: ${k8s_backup_dir}"
+        return 0
+    fi
+    
+    # Switch to DR cluster context
+    kubectl config use-context "${DR_CLUSTER}"
+    
+    if [[ "${DRY_RUN}" == "true" ]]; then
+        log "INFO" "[DRY RUN] Would restore Kubernetes resources from: ${k8s_backup_dir}"
+        find "${k8s_backup_dir}" -name "*.yaml" -type f | while read -r yaml_file; do
+            log "INFO" "[DRY RUN]   - ${yaml_file}"
+        done
+        return 0
+    fi
+    
+    # Create namespace backup before restore
+    log "INFO" "Creating pre-restore Kubernetes backup..."
+    local pre_restore_k8s="${DR_BACKUP_DIR}/pre-restore-k8s-${RESTORE_TIMESTAMP}"
+    mkdir -p "${pre_restore_k8s}"
+    
+    local namespaces=("developer-portal" "developer-portal-staging" "istio-system")
+    for ns in "${namespaces[@]}"; do
+        kubectl get all,configmaps,secrets,ingresses -n "${ns}" -o yaml > \
+            "${pre_restore_k8s}/${ns}-backup.yaml" 2>/dev/null || true
+    done
+    
+    # Restore cluster-wide resources first
+    log "INFO" "Restoring cluster-wide resources..."
+    
+    # Restore CRDs
+    if [[ -f "${k8s_backup_dir}/crds.yaml" ]]; then
+        kubectl apply -f "${k8s_backup_dir}/crds.yaml" 2>/dev/null || log "WARNING" "Failed to restore some CRDs"
+        sleep 10  # Wait for CRDs to be established
+    fi
+    
+    # Restore storage classes
+    if [[ -f "${k8s_backup_dir}/storageclasses.yaml" ]]; then
+        kubectl apply -f "${k8s_backup_dir}/storageclasses.yaml" 2>/dev/null || log "WARNING" "Failed to restore storage classes"
+    fi
+    
+    # Restore cluster RBAC
+    if [[ -f "${k8s_backup_dir}/cluster-rbac.yaml" ]]; then
+        kubectl apply -f "${k8s_backup_dir}/cluster-rbac.yaml" 2>/dev/null || log "WARNING" "Failed to restore cluster RBAC"
+    fi
+    
+    # Restore namespace resources
+    for ns in "${namespaces[@]}"; do
+        log "INFO" "Restoring namespace: ${ns}"
+        
+        local ns_backup_dir="${k8s_backup_dir}/${ns}"
+        if [[ ! -d "${ns_backup_dir}" ]]; then
+            log "WARNING" "Namespace backup not found: ${ns_backup_dir}"
+            continue
+        fi
+        
+        # Create namespace if it doesn't exist
+        kubectl create namespace "${ns}" 2>/dev/null || true
+        
+        # Restore PVCs first
+        if [[ -f "${ns_backup_dir}/pvcs.yaml" ]]; then
+            kubectl apply -f "${ns_backup_dir}/pvcs.yaml" 2>/dev/null || log "WARNING" "Failed to restore PVCs in ${ns}"
+            sleep 5
+        fi
+        
+        # Restore secrets and configmaps
+        kubectl get secret,configmap -n "${ns}" -o yaml | \
+        kubectl apply -f - 2>/dev/null || true
+        
+        # Restore main resources
+        if [[ -f "${ns_backup_dir}/all-resources.yaml" ]]; then
+            kubectl apply -f "${ns_backup_dir}/all-resources.yaml" 2>/dev/null || log "WARNING" "Failed to restore some resources in ${ns}"
+        fi
+        
+        # Restore custom resources
+        find "${ns_backup_dir}" -name "*.networking.istio.io.yaml" -type f | while read -r crd_file; do
+            kubectl apply -f "${crd_file}" 2>/dev/null || log "WARNING" "Failed to restore $(basename "${crd_file}")"
+        done
+        
+        find "${ns_backup_dir}" -name "*.security.istio.io.yaml" -type f | while read -r crd_file; do
+            kubectl apply -f "${crd_file}" 2>/dev/null || log "WARNING" "Failed to restore $(basename "${crd_file}")"
+        done
+    done
+    
+    # Verify Kubernetes restore
+    log "INFO" "Verifying Kubernetes restore..."
+    for ns in "${namespaces[@]}"; do
+        local pod_count=$(kubectl get pods -n "${ns}" --no-headers 2>/dev/null | wc -l || echo "0")
+        log "INFO" "Namespace ${ns} - Pods: ${pod_count}"
+    done
+    
+    log "INFO" "Kubernetes restore completed"
+}
+
+# Restore certificates
+restore_certificates() {
+    local backup_dir="$1"
+    local backup_tag="$2"
+    
+    log "INFO" "Starting certificates restore from backup: ${backup_tag}"
+    
+    local cert_backup_dir="${backup_dir}/certificates"
+    local cert_archive="${cert_backup_dir}/certificates-${backup_tag}.tar.gz"
+    
+    if [[ ! -f "${cert_archive}" ]]; then
+        log "WARNING" "Certificates backup not found: ${cert_archive}"
+        return 0
+    fi
+    
+    if [[ "${DRY_RUN}" == "true" ]]; then
+        log "INFO" "[DRY RUN] Would restore certificates from: ${cert_archive}"
+        return 0
+    fi
+    
+    # Switch to DR cluster context
+    kubectl config use-context "${DR_CLUSTER}"
+    
+    # Extract certificates
+    local temp_dir=$(mktemp -d)
+    tar -xzf "${cert_archive}" -C "${temp_dir}"
+    
+    # Restore certificate secrets
+    find "${temp_dir}" -name "*.json" -o -name "*.json.gpg" | while read -r cert_file; do
+        local decrypted_file="${cert_file}"
+        
+        # Decrypt if GPG encrypted
+        if [[ "${cert_file}" == *.gpg ]]; then
+            local decrypted_file="${cert_file%.gpg}"
+            if command -v gpg >/dev/null 2>&1; then
+                gpg --quiet --decrypt "${cert_file}" > "${decrypted_file}"
+            else
+                log "WARNING" "GPG not available, skipping encrypted certificate: ${cert_file}"
+                continue
+            fi
+        fi
+        
+        # Apply certificate secrets
+        if [[ -f "${decrypted_file}" ]]; then
+            kubectl apply -f "${decrypted_file}" 2>/dev/null || \
+                log "WARNING" "Failed to restore certificate: $(basename "${decrypted_file}")"
+        fi
+        
+        # Clean up decrypted file if it was created
+        if [[ "${decrypted_file}" != "${cert_file}" ]]; then
+            rm -f "${decrypted_file}"
+        fi
+    done
+    
+    # Cleanup
+    rm -rf "${temp_dir}"
+    
+    log "INFO" "Certificates restore completed"
+}
+
+# Restore file storage
+restore_files() {
+    local backup_dir="$1"
+    local backup_tag="$2"
+    
+    log "INFO" "Starting file storage restore from backup: ${backup_tag}"
+    
+    local files_backup_dir="${backup_dir}/files"
+    local files_archive="${files_backup_dir}/files-${backup_tag}.tar.gz"
+    
+    if [[ ! -f "${files_archive}" ]]; then
+        log "WARNING" "Files backup not found: ${files_archive}"
+        return 0
+    fi
+    
+    if [[ "${DRY_RUN}" == "true" ]]; then
+        log "INFO" "[DRY RUN] Would restore files from: ${files_archive}"
+        return 0
+    fi
+    
+    # Extract files backup
+    local temp_dir=$(mktemp -d)
+    tar -xzf "${files_archive}" -C "${temp_dir}"
+    
+    # Restore application files to S3 if configured
+    if [[ -n "${APP_S3_BUCKET:-}" ]] && [[ -d "${temp_dir}/app-files" ]]; then
+        log "INFO" "Restoring application files to S3..."
+        aws s3 sync "${temp_dir}/app-files/" "s3://${APP_S3_BUCKET}/" \
+            --delete --storage-class STANDARD
+    fi
+    
+    # Restore configuration files
+    if [[ -d "${temp_dir}/config" ]]; then
+        log "INFO" "Restoring configuration files..."
+        
+        # Restore DR configuration
+        if [[ -d "${temp_dir}/config/dr-config" ]]; then
+            cp -r "${temp_dir}/config/dr-config/." "${DR_CONFIG_DIR}/config/"
+        fi
+        
+        # Restore Backstage app-config
+        if [[ -f "${temp_dir}/config/backstage-app-config.yaml" ]]; then
+            kubectl config use-context "${DR_CLUSTER}"
+            kubectl apply -f "${temp_dir}/config/backstage-app-config.yaml" 2>/dev/null || \
+                log "WARNING" "Failed to restore Backstage app-config"
+        fi
+    fi
+    
+    # Cleanup
+    rm -rf "${temp_dir}"
+    
+    log "INFO" "File storage restore completed"
+}
+
+# Scale up applications after restore
+scale_up_applications() {
+    log "INFO" "Scaling up applications after restore..."
+    
+    # Switch to DR cluster context
+    kubectl config use-context "${DR_CLUSTER}"
+    
+    # Scale up applications gradually
+    local namespaces=("developer-portal" "developer-portal-staging")
+    
+    for ns in "${namespaces[@]}"; do
+        log "INFO" "Scaling up applications in namespace: ${ns}"
+        
+        # Scale up in order: databases, backend, frontend
+        kubectl scale deployment postgres --replicas=1 -n "${ns}" 2>/dev/null || true
+        sleep 30
+        
+        kubectl scale deployment redis --replicas=1 -n "${ns}" 2>/dev/null || true
+        sleep 15
+        
+        kubectl scale deployment backstage-backend --replicas=2 -n "${ns}" 2>/dev/null || true
+        sleep 30
+        
+        kubectl scale deployment backstage-frontend --replicas=2 -n "${ns}" 2>/dev/null || true
+        sleep 15
+        
+        # Scale up other applications
+        kubectl get deployment -n "${ns}" -o name | grep -v -E "(postgres|redis|backstage-)" | \
+        while read -r deployment; do
+            kubectl scale "${deployment}" --replicas=1 -n "${ns}" 2>/dev/null || true
+            sleep 5
+        done
+    done
+    
+    # Wait for applications to be ready
+    log "INFO" "Waiting for applications to be ready..."
+    sleep 60
+    
+    # Check application health
+    for ns in "${namespaces[@]}"; do
+        local ready_pods=$(kubectl get pods -n "${ns}" --field-selector=status.phase=Running --no-headers 2>/dev/null | wc -l || echo "0")
+        local total_pods=$(kubectl get pods -n "${ns}" --no-headers 2>/dev/null | wc -l || echo "0")
+        log "INFO" "Namespace ${ns} - Ready pods: ${ready_pods}/${total_pods}"
+    done
+}
+
+# Send restore notification
+send_restore_notification() {
+    local backup_tag="$1"
+    local status="$2"
+    local components="$3"
+    
+    local message="Backstage restore ${status} - Tag: ${backup_tag}, Components: ${components}"
+    
+    if [[ "${status}" == "completed" ]]; then
+        message="✅ ${message}"
+    else
+        message="❌ ${message}"
+    fi
+    
+    # Send Slack notification
+    if [[ -n "${SLACK_WEBHOOK_URL}" ]]; then
+        curl -X POST "${SLACK_WEBHOOK_URL}" \
+            -H 'Content-type: application/json' \
+            --data "{\"text\":\"${message}\"}" >/dev/null 2>&1 || true
+    fi
+    
+    # Send email notification
+    if [[ -n "${EMAIL_ALERTS}" ]] && command -v mail >/dev/null 2>&1; then
+        echo "${message}" | mail -s "Backstage Restore ${status^}" "${EMAIL_ALERTS}" || true
+    fi
+    
+    log "INFO" "${message}"
+}
+
+# Main restore function
+main() {
+    parse_arguments "$@"
+    
+    # If no backup tag specified, list available backups
+    if [[ -z "${BACKUP_TAG}" ]]; then
+        list_available_backups
+        exit 0
+    fi
+    
+    log "INFO" "Starting Backstage restore process - Tag: ${BACKUP_TAG}"
+    
+    # Validate backup
+    if ! validate_backup "${BACKUP_TAG}"; then
+        log "ERROR" "Backup validation failed"
+        exit 1
+    fi
+    
+    local backup_dir="${DR_BACKUP_DIR}/${BACKUP_TAG}"
+    local start_time=$(date +%s)
+    
+    # Set default components if not specified
+    if [[ -z "${RESTORE_COMPONENTS}" ]]; then
+        RESTORE_COMPONENTS="database,cache,kubernetes,certificates,files"
+    fi
+    
+    # Confirmation prompt
+    if [[ "${FORCE_RESTORE}" != "true" && "${DRY_RUN}" != "true" ]]; then
+        echo ""
+        echo "⚠️  WARNING: This will restore the following components: ${RESTORE_COMPONENTS}"
+        echo "⚠️  This operation will overwrite existing data in the DR environment"
+        echo "⚠️  Backup tag: ${BACKUP_TAG}"
+        echo ""
+        read -p "Do you want to continue? (yes/no): " -r
+        echo ""
+        if [[ ! $REPLY =~ ^[Yy][Ee][Ss]$ ]]; then
+            log "INFO" "Restore operation cancelled by user"
+            exit 0
+        fi
+    fi
+    
+    # Track restore success
+    local restore_success=true
+    
+    # Restore components based on specified list
+    if [[ "${RESTORE_COMPONENTS}" == *"database"* ]]; then
+        if ! restore_database "${backup_dir}" "${BACKUP_TAG}"; then
+            restore_success=false
+        fi
+    fi
+    
+    if [[ "${RESTORE_COMPONENTS}" == *"cache"* ]]; then
+        if ! restore_redis "${backup_dir}" "${BACKUP_TAG}"; then
+            restore_success=false
+        fi
+    fi
+    
+    if [[ "${RESTORE_COMPONENTS}" == *"kubernetes"* ]]; then
+        if ! restore_kubernetes "${backup_dir}" "${BACKUP_TAG}"; then
+            restore_success=false
+        fi
+    fi
+    
+    if [[ "${RESTORE_COMPONENTS}" == *"certificates"* ]]; then
+        if ! restore_certificates "${backup_dir}" "${BACKUP_TAG}"; then
+            restore_success=false
+        fi
+    fi
+    
+    if [[ "${RESTORE_COMPONENTS}" == *"files"* ]]; then
+        if ! restore_files "${backup_dir}" "${BACKUP_TAG}"; then
+            restore_success=false
+        fi
+    fi
+    
+    # Scale up applications if not dry run
+    if [[ "${DRY_RUN}" != "true" && "${restore_success}" == "true" ]]; then
+        scale_up_applications
+    fi
+    
+    # Calculate duration
+    local end_time=$(date +%s)
+    local duration=$((end_time - start_time))
+    
+    # Send notification
+    if [[ "${restore_success}" == "true" ]]; then
+        send_restore_notification "${BACKUP_TAG}" "completed" "${RESTORE_COMPONENTS}"
+        log "INFO" "Restore process completed successfully - Duration: ${duration}s"
+    else
+        send_restore_notification "${BACKUP_TAG}" "failed" "${RESTORE_COMPONENTS}"
+        log "ERROR" "Restore process failed - Duration: ${duration}s"
+        exit 1
+    fi
+}
+
+# Execute main function if script is run directly
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    main "$@"
+fi

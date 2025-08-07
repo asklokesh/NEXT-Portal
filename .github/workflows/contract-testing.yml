@@ -1,0 +1,464 @@
+name: Contract Testing Pipeline
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: false
+        default: 'staging'
+        type: choice
+        options:
+          - staging
+          - production
+
+env:
+  NODE_VERSION: '18'
+  PACT_BROKER_BASE_URL: ${{ secrets.PACT_BROKER_BASE_URL }}
+  PACT_BROKER_TOKEN: ${{ secrets.PACT_BROKER_TOKEN }}
+
+jobs:
+  contract-generation:
+    name: Generate Contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate consumer contracts
+        run: |
+          npm run test:contracts:consumer
+        env:
+          CI: true
+          NODE_ENV: test
+          LOG_LEVEL: info
+
+      - name: Validate generated contracts
+        run: |
+          npx pact-js validate-pacts --pact-dirs ./pacts
+
+      - name: Upload contract artifacts
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: pact-contracts
+          path: |
+            pacts/**/*.json
+            logs/contract-generation.log
+          retention-days: 30
+
+      - name: Generate contract documentation
+        run: |
+          npm run contracts:docs:generate
+        if: github.ref == 'refs/heads/main'
+
+      - name: Upload documentation
+        uses: actions/upload-artifact@v3
+        if: github.ref == 'refs/heads/main'
+        with:
+          name: contract-docs
+          path: docs/contracts/**/*
+          retention-days: 7
+
+  provider-verification:
+    name: Verify Provider Contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: contract-generation
+    
+    strategy:
+      matrix:
+        provider: [catalog-service, auth-service, plugin-service]
+      fail-fast: false
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Download contract artifacts
+        uses: actions/download-artifact@v3
+        with:
+          name: pact-contracts
+          path: pacts
+
+      - name: Start provider service
+        run: |
+          npm run start:${{ matrix.provider }}:test &
+          sleep 10
+          curl -f http://localhost:3000/health || exit 1
+
+      - name: Run provider verification
+        run: |
+          npx pact-js verify \
+            --provider-base-url http://localhost:3000 \
+            --provider ${{ matrix.provider }} \
+            --pact-broker-url ${{ env.PACT_BROKER_BASE_URL }} \
+            --pact-broker-token ${{ env.PACT_BROKER_TOKEN }} \
+            --provider-version ${{ github.sha }} \
+            --publish-verification-result \
+            --consumer-version-selectors '[{"latest": true}, {"deployed": true}]'
+        env:
+          PACT_PROVIDER_VERSION: ${{ github.sha }}
+          PACT_PROVIDER_BRANCH: ${{ github.ref_name }}
+
+      - name: Upload verification results
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: verification-results-${{ matrix.provider }}
+          path: |
+            logs/verification-*.log
+            reports/pact-verification-*.json
+          retention-days: 30
+
+  compatibility-check:
+    name: Check Contract Compatibility
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: [contract-generation, provider-verification]
+    if: github.event_name == 'pull_request'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Get base branch contracts
+        run: |
+          git checkout origin/main
+          npm run test:contracts:consumer
+          mkdir -p contracts/base
+          cp pacts/*.json contracts/base/
+
+      - name: Get current branch contracts
+        run: |
+          git checkout ${{ github.sha }}
+          npm ci
+          npm run test:contracts:consumer
+          mkdir -p contracts/current
+          cp pacts/*.json contracts/current/
+
+      - name: Run compatibility analysis
+        id: compatibility
+        run: |
+          npm run contracts:compatibility:check \
+            --base-dir contracts/base \
+            --current-dir contracts/current \
+            --output reports/compatibility.json
+        continue-on-error: true
+
+      - name: Generate compatibility report
+        run: |
+          npm run contracts:compatibility:report \
+            --input reports/compatibility.json \
+            --output reports/compatibility-report.html
+
+      - name: Comment PR with compatibility results
+        uses: actions/github-script@v6
+        if: github.event_name == 'pull_request'
+        with:
+          script: |
+            const fs = require('fs');
+            try {
+              const report = fs.readFileSync('reports/compatibility.json', 'utf8');
+              const data = JSON.parse(report);
+              
+              let comment = '## 🔍 Contract Compatibility Analysis\n\n';
+              
+              if (data.compatible) {
+                comment += '✅ **No breaking changes detected**\n\n';
+              } else {
+                comment += '❌ **Breaking changes detected**\n\n';
+                comment += `- **Breaking Changes**: ${data.breakingChanges.length}\n`;
+                comment += `- **Warnings**: ${data.warnings.length}\n`;
+                comment += `- **Compatibility Score**: ${data.compatibilityScore}%\n\n`;
+                
+                if (data.breakingChanges.length > 0) {
+                  comment += '### Breaking Changes:\n';
+                  data.breakingChanges.slice(0, 5).forEach(change => {
+                    comment += `- **${change.severity.toUpperCase()}**: ${change.description}\n`;
+                  });
+                  if (data.breakingChanges.length > 5) {
+                    comment += `- ... and ${data.breakingChanges.length - 5} more\n`;
+                  }
+                }
+              }
+              
+              comment += '\n[View detailed report](../actions/runs/${{ github.run_id }})';
+              
+              github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: comment
+              });
+            } catch (error) {
+              console.error('Failed to post compatibility comment:', error);
+            }
+
+      - name: Upload compatibility artifacts
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: compatibility-results
+          path: |
+            reports/compatibility.json
+            reports/compatibility-report.html
+          retention-days: 30
+
+  can-i-deploy:
+    name: Can I Deploy?
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: [provider-verification]
+    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+
+    steps:
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install Pact CLI
+        run: npm install -g @pact-foundation/pact-node
+
+      - name: Check deployment readiness
+        id: can_deploy
+        run: |
+          ENVIRONMENT="${{ github.event.inputs.environment || 'staging' }}"
+          
+          npx pact-broker can-i-deploy \
+            --pacticipant backstage-portal \
+            --version ${{ github.sha }} \
+            --to-environment $ENVIRONMENT \
+            --broker-base-url ${{ env.PACT_BROKER_BASE_URL }} \
+            --broker-token ${{ env.PACT_BROKER_TOKEN }} \
+            --output json > can-i-deploy.json
+          
+          if [ $? -eq 0 ]; then
+            echo "deployment_ready=true" >> $GITHUB_OUTPUT
+          else
+            echo "deployment_ready=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Record deployment decision
+        run: |
+          if [ "${{ steps.can_deploy.outputs.deployment_ready }}" = "true" ]; then
+            echo "✅ Ready to deploy to ${{ github.event.inputs.environment || 'staging' }}"
+            
+            npx pact-broker record-deployment \
+              --pacticipant backstage-portal \
+              --version ${{ github.sha }} \
+              --environment ${{ github.event.inputs.environment || 'staging' }} \
+              --broker-base-url ${{ env.PACT_BROKER_BASE_URL }} \
+              --broker-token ${{ env.PACT_BROKER_TOKEN }}
+          else
+            echo "❌ Not ready to deploy to ${{ github.event.inputs.environment || 'staging' }}"
+            exit 1
+          fi
+
+  publish-contracts:
+    name: Publish Contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: [contract-generation, provider-verification, can-i-deploy]
+    if: github.ref == 'refs/heads/main' && success()
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Download contract artifacts
+        uses: actions/download-artifact@v3
+        with:
+          name: pact-contracts
+          path: pacts
+
+      - name: Install Pact CLI
+        run: npm install -g @pact-foundation/pact-node
+
+      - name: Publish contracts to broker
+        run: |
+          npx pact-broker publish pacts \
+            --consumer-app-version ${{ github.sha }} \
+            --branch ${{ github.ref_name }} \
+            --tag latest \
+            --tag ${{ github.ref_name }} \
+            --broker-base-url ${{ env.PACT_BROKER_BASE_URL }} \
+            --broker-token ${{ env.PACT_BROKER_TOKEN }}
+
+      - name: Create release
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          npx pact-broker create-version-tag \
+            --pacticipant backstage-portal \
+            --version ${{ github.sha }} \
+            --tag ${{ github.ref_name }} \
+            --broker-base-url ${{ env.PACT_BROKER_BASE_URL }} \
+            --broker-token ${{ env.PACT_BROKER_TOKEN }}
+
+  generate-reports:
+    name: Generate Test Reports
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: [provider-verification]
+    if: always()
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v3
+
+      - name: Generate comprehensive report
+        run: |
+          npm run contracts:report:generate \
+            --contracts-dir pacts \
+            --results-dir verification-results-* \
+            --output-dir reports \
+            --format html,json,junit
+
+      - name: Upload reports
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: contract-test-reports
+          path: |
+            reports/**/*
+          retention-days: 90
+
+      - name: Publish test results
+        uses: dorny/test-reporter@v1
+        if: always()
+        with:
+          name: Contract Test Results
+          path: reports/junit-report.xml
+          reporter: java-junit
+
+      - name: Deploy reports to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v3
+        if: github.ref == 'refs/heads/main' && success()
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: reports
+          destination_dir: contract-reports
+
+  notify-teams:
+    name: Notify Teams
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: [contract-generation, provider-verification, compatibility-check, publish-contracts]
+    if: always() && (failure() || (success() && github.ref == 'refs/heads/main'))
+
+    steps:
+      - name: Prepare notification
+        id: notification
+        run: |
+          STATUS="${{ needs.provider-verification.result }}"
+          if [ "$STATUS" = "success" ]; then
+            echo "message=✅ Contract tests passed successfully" >> $GITHUB_OUTPUT
+            echo "color=good" >> $GITHUB_OUTPUT
+          else
+            echo "message=❌ Contract tests failed" >> $GITHUB_OUTPUT
+            echo "color=danger" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Notify Slack
+        uses: rtCamp/action-slack-notify@v2
+        if: env.SLACK_WEBHOOK != ''
+        env:
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+          SLACK_CHANNEL: 'contract-testing'
+          SLACK_COLOR: ${{ steps.notification.outputs.color }}
+          SLACK_MESSAGE: |
+            ${{ steps.notification.outputs.message }}
+            
+            Branch: ${{ github.ref_name }}
+            Commit: ${{ github.sha }}
+            Actor: ${{ github.actor }}
+            
+            View results: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+      - name: Create issue on failure
+        if: failure() && github.ref == 'refs/heads/main'
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const title = `Contract tests failed on main branch`;
+            const body = `
+            ## Contract Testing Failure
+            
+            The contract testing pipeline failed on the main branch.
+            
+            **Details:**
+            - **Commit**: ${context.sha}
+            - **Actor**: ${context.actor}
+            - **Workflow**: ${context.workflow}
+            - **Run**: [${context.runNumber}](${context.payload.repository.html_url}/actions/runs/${context.runId})
+            
+            **Failed Jobs:**
+            ${{ toJSON(needs) }}
+            
+            Please investigate and fix the issues.
+            
+            /cc @platform-team
+            `;
+            
+            github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: title,
+              body: body,
+              labels: ['bug', 'contract-testing', 'priority:high']
+            });

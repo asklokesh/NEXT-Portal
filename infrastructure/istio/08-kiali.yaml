@@ -1,0 +1,336 @@
+apiVersion: kiali.io/v1alpha1
+kind: Kiali
+metadata:
+  name: kiali
+  namespace: istio-system
+spec:
+  # Kiali configuration for enhanced service mesh observability
+  installation_tag: "v1.79"
+  istio_namespace: "istio-system"
+  
+  # Authentication configuration
+  auth:
+    strategy: "openid"
+    openid:
+      client_id: "kiali"
+      issuer_uri: "https://auth.backstage.local/auth/realms/backstage"
+      scopes: ["openid", "profile", "email"]
+      username_claim: "preferred_username"
+      
+  # Deployment configuration
+  deployment:
+    # Enhanced resource allocation
+    resources:
+      requests:
+        memory: "512Mi"
+        cpu: "250m"
+      limits:
+        memory: "1Gi"
+        cpu: "500m"
+    
+    # High availability
+    replicas: 2
+    
+    # Pod security and scheduling
+    pod_annotations:
+      prometheus.io/scrape: "true"
+      prometheus.io/port: "9090"
+      prometheus.io/path: "/kiali/api/health"
+    
+    security_context:
+      runAsNonRoot: true
+      runAsUser: 1001
+      fsGroup: 2001
+      
+    service_annotations:
+      service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+      
+    # Node affinity for better distribution
+    node_selector:
+      kubernetes.io/arch: amd64
+      
+    tolerations:
+    - key: "dedicated"
+      operator: "Equal"
+      value: "monitoring"
+      effect: "NoSchedule"
+      
+  # External services configuration
+  external_services:
+    # Prometheus configuration
+    prometheus:
+      # Custom prometheus endpoint
+      url: "http://prometheus.istio-system:9090"
+      health_check_url: "http://prometheus.istio-system:9090/-/healthy"
+      
+    # Grafana integration
+    grafana:
+      enabled: true
+      in_cluster_url: "http://grafana.istio-system:3000"
+      url: "https://admin.backstage.local/grafana"
+      auth:
+        type: "basic"
+        username: "admin"
+        password: "secret:grafana-credentials:password"
+      dashboards:
+      - name: "Istio Service Mesh Dashboard"
+        variables:
+          namespace: "var-namespace"
+          service: "var-service"
+      - name: "Istio Workload Dashboard" 
+        variables:
+          namespace: "var-namespace"
+          workload: "var-workload"
+      - name: "Istio Performance Dashboard"
+        variables:
+          namespace: "var-namespace"
+          
+    # Jaeger tracing integration
+    jaeger:
+      enabled: true
+      in_cluster_url: "http://jaeger-query.istio-system:16686"
+      url: "https://admin.backstage.local/jaeger"
+      namespace_selector: true
+      
+    # Custom dashboards
+    custom_dashboards:
+    - name: "backstage-overview"
+      title: "Backstage Portal Overview"
+      runtime: "Backstage"
+      discoverOn: "labels"
+      discoverBy:
+        app: "backstage"
+    - name: "marketplace-dashboard"  
+      title: "Plugin Marketplace Health"
+      runtime: "Marketplace"
+      discoverOn: "labels"
+      discoverBy:
+        component: "marketplace"
+        
+  # Server configuration
+  server:
+    web_root: "/kiali"
+    web_port: 20001
+    web_schema: "https"
+    
+    # CORS configuration
+    cors_allow_all: false
+    cors_allow_domains:
+    - "https://backstage.local"
+    - "https://admin.backstage.local"
+    - "https://staging.backstage.local"
+    
+    # Audit logging
+    audit_log: true
+    
+    # Metrics server
+    metrics_enabled: true
+    metrics_port: 9090
+    
+  # API configuration  
+  api:
+    namespaces:
+      # Include specific namespaces
+      include:
+      - "developer-portal"
+      - "developer-portal-staging"
+      - "istio-system"
+      - "kube-system"
+      # Exclude system namespaces  
+      exclude:
+      - "kube-public"
+      - "kube-node-lease"
+      
+    # Label selector for discovery
+    label_selector_include: "app"
+    label_selector_exclude: "kiali.io/member-of"
+    
+  # Kiali features configuration
+  kiali_feature_flags:
+    # Enable certificate management
+    certificates_information_indicators:
+      enabled: true
+      secrets:
+      - "cacerts"
+      - "backstage-tls"
+      - "backstage-staging-tls"
+      
+    # Clustering features
+    clustering:
+      enabled: true
+      clusters:
+      - name: "primary"
+        network: "primary-network"
+      - name: "remote"
+        network: "remote-network"
+        
+    # Validations
+    validations:
+      enabled: true
+      ignore:
+      - "KIA0101" # Ignore specific validations
+      
+    # UI enhancements  
+    ui_defaults:
+      graph:
+        traffic:
+          grpc: "requests"
+          http: "requests" 
+          tcp: "sent"
+        find_options:
+        - "app"
+        - "version"
+        - "service"
+        hide_options:
+        - "compress_on_hide"
+        - "show_idle_edges"
+        impl_namespace: false
+        rate: "5m"
+        
+      metrics_per_refresh: "1m"
+      metrics_inbound:
+        aggregations:
+        - display_name: "Istio Network"
+          label: "topology_istio_io_network"
+        - display_name: "Istio Revision"
+          label: "istio_io_rev"
+      metrics_outbound:
+        aggregations:
+        - display_name: "Istio Network"
+          label: "topology_istio_io_network"
+          
+      # List view defaults
+      list:
+        include_health: true
+        include_validations: true
+        show_include_toggles: false
+        
+---
+# ServiceMonitor for Kiali metrics
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: kiali-metrics
+  namespace: istio-system
+  labels:
+    app: kiali
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: kiali
+  endpoints:
+  - port: http-monitoring
+    interval: 30s
+    path: /kiali/api/health
+---
+# PrometheusRule for Kiali alerts
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: kiali-alerts
+  namespace: istio-system
+  labels:
+    app: kiali
+spec:
+  groups:
+  - name: kiali.rules
+    rules:
+    - alert: KialiDown
+      expr: up{job="kiali"} == 0
+      for: 5m
+      labels:
+        severity: critical
+      annotations:
+        summary: "Kiali is down"
+        description: "Kiali has been down for more than 5 minutes."
+        
+    - alert: KialiHighMemoryUsage
+      expr: container_memory_usage_bytes{pod=~"kiali-.*"} / container_spec_memory_limit_bytes > 0.9
+      for: 15m
+      labels:
+        severity: warning
+      annotations:
+        summary: "Kiali high memory usage"
+        description: "Kiali memory usage is above 90% for more than 15 minutes."
+        
+    - alert: KialiHighCPUUsage
+      expr: rate(container_cpu_usage_seconds_total{pod=~"kiali-.*"}[5m]) / container_spec_cpu_quota * 100 > 80
+      for: 15m
+      labels:
+        severity: warning
+      annotations:
+        summary: "Kiali high CPU usage"
+        description: "Kiali CPU usage is above 80% for more than 15 minutes."
+        
+    - alert: KialiUnhealthyNamespaces
+      expr: kiali_api_processing_duration_seconds{code!="200"} > 0
+      for: 10m
+      labels:
+        severity: warning
+      annotations:
+        summary: "Kiali detecting unhealthy namespaces"
+        description: "Kiali is reporting issues with namespace health checks."
+---
+# NetworkPolicy for Kiali
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: kiali-network-policy
+  namespace: istio-system
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: kiali
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: istio-system
+    - namespaceSelector:
+        matchLabels:
+          name: developer-portal
+    - namespaceSelector:
+        matchLabels:
+          name: developer-portal-staging
+    ports:
+    - protocol: TCP
+      port: 20001
+    - protocol: TCP
+      port: 9090
+  egress:
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: istio-system
+    ports:
+    - protocol: TCP
+      port: 9090 # Prometheus
+    - protocol: TCP
+      port: 16686 # Jaeger
+    - protocol: TCP
+      port: 3000 # Grafana
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: developer-portal
+    ports:
+    - protocol: TCP
+      port: 15090 # Pilot
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: developer-portal-staging
+    ports:
+    - protocol: TCP
+      port: 15090 # Pilot
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 443 # HTTPS outbound
+    - protocol: TCP
+      port: 53 # DNS
+    - protocol: UDP
+      port: 53 # DNS

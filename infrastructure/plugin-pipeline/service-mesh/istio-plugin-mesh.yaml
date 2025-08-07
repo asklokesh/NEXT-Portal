@@ -1,0 +1,719 @@
+# Istio Service Mesh Configuration for Plugin Pipeline
+# Comprehensive traffic management, security, and observability
+
+---
+# Gateway for external traffic
+apiVersion: networking.istio.io/v1beta1
+kind: Gateway
+metadata:
+  name: plugin-pipeline-gateway
+  namespace: plugin-pipeline
+  labels:
+    app: plugin-pipeline
+    component: gateway
+spec:
+  selector:
+    istio: ingressgateway
+  servers:
+    - port:
+        number: 443
+        name: https
+        protocol: HTTPS
+      tls:
+        mode: SIMPLE
+        credentialName: plugin-pipeline-tls
+      hosts:
+        - "plugin-pipeline.example.com"
+        - "*.plugin-pipeline.example.com"
+    - port:
+        number: 80
+        name: http
+        protocol: HTTP
+      hosts:
+        - "plugin-pipeline.example.com"
+        - "*.plugin-pipeline.example.com"
+      # Redirect HTTP to HTTPS
+      tls:
+        httpsRedirect: true
+
+---
+# VirtualService for Plugin Orchestrator
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: plugin-orchestrator-vs
+  namespace: plugin-pipeline
+  labels:
+    app: plugin-orchestrator
+    component: virtual-service
+spec:
+  hosts:
+    - "plugin-pipeline.example.com"
+  gateways:
+    - plugin-pipeline-gateway
+    - mesh # Internal mesh traffic
+  http:
+    # API routes
+    - match:
+        - uri:
+            prefix: /api/v1/
+      route:
+        - destination:
+            host: plugin-orchestrator.plugin-pipeline.svc.cluster.local
+            port:
+              number: 8080
+      retries:
+        attempts: 3
+        perTryTimeout: 30s
+        retryOn: gateway-error,connect-failure,refused-stream
+      timeout: 60s
+      
+    # Health check routes
+    - match:
+        - uri:
+            prefix: /health
+      route:
+        - destination:
+            host: plugin-orchestrator.plugin-pipeline.svc.cluster.local
+            port:
+              number: 8081
+      retries:
+        attempts: 2
+        perTryTimeout: 10s
+      timeout: 15s
+      
+    # Metrics endpoint
+    - match:
+        - uri:
+            prefix: /metrics
+      route:
+        - destination:
+            host: plugin-orchestrator.plugin-pipeline.svc.cluster.local
+            port:
+              number: 9090
+      retries:
+        attempts: 1
+        perTryTimeout: 5s
+      timeout: 10s
+      
+    # Default route for UI and other requests
+    - route:
+        - destination:
+            host: plugin-orchestrator.plugin-pipeline.svc.cluster.local
+            port:
+              number: 8080
+
+---
+# DestinationRule for Plugin Orchestrator
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: plugin-orchestrator-dr
+  namespace: plugin-pipeline
+  labels:
+    app: plugin-orchestrator
+    component: destination-rule
+spec:
+  host: plugin-orchestrator.plugin-pipeline.svc.cluster.local
+  trafficPolicy:
+    loadBalancer:
+      consistentHash:
+        httpHeaderName: "x-session-id"
+    connectionPool:
+      tcp:
+        maxConnections: 100
+        connectTimeout: 10s
+        tcpKeepalive:
+          time: 7200s
+          interval: 75s
+      http:
+        http1MaxPendingRequests: 50
+        http2MaxRequests: 100
+        maxRequestsPerConnection: 10
+        maxRetries: 3
+        consecutiveGatewayErrors: 5
+        interval: 30s
+        baseEjectionTime: 30s
+        maxEjectionPercent: 50
+        minHealthPercent: 50
+    circuitBreaker:
+      consecutiveGatewayErrors: 5
+      interval: 30s
+      baseEjectionTime: 30s
+      maxEjectionPercent: 50
+    outlierDetection:
+      consecutiveGatewayErrors: 5
+      interval: 30s
+      baseEjectionTime: 30s
+      maxEjectionPercent: 50
+      minHealthPercent: 50
+  portLevelSettings:
+    - port:
+        number: 8080
+      loadBalancer:
+        consistentHash:
+          httpHeaderName: "x-session-id"
+    - port:
+        number: 8081
+      connectionPool:
+        tcp:
+          maxConnections: 10
+        http:
+          http1MaxPendingRequests: 5
+          maxRequestsPerConnection: 1
+    - port:
+        number: 9090
+      connectionPool:
+        tcp:
+          maxConnections: 20
+        http:
+          http1MaxPendingRequests: 10
+          maxRequestsPerConnection: 2
+
+---
+# VirtualService for Plugin Services (dynamic plugins)
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: plugin-services-vs
+  namespace: plugin-pipeline
+  labels:
+    app: plugin-services
+    component: virtual-service
+spec:
+  hosts:
+    - "*.plugins.example.com"
+  gateways:
+    - plugin-pipeline-gateway
+    - mesh
+  http:
+    # Canary routing based on headers
+    - match:
+        - headers:
+            canary-test:
+              exact: "true"
+        - uri:
+            prefix: /
+      route:
+        - destination:
+            host: "{{ .plugin_name }}.plugin-pipeline.svc.cluster.local"
+            subset: canary
+          weight: 100
+      retries:
+        attempts: 2
+        perTryTimeout: 30s
+      timeout: 60s
+      
+    # A/B testing routing
+    - match:
+        - headers:
+            x-ab-test:
+              exact: "variant-b"
+        - uri:
+            prefix: /
+      route:
+        - destination:
+            host: "{{ .plugin_name }}.plugin-pipeline.svc.cluster.local"
+            subset: variant-b
+          weight: 100
+      retries:
+        attempts: 3
+        perTryTimeout: 30s
+      timeout: 60s
+      
+    # Default routing with traffic splitting
+    - route:
+        - destination:
+            host: "{{ .plugin_name }}.plugin-pipeline.svc.cluster.local"
+            subset: stable
+          weight: 90
+        - destination:
+            host: "{{ .plugin_name }}.plugin-pipeline.svc.cluster.local"
+            subset: canary
+          weight: 10
+      retries:
+        attempts: 3
+        perTryTimeout: 30s
+        retryOn: gateway-error,connect-failure,refused-stream
+      timeout: 60s
+      fault:
+        delay:
+          percentage:
+            value: 0.1  # 0.1% of requests
+          fixedDelay: 5s
+        abort:
+          percentage:
+            value: 0.01  # 0.01% of requests
+          httpStatus: 503
+
+---
+# DestinationRule template for Plugin Services
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: plugin-services-dr-template
+  namespace: plugin-pipeline
+  labels:
+    app: plugin-services
+    component: destination-rule-template
+spec:
+  host: "*.plugin-pipeline.svc.cluster.local"
+  trafficPolicy:
+    loadBalancer:
+      simple: LEAST_CONN
+    connectionPool:
+      tcp:
+        maxConnections: 50
+        connectTimeout: 10s
+      http:
+        http1MaxPendingRequests: 25
+        http2MaxRequests: 50
+        maxRequestsPerConnection: 5
+        maxRetries: 3
+    circuitBreaker:
+      consecutiveGatewayErrors: 3
+      interval: 30s
+      baseEjectionTime: 30s
+      maxEjectionPercent: 30
+    outlierDetection:
+      consecutiveGatewayErrors: 3
+      interval: 30s
+      baseEjectionTime: 30s
+      maxEjectionPercent: 30
+      minHealthPercent: 70
+  subsets:
+    - name: stable
+      labels:
+        version: stable
+    - name: canary
+      labels:
+        version: canary
+      trafficPolicy:
+        connectionPool:
+          tcp:
+            maxConnections: 25
+          http:
+            http1MaxPendingRequests: 10
+            maxRequestsPerConnection: 2
+    - name: variant-b
+      labels:
+        version: variant-b
+      trafficPolicy:
+        connectionPool:
+          tcp:
+            maxConnections: 25
+          http:
+            http1MaxPendingRequests: 10
+
+---
+# PeerAuthentication for mTLS
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: plugin-pipeline-mtls
+  namespace: plugin-pipeline
+  labels:
+    app: plugin-pipeline
+    component: peer-authentication
+spec:
+  mtls:
+    mode: STRICT
+  portLevelMtls:
+    8081:  # Health check port
+      mode: PERMISSIVE
+    9090:  # Metrics port
+      mode: PERMISSIVE
+
+---
+# AuthorizationPolicy for Plugin Orchestrator
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: plugin-orchestrator-authz
+  namespace: plugin-pipeline
+  labels:
+    app: plugin-orchestrator
+    component: authorization-policy
+spec:
+  selector:
+    matchLabels:
+      app: plugin-orchestrator
+  rules:
+    # Allow health checks from anywhere
+    - to:
+        - operation:
+            paths: ["/health", "/health/*"]
+      from:
+        - source: {}
+      
+    # Allow metrics collection from monitoring namespace
+    - to:
+        - operation:
+            paths: ["/metrics"]
+      from:
+        - source:
+            namespaces: ["monitoring", "istio-system"]
+      
+    # Allow API access from authenticated users
+    - to:
+        - operation:
+            paths: ["/api/*"]
+      from:
+        - source:
+            principals: ["cluster.local/ns/plugin-pipeline/sa/plugin-orchestrator"]
+            namespaces: ["plugin-pipeline"]
+      when:
+        - key: request.headers[authorization]
+          values: ["Bearer *"]
+      
+    # Allow internal mesh communication
+    - from:
+        - source:
+            namespaces: ["plugin-pipeline"]
+
+---
+# AuthorizationPolicy for Plugin Services
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: plugin-services-authz
+  namespace: plugin-pipeline
+  labels:
+    app: plugin-services
+    component: authorization-policy
+spec:
+  rules:
+    # Allow access from plugin orchestrator
+    - from:
+        - source:
+            principals: ["cluster.local/ns/plugin-pipeline/sa/plugin-orchestrator"]
+      
+    # Allow access from authenticated users via gateway
+    - from:
+        - source:
+            namespaces: ["istio-system"]
+      to:
+        - operation:
+            paths: ["/*"]
+      when:
+        - key: request.headers[authorization]
+          values: ["Bearer *"]
+      
+    # Allow health checks
+    - to:
+        - operation:
+            paths: ["/health", "/ready"]
+
+---
+# ServiceMonitor for Prometheus scraping
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: plugin-pipeline-istio
+  namespace: plugin-pipeline
+  labels:
+    app: plugin-pipeline
+    component: service-monitor
+spec:
+  selector:
+    matchLabels:
+      app: plugin-orchestrator
+  endpoints:
+    - port: http-monitoring
+      interval: 30s
+      path: /stats/prometheus
+      scheme: http
+
+---
+# Istio Proxy configuration for enhanced observability
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: istio-proxy-config
+  namespace: plugin-pipeline
+  labels:
+    app: plugin-pipeline
+    component: proxy-config
+data:
+  custom_bootstrap.json: |
+    {
+      "static_resources": {
+        "clusters": [
+          {
+            "name": "jaeger",
+            "type": "STRICT_DNS",
+            "lb_policy": "ROUND_ROBIN",
+            "load_assignment": {
+              "cluster_name": "jaeger",
+              "endpoints": [
+                {
+                  "lb_endpoints": [
+                    {
+                      "endpoint": {
+                        "address": {
+                          "socket_address": {
+                            "address": "jaeger-collector.monitoring.svc.cluster.local",
+                            "port_value": 14268
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }
+
+---
+# Telemetry configuration for enhanced metrics
+apiVersion: telemetry.istio.io/v1alpha1
+kind: Telemetry
+metadata:
+  name: plugin-pipeline-metrics
+  namespace: plugin-pipeline
+  labels:
+    app: plugin-pipeline
+    component: telemetry
+spec:
+  selector:
+    matchLabels:
+      app: plugin-orchestrator
+  metrics:
+    - providers:
+        - name: prometheus
+    - overrides:
+        - match:
+            metric: ALL_METRICS
+          operation: UPSERT
+          tags:
+            request_protocol: request.protocol | "unknown"
+            response_flags: response.flags | "-"
+            plugin_name: request.headers["x-plugin-name"] | "unknown"
+            deployment_strategy: request.headers["x-deployment-strategy"] | "unknown"
+
+---
+# EnvoyFilter for custom request headers
+apiVersion: networking.istio.io/v1alpha3
+kind: EnvoyFilter
+metadata:
+  name: plugin-pipeline-headers
+  namespace: plugin-pipeline
+  labels:
+    app: plugin-pipeline
+    component: envoy-filter
+spec:
+  workloadSelector:
+    labels:
+      app: plugin-orchestrator
+  configPatches:
+    - applyTo: HTTP_FILTER
+      match:
+        context: SIDECAR_INBOUND
+        listener:
+          filterChain:
+            filter:
+              name: "envoy.filters.network.http_connection_manager"
+      patch:
+        operation: INSERT_BEFORE
+        value:
+          name: envoy.filters.http.wasm
+          typed_config:
+            "@type": type.googleapis.com/envoy.extensions.filters.http.wasm.v3.Wasm
+            config:
+              root_id: add_header
+              vm_config:
+                vm_id: add_header
+                runtime: envoy.wasm.runtime.v8
+                code:
+                  local:
+                    inline_string: |
+                      const HEADER_NAME = "x-plugin-pipeline-version";
+                      const HEADER_VALUE = "1.0.0";
+                      
+                      class AddHeaderRoot extends RootContext {
+                        onConfigure() {
+                          return true;
+                        }
+                        
+                        createHttpContext() {
+                          return new AddHeader(this);
+                        }
+                      }
+                      
+                      class AddHeader extends HttpContext {
+                        onHttpRequestHeaders() {
+                          this.setRequestHeader(HEADER_NAME, HEADER_VALUE);
+                          return FilterHeadersStatus.Continue;
+                        }
+                      }
+                      
+                      registerRootContext((rootContext) => new AddHeaderRoot(rootContext));
+
+---
+# Istio Ingress Gateway configuration
+apiVersion: v1
+kind: Service
+metadata:
+  name: istio-ingressgateway-plugin-pipeline
+  namespace: istio-system
+  labels:
+    app: istio-ingressgateway
+    istio: ingressgateway
+    component: plugin-pipeline-gateway
+spec:
+  type: LoadBalancer
+  selector:
+    app: istio-ingressgateway
+    istio: ingressgateway
+  ports:
+    - port: 80
+      targetPort: 8080
+      name: http2
+      protocol: TCP
+    - port: 443
+      targetPort: 8443
+      name: https
+      protocol: TCP
+    - port: 31400
+      targetPort: 31400
+      name: tcp
+      protocol: TCP
+    - port: 15443
+      targetPort: 15443
+      name: tls
+      protocol: TCP
+
+---
+# Horizontal Pod Autoscaler for Istio Gateway
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: istio-ingressgateway-plugin-pipeline
+  namespace: istio-system
+  labels:
+    app: istio-ingressgateway
+    component: hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: istio-ingressgateway
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80
+
+---
+# Istio Sidecar configuration for optimized resource usage
+apiVersion: networking.istio.io/v1beta1
+kind: Sidecar
+metadata:
+  name: plugin-orchestrator-sidecar
+  namespace: plugin-pipeline
+  labels:
+    app: plugin-orchestrator
+    component: sidecar
+spec:
+  workloadSelector:
+    labels:
+      app: plugin-orchestrator
+  ingress:
+    - port:
+        number: 8080
+        protocol: HTTP
+        name: http
+    - port:
+        number: 8081
+        protocol: HTTP
+        name: health
+    - port:
+        number: 9090
+        protocol: HTTP
+        name: metrics
+  egress:
+    - hosts:
+        - "./*"  # Allow all services in the same namespace
+        - "monitoring/*"  # Allow monitoring services
+        - "istio-system/*"  # Allow Istio system services
+    - port:
+        number: 443
+        protocol: HTTPS
+        name: https
+      hosts:
+        - "registry.hub.docker.com"
+        - "ghcr.io"
+        - "*.amazonaws.com"
+        - "*.googleapis.com"
+
+---
+# WorkloadEntry for external services
+apiVersion: networking.istio.io/v1beta1
+kind: WorkloadEntry
+metadata:
+  name: docker-registry-hub
+  namespace: plugin-pipeline
+  labels:
+    app: docker-registry
+    type: external
+spec:
+  address: "registry.hub.docker.com"
+  ports:
+    https: 443
+
+---
+# ServiceEntry for external Docker registries
+apiVersion: networking.istio.io/v1beta1
+kind: ServiceEntry
+metadata:
+  name: docker-registries
+  namespace: plugin-pipeline
+  labels:
+    app: plugin-pipeline
+    component: service-entry
+spec:
+  hosts:
+    - registry.hub.docker.com
+    - ghcr.io
+    - gcr.io
+    - quay.io
+  ports:
+    - number: 443
+      name: https
+      protocol: HTTPS
+  location: MESH_EXTERNAL
+  resolution: DNS
+
+---
+# RequestAuthentication for JWT validation
+apiVersion: security.istio.io/v1beta1
+kind: RequestAuthentication
+metadata:
+  name: plugin-pipeline-jwt
+  namespace: plugin-pipeline
+  labels:
+    app: plugin-pipeline
+    component: request-authentication
+spec:
+  selector:
+    matchLabels:
+      app: plugin-orchestrator
+  jwtRules:
+    - issuer: "https://plugin-pipeline.example.com/auth"
+      jwksUri: "https://plugin-pipeline.example.com/auth/.well-known/jwks.json"
+      audiences:
+        - "plugin-pipeline-api"
+      forwardOriginalToken: true

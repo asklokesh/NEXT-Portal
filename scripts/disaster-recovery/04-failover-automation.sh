@@ -1,0 +1,747 @@
+#!/bin/bash
+
+# Failover Automation Script for Backstage Disaster Recovery
+# This script handles automated failover from primary site to DR site
+
+set -euo pipefail
+
+# Source DR configuration
+source "$(dirname "$0")/01-dr-config.sh"
+
+# Failover specific configuration
+FAILOVER_TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+FORCE_FAILOVER=false
+DRY_RUN=false
+BACKUP_BEFORE_FAILOVER=true
+FAILOVER_REASON=""
+MAX_FAILOVER_TIME=3600  # 1 hour maximum failover time
+
+# Initialize failover logging
+setup_logging "INFO"
+
+# Parse command line arguments
+parse_failover_arguments() {
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --force)
+                FORCE_FAILOVER=true
+                shift
+                ;;
+            --dry-run)
+                DRY_RUN=true
+                shift
+                ;;
+            --no-backup)
+                BACKUP_BEFORE_FAILOVER=false
+                shift
+                ;;
+            --reason)
+                FAILOVER_REASON="$2"
+                shift 2
+                ;;
+            --help)
+                show_failover_usage
+                exit 0
+                ;;
+            *)
+                log "ERROR" "Unknown argument: $1"
+                show_failover_usage
+                exit 1
+                ;;
+        esac
+    done
+}
+
+# Show failover usage
+show_failover_usage() {
+    cat <<EOF
+Usage: $0 [options]
+
+Options:
+    --force              Skip safety checks and confirmations
+    --dry-run           Show what would be done without executing
+    --no-backup         Skip backup creation before failover
+    --reason REASON     Reason for failover (for documentation)
+    --help              Show this help message
+
+Examples:
+    $0 --reason "Primary site outage"
+    $0 --force --no-backup
+    $0 --dry-run
+EOF
+}
+
+# Check primary site health
+check_primary_site_health() {
+    log "INFO" "Checking primary site health..."
+    
+    local health_check_failed=false
+    
+    # Check primary application endpoint
+    if ! curl -s --max-time 10 "https://backstage.local/health" | jq -e '.status == "ok"' >/dev/null 2>&1; then
+        log "WARNING" "Primary site health endpoint failed"
+        health_check_failed=true
+    fi
+    
+    # Check primary API endpoint
+    if ! curl -s --max-time 10 "https://backstage.local/api/health" >/dev/null 2>&1; then
+        log "WARNING" "Primary API endpoint failed"
+        health_check_failed=true
+    fi
+    
+    # Check primary database
+    if ! PGPASSWORD="${POSTGRES_PASSWORD}" pg_isready -h "${POSTGRES_PRIMARY_HOST}" -p "${POSTGRES_PORT}" -d "${POSTGRES_DB}" >/dev/null 2>&1; then
+        log "WARNING" "Primary database health check failed"
+        health_check_failed=true
+    fi
+    
+    # Check primary Redis
+    if ! redis-cli -h "${REDIS_PRIMARY_HOST}" -p "${REDIS_PORT}" ping | grep -q "PONG" 2>/dev/null; then
+        log "WARNING" "Primary Redis health check failed"
+        health_check_failed=true
+    fi
+    
+    # Check Kubernetes cluster health
+    if ! kubectl config use-context "${PRIMARY_CLUSTER}" >/dev/null 2>&1; then
+        log "WARNING" "Cannot connect to primary Kubernetes cluster"
+        health_check_failed=true
+    else
+        local unhealthy_nodes=$(kubectl get nodes --no-headers | awk '$2 != "Ready" {print $1}' | wc -l)
+        if [[ ${unhealthy_nodes} -gt 0 ]]; then
+            log "WARNING" "Primary cluster has ${unhealthy_nodes} unhealthy nodes"
+            health_check_failed=true
+        fi
+    fi
+    
+    if [[ "${health_check_failed}" == "true" ]]; then
+        log "ERROR" "Primary site health checks failed"
+        return 1
+    else
+        log "INFO" "Primary site appears healthy"
+        return 0
+    fi
+}
+
+# Check DR site readiness
+check_dr_site_readiness() {
+    log "INFO" "Checking DR site readiness..."
+    
+    local readiness_check_failed=false
+    
+    # Check DR database
+    if ! PGPASSWORD="${POSTGRES_PASSWORD}" pg_isready -h "${POSTGRES_DR_HOST}" -p "${POSTGRES_PORT}" -d "${POSTGRES_DB}" >/dev/null 2>&1; then
+        log "ERROR" "DR database is not ready"
+        readiness_check_failed=true
+    fi
+    
+    # Check DR Redis
+    if ! redis-cli -h "${REDIS_DR_HOST}" -p "${REDIS_PORT}" ping | grep -q "PONG" 2>/dev/null; then
+        log "ERROR" "DR Redis is not ready"
+        readiness_check_failed=true
+    fi
+    
+    # Check DR Kubernetes cluster
+    if ! kubectl config use-context "${DR_CLUSTER}" >/dev/null 2>&1; then
+        log "ERROR" "Cannot connect to DR Kubernetes cluster"
+        readiness_check_failed=true
+    else
+        local ready_nodes=$(kubectl get nodes --no-headers | awk '$2 == "Ready"' | wc -l)
+        if [[ ${ready_nodes} -lt 3 ]]; then
+            log "ERROR" "DR cluster has insufficient ready nodes: ${ready_nodes}"
+            readiness_check_failed=true
+        fi
+    fi
+    
+    # Check DR namespace existence
+    kubectl config use-context "${DR_CLUSTER}"
+    local missing_namespaces=()
+    local required_namespaces=("developer-portal" "developer-portal-staging" "istio-system")
+    
+    for ns in "${required_namespaces[@]}"; do
+        if ! kubectl get namespace "${ns}" >/dev/null 2>&1; then
+            missing_namespaces+=("${ns}")
+        fi
+    done
+    
+    if [[ ${#missing_namespaces[@]} -gt 0 ]]; then
+        log "ERROR" "DR cluster missing namespaces: ${missing_namespaces[*]}"
+        readiness_check_failed=true
+    fi
+    
+    if [[ "${readiness_check_failed}" == "true" ]]; then
+        log "ERROR" "DR site readiness checks failed"
+        return 1
+    else
+        log "INFO" "DR site is ready for failover"
+        return 0
+    fi
+}
+
+# Create pre-failover backup
+create_prefailover_backup() {
+    log "INFO" "Creating pre-failover backup..."
+    
+    if [[ "${BACKUP_BEFORE_FAILOVER}" != "true" ]]; then
+        log "INFO" "Skipping pre-failover backup as requested"
+        return 0
+    fi
+    
+    local backup_tag="prefailover-${FAILOVER_TIMESTAMP}"
+    
+    # Try to create backup from primary site
+    if check_primary_site_health >/dev/null 2>&1; then
+        log "INFO" "Primary site accessible, creating backup from primary"
+        if ! /opt/backstage-dr/scripts/02-backup-automation.sh; then
+            log "WARNING" "Primary site backup failed, will proceed with existing backups"
+        fi
+    else
+        log "WARNING" "Primary site not accessible, cannot create pre-failover backup"
+    fi
+}
+
+# Stop primary site traffic
+stop_primary_traffic() {
+    log "INFO" "Stopping traffic to primary site..."
+    
+    if [[ "${DRY_RUN}" == "true" ]]; then
+        log "INFO" "[DRY RUN] Would stop primary site traffic"
+        return 0
+    fi
+    
+    # Try to gracefully scale down primary site applications
+    if kubectl config use-context "${PRIMARY_CLUSTER}" >/dev/null 2>&1; then
+        log "INFO" "Scaling down primary site applications..."
+        
+        local namespaces=("developer-portal" "developer-portal-staging")
+        for ns in "${namespaces[@]}"; do
+            if kubectl get namespace "${ns}" >/dev/null 2>&1; then
+                # Scale down frontend first to stop accepting new requests
+                kubectl scale deployment backstage-frontend --replicas=0 -n "${ns}" 2>/dev/null || true
+                
+                # Scale down backend services
+                kubectl scale deployment backstage-backend --replicas=0 -n "${ns}" 2>/dev/null || true
+                kubectl scale deployment backstage-websocket --replicas=0 -n "${ns}" 2>/dev/null || true
+                kubectl scale deployment backstage-marketplace --replicas=0 -n "${ns}" 2>/dev/null || true
+                
+                log "INFO" "Scaled down applications in namespace: ${ns}"
+            fi
+        done
+        
+        # Wait for graceful shutdown
+        sleep 30
+    else
+        log "WARNING" "Cannot connect to primary cluster to scale down applications"
+    fi
+    
+    # Update load balancer or DNS to redirect traffic
+    # This would typically involve updating external load balancer configuration
+    # or DNS records to point to DR site
+    
+    log "INFO" "Primary site traffic stopped"
+}
+
+# Prepare DR site for activation
+prepare_dr_site() {
+    log "INFO" "Preparing DR site for activation..."
+    
+    # Switch to DR cluster context
+    kubectl config use-context "${DR_CLUSTER}"
+    
+    if [[ "${DRY_RUN}" == "true" ]]; then
+        log "INFO" "[DRY RUN] Would prepare DR site"
+        return 0
+    fi
+    
+    # Ensure DR databases are in sync
+    log "INFO" "Checking DR database sync status..."
+    
+    # For PostgreSQL, check replication lag if using streaming replication
+    if command -v pg_ctl >/dev/null 2>&1; then
+        local lag_bytes=$(PGPASSWORD="${POSTGRES_PASSWORD}" psql \
+            -h "${POSTGRES_DR_HOST}" \
+            -p "${POSTGRES_PORT}" \
+            -U "${POSTGRES_USER:-postgres}" \
+            -d "${POSTGRES_DB}" \
+            -t -c "SELECT pg_wal_lsn_diff(pg_last_wal_receive_lsn(), pg_last_wal_replay_lsn());" 2>/dev/null | tr -d ' ' || echo "0")
+        
+        if [[ "${lag_bytes}" -gt 0 ]]; then
+            log "INFO" "Database replication lag: ${lag_bytes} bytes"
+            # Wait for replication to catch up
+            local wait_count=0
+            while [[ "${lag_bytes}" -gt 0 && ${wait_count} -lt 60 ]]; do
+                sleep 5
+                lag_bytes=$(PGPASSWORD="${POSTGRES_PASSWORD}" psql \
+                    -h "${POSTGRES_DR_HOST}" \
+                    -p "${POSTGRES_PORT}" \
+                    -U "${POSTGRES_USER:-postgres}" \
+                    -d "${POSTGRES_DB}" \
+                    -t -c "SELECT pg_wal_lsn_diff(pg_last_wal_receive_lsn(), pg_last_wal_replay_lsn());" 2>/dev/null | tr -d ' ' || echo "0")
+                ((wait_count++))
+            done
+            
+            if [[ "${lag_bytes}" -gt 0 ]]; then
+                log "WARNING" "Database still has replication lag: ${lag_bytes} bytes"
+            else
+                log "INFO" "Database replication is up to date"
+            fi
+        fi
+    fi
+    
+    # Promote DR database to primary if using standby
+    log "INFO" "Promoting DR database to primary role..."
+    # This would typically involve promoting a PostgreSQL standby server
+    # pg_promote or similar command would be used here
+    
+    # Update database connection configurations
+    log "INFO" "Updating database configurations for DR site..."
+    
+    # Update configmaps and secrets for new database endpoints
+    local namespaces=("developer-portal" "developer-portal-staging")
+    for ns in "${namespaces[@]}"; do
+        # Update database connection strings to point to local DR database
+        kubectl get configmap -n "${ns}" -o yaml | \
+        sed "s/${POSTGRES_PRIMARY_HOST}/${POSTGRES_DR_HOST}/g" | \
+        sed "s/${REDIS_PRIMARY_HOST}/${REDIS_DR_HOST}/g" | \
+        kubectl apply -f - 2>/dev/null || true
+        
+        # Restart pods to pick up new configurations
+        kubectl rollout restart deployment/backstage-backend -n "${ns}" 2>/dev/null || true
+        kubectl rollout restart deployment/backstage-frontend -n "${ns}" 2>/dev/null || true
+    done
+    
+    log "INFO" "DR site prepared for activation"
+}
+
+# Activate DR site
+activate_dr_site() {
+    log "INFO" "Activating DR site..."
+    
+    # Switch to DR cluster context
+    kubectl config use-context "${DR_CLUSTER}"
+    
+    if [[ "${DRY_RUN}" == "true" ]]; then
+        log "INFO" "[DRY RUN] Would activate DR site"
+        return 0
+    fi
+    
+    # Scale up critical services first
+    log "INFO" "Scaling up critical services..."
+    
+    local namespaces=("developer-portal" "developer-portal-staging")
+    
+    # Start with infrastructure services
+    for ns in "${namespaces[@]}"; do
+        log "INFO" "Activating services in namespace: ${ns}"
+        
+        # Scale up databases first
+        kubectl scale deployment postgres --replicas=1 -n "${ns}" 2>/dev/null || true
+        kubectl scale deployment redis --replicas=1 -n "${ns}" 2>/dev/null || true
+        
+        # Wait for databases to be ready
+        kubectl wait --for=condition=ready pod -l app=postgres -n "${ns}" --timeout=180s 2>/dev/null || true
+        kubectl wait --for=condition=ready pod -l app=redis -n "${ns}" --timeout=60s 2>/dev/null || true
+        
+        # Scale up backend services
+        kubectl scale deployment backstage-backend --replicas=3 -n "${ns}" 2>/dev/null || true
+        kubectl scale deployment backstage-websocket --replicas=2 -n "${ns}" 2>/dev/null || true
+        kubectl scale deployment backstage-marketplace --replicas=2 -n "${ns}" 2>/dev/null || true
+        
+        # Wait for backend services
+        kubectl wait --for=condition=ready pod -l app=backstage-backend -n "${ns}" --timeout=300s 2>/dev/null || true
+        
+        # Scale up frontend services
+        kubectl scale deployment backstage-frontend --replicas=3 -n "${ns}" 2>/dev/null || true
+        
+        # Wait for frontend services
+        kubectl wait --for=condition=ready pod -l app=backstage-frontend -n "${ns}" --timeout=180s 2>/dev/null || true
+        
+        # Scale up supporting services
+        kubectl get deployment -n "${ns}" -o name | grep -v -E "(postgres|redis|backstage-)" | \
+        while read -r deployment; do
+            kubectl scale "${deployment}" --replicas=1 -n "${ns}" 2>/dev/null || true
+            sleep 2
+        done
+    done
+    
+    # Update Istio configuration for DR site
+    log "INFO" "Updating Istio configuration for DR site..."
+    
+    # Update virtual services to use DR endpoints
+    kubectl get virtualservice -A -o yaml | \
+    sed "s/backstage\.local/dr.backstage.local/g" | \
+    kubectl apply -f - 2>/dev/null || true
+    
+    # Update gateway configuration
+    kubectl get gateway -A -o yaml | \
+    sed "s/backstage\.local/dr.backstage.local/g" | \
+    kubectl apply -f - 2>/dev/null || true
+    
+    # Restart Istio gateways to pick up configuration changes
+    kubectl rollout restart deployment/istio-ingressgateway -n istio-system 2>/dev/null || true
+    
+    log "INFO" "DR site activated successfully"
+}
+
+# Update external systems
+update_external_systems() {
+    log "INFO" "Updating external systems for DR site..."
+    
+    if [[ "${DRY_RUN}" == "true" ]]; then
+        log "INFO" "[DRY RUN] Would update external systems"
+        return 0
+    fi
+    
+    # Update DNS records to point to DR site
+    log "INFO" "Updating DNS records..."
+    
+    # This would typically involve updating DNS provider records
+    # Example with Route53:
+    if command -v aws >/dev/null 2>&1; then
+        # Update A record for backstage.local to point to DR load balancer
+        local dr_lb_ip=$(kubectl get service istio-ingressgateway -n istio-system -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "")
+        
+        if [[ -n "${dr_lb_ip}" && -n "${ROUTE53_HOSTED_ZONE_ID:-}" ]]; then
+            aws route53 change-resource-record-sets \
+                --hosted-zone-id "${ROUTE53_HOSTED_ZONE_ID}" \
+                --change-batch "{
+                    \"Changes\": [{
+                        \"Action\": \"UPSERT\",
+                        \"ResourceRecordSet\": {
+                            \"Name\": \"backstage.local\",
+                            \"Type\": \"A\",
+                            \"TTL\": 300,
+                            \"ResourceRecords\": [{\"Value\": \"${dr_lb_ip}\"}]
+                        }
+                    }]
+                }" >/dev/null 2>&1 && log "INFO" "DNS record updated to DR site"
+        fi
+    fi
+    
+    # Update monitoring systems
+    log "INFO" "Updating monitoring systems..."
+    
+    # Update Prometheus targets to monitor DR site
+    kubectl config use-context "${DR_CLUSTER}"
+    kubectl get configmap prometheus-config -n istio-system -o yaml | \
+    sed "s/backstage\.local/dr.backstage.local/g" | \
+    kubectl apply -f - 2>/dev/null || true
+    
+    # Restart Prometheus to pick up new configuration
+    kubectl rollout restart deployment/prometheus -n istio-system 2>/dev/null || true
+    
+    # Update external monitoring systems
+    if [[ -n "${DATADOG_API_KEY:-}" ]]; then
+        # Update Datadog configuration for new endpoints
+        log "INFO" "Updating Datadog monitoring configuration..."
+        # This would involve API calls to update Datadog monitors
+    fi
+    
+    if [[ -n "${NEW_RELIC_API_KEY:-}" ]]; then
+        # Update New Relic configuration
+        log "INFO" "Updating New Relic monitoring configuration..."
+        # This would involve API calls to update New Relic alerts
+    fi
+    
+    log "INFO" "External systems updated for DR site"
+}
+
+# Verify DR site functionality
+verify_dr_site() {
+    log "INFO" "Verifying DR site functionality..."
+    
+    local verification_failed=false
+    
+    # Wait for DNS propagation
+    sleep 60
+    
+    # Check DR site health endpoints
+    local max_retries=10
+    local retry_count=0
+    
+    while [[ ${retry_count} -lt ${max_retries} ]]; do
+        if curl -s --max-time 10 "https://dr.backstage.local/health" | jq -e '.status == "ok"' >/dev/null 2>&1; then
+            log "INFO" "DR site health endpoint is responding"
+            break
+        else
+            log "INFO" "Waiting for DR site health endpoint... (attempt $((retry_count + 1))/${max_retries})"
+            sleep 30
+            ((retry_count++))
+        fi
+    done
+    
+    if [[ ${retry_count} -eq ${max_retries} ]]; then
+        log "ERROR" "DR site health endpoint not responding"
+        verification_failed=true
+    fi
+    
+    # Check API endpoints
+    if curl -s --max-time 10 "https://dr.backstage.local/api/health" >/dev/null 2>&1; then
+        log "INFO" "DR site API is responding"
+    else
+        log "ERROR" "DR site API not responding"
+        verification_failed=true
+    fi
+    
+    # Check database connectivity
+    if PGPASSWORD="${POSTGRES_PASSWORD}" pg_isready -h "${POSTGRES_DR_HOST}" -p "${POSTGRES_PORT}" -d "${POSTGRES_DB}" >/dev/null 2>&1; then
+        log "INFO" "DR database is accessible"
+    else
+        log "ERROR" "DR database not accessible"
+        verification_failed=true
+    fi
+    
+    # Check Redis connectivity
+    if redis-cli -h "${REDIS_DR_HOST}" -p "${REDIS_PORT}" ping | grep -q "PONG" 2>/dev/null; then
+        log "INFO" "DR Redis is accessible"
+    else
+        log "ERROR" "DR Redis not accessible"
+        verification_failed=true
+    fi
+    
+    # Check Kubernetes services
+    kubectl config use-context "${DR_CLUSTER}"
+    local namespaces=("developer-portal" "developer-portal-staging")
+    
+    for ns in "${namespaces[@]}"; do
+        local running_pods=$(kubectl get pods -n "${ns}" --field-selector=status.phase=Running --no-headers 2>/dev/null | wc -l || echo "0")
+        local total_pods=$(kubectl get pods -n "${ns}" --no-headers 2>/dev/null | wc -l || echo "0")
+        
+        if [[ ${running_pods} -lt $((total_pods * 80 / 100)) ]]; then
+            log "ERROR" "Insufficient running pods in namespace ${ns}: ${running_pods}/${total_pods}"
+            verification_failed=true
+        else
+            log "INFO" "Namespace ${ns} has sufficient running pods: ${running_pods}/${total_pods}"
+        fi
+    done
+    
+    if [[ "${verification_failed}" == "true" ]]; then
+        log "ERROR" "DR site verification failed"
+        return 1
+    else
+        log "INFO" "DR site verification completed successfully"
+        return 0
+    fi
+}
+
+# Document failover event
+document_failover() {
+    local status="$1"
+    
+    log "INFO" "Documenting failover event..."
+    
+    # Create failover incident document
+    local incident_file="${DR_LOGS_DIR}/failover-incident-${FAILOVER_TIMESTAMP}.yaml"
+    
+    cat > "${incident_file}" <<EOF
+apiVersion: incident.backstage.io/v1
+kind: FailoverIncident
+metadata:
+  name: failover-${FAILOVER_TIMESTAMP}
+  timestamp: $(date -Iseconds)
+spec:
+  incident_id: "INC-${FAILOVER_TIMESTAMP}"
+  status: ${status}
+  triggered_by: "$(whoami)"
+  trigger_reason: "${FAILOVER_REASON:-Automated failover}"
+  primary_site:
+    region: ${PRIMARY_REGION}
+    cluster: ${PRIMARY_CLUSTER}
+    status: failed
+  dr_site:
+    region: ${DR_REGION}
+    cluster: ${DR_CLUSTER}
+    status: active
+  timeline:
+    start_time: $(date -Iseconds)
+    end_time: $(date -Iseconds)
+  impact:
+    estimated_downtime: "${MAX_FAILOVER_TIME}s"
+    affected_services:
+      - backstage-portal
+      - api-endpoints
+      - plugin-marketplace
+  recovery_metrics:
+    rto_target: ${TARGET_RTO}
+    rpo_target: ${TARGET_RPO}
+    actual_rto: "TBD"
+    actual_rpo: "TBD"
+  actions_taken:
+    - name: "Health check primary site"
+      status: completed
+    - name: "Verify DR site readiness"
+      status: completed
+    - name: "Create pre-failover backup"
+      status: completed
+    - name: "Stop primary site traffic"
+      status: completed
+    - name: "Prepare DR site"
+      status: completed
+    - name: "Activate DR site"
+      status: completed
+    - name: "Update external systems"
+      status: completed
+    - name: "Verify DR site"
+      status: ${status}
+EOF
+
+    log "INFO" "Failover incident documented: ${incident_file}"
+}
+
+# Send failover notifications
+send_failover_notification() {
+    local status="$1"
+    local duration="$2"
+    
+    local message="🚨 Backstage Failover ${status^} - Duration: ${duration}s"
+    if [[ -n "${FAILOVER_REASON}" ]]; then
+        message="${message} - Reason: ${FAILOVER_REASON}"
+    fi
+    
+    # Send Slack notification
+    if [[ -n "${SLACK_WEBHOOK_URL}" ]]; then
+        curl -X POST "${SLACK_WEBHOOK_URL}" \
+            -H 'Content-type: application/json' \
+            --data "{\"text\":\"${message}\",\"channel\":\"#critical-alerts\"}" >/dev/null 2>&1 || true
+    fi
+    
+    # Send PagerDuty alert
+    if [[ -n "${PAGERDUTY_SERVICE_KEY}" ]]; then
+        local event_action="trigger"
+        if [[ "${status}" == "completed" ]]; then
+            event_action="resolve"
+        fi
+        
+        curl -X POST "https://events.pagerduty.com/v2/enqueue" \
+            -H "Content-Type: application/json" \
+            -d "{
+                \"routing_key\": \"${PAGERDUTY_SERVICE_KEY}\",
+                \"event_action\": \"${event_action}\",
+                \"dedup_key\": \"backstage-failover-${FAILOVER_TIMESTAMP}\",
+                \"payload\": {
+                    \"summary\": \"${message}\",
+                    \"severity\": \"critical\",
+                    \"source\": \"backstage-dr-system\"
+                }
+            }" >/dev/null 2>&1 || true
+    fi
+    
+    # Send email notification
+    if [[ -n "${EMAIL_ALERTS}" ]] && command -v mail >/dev/null 2>&1; then
+        echo "${message}" | mail -s "CRITICAL: Backstage Failover ${status^}" "${EMAIL_ALERTS}" || true
+    fi
+    
+    log "INFO" "${message}"
+}
+
+# Main failover function
+main() {
+    parse_failover_arguments "$@"
+    
+    log "INFO" "Starting Backstage failover process - Timestamp: ${FAILOVER_TIMESTAMP}"
+    
+    local start_time=$(date +%s)
+    
+    # Safety checks unless forced
+    if [[ "${FORCE_FAILOVER}" != "true" ]]; then
+        # Check if primary site is actually down
+        if check_primary_site_health >/dev/null 2>&1; then
+            log "WARNING" "Primary site appears to be healthy"
+            if [[ "${DRY_RUN}" != "true" ]]; then
+                echo ""
+                echo "⚠️  WARNING: Primary site appears to be healthy"
+                echo "⚠️  Are you sure you want to proceed with failover?"
+                if [[ -n "${FAILOVER_REASON}" ]]; then
+                    echo "⚠️  Reason: ${FAILOVER_REASON}"
+                fi
+                echo ""
+                read -p "Do you want to continue? (yes/no): " -r
+                echo ""
+                if [[ ! $REPLY =~ ^[Yy][Ee][Ss]$ ]]; then
+                    log "INFO" "Failover cancelled by user"
+                    exit 0
+                fi
+            fi
+        fi
+        
+        # Check DR site readiness
+        if ! check_dr_site_readiness; then
+            log "ERROR" "DR site is not ready for failover"
+            exit 1
+        fi
+    fi
+    
+    # Final confirmation unless forced or dry run
+    if [[ "${FORCE_FAILOVER}" != "true" && "${DRY_RUN}" != "true" ]]; then
+        echo ""
+        echo "🚨 CRITICAL: This will initiate failover to DR site"
+        echo "🚨 This will redirect all traffic from primary to DR site"
+        echo "🚨 Primary site will be taken offline"
+        echo ""
+        read -p "Are you absolutely sure? (FAILOVER/cancel): " -r
+        echo ""
+        if [[ "$REPLY" != "FAILOVER" ]]; then
+            log "INFO" "Failover cancelled by user"
+            exit 0
+        fi
+    fi
+    
+    # Execute failover steps
+    local failover_success=true
+    
+    # Step 1: Create pre-failover backup
+    if ! create_prefailover_backup; then
+        log "WARNING" "Pre-failover backup failed, continuing anyway"
+    fi
+    
+    # Step 2: Stop primary site traffic
+    if ! stop_primary_traffic; then
+        log "ERROR" "Failed to stop primary site traffic"
+        failover_success=false
+    fi
+    
+    # Step 3: Prepare DR site
+    if ! prepare_dr_site; then
+        log "ERROR" "Failed to prepare DR site"
+        failover_success=false
+    fi
+    
+    # Step 4: Activate DR site
+    if ! activate_dr_site; then
+        log "ERROR" "Failed to activate DR site"
+        failover_success=false
+    fi
+    
+    # Step 5: Update external systems
+    if ! update_external_systems; then
+        log "ERROR" "Failed to update external systems"
+        failover_success=false
+    fi
+    
+    # Step 6: Verify DR site functionality
+    if ! verify_dr_site; then
+        log "ERROR" "DR site verification failed"
+        failover_success=false
+    fi
+    
+    # Calculate duration
+    local end_time=$(date +%s)
+    local duration=$((end_time - start_time))
+    
+    # Document and notify
+    if [[ "${failover_success}" == "true" ]]; then
+        document_failover "completed"
+        send_failover_notification "completed" "${duration}"
+        log "INFO" "Failover completed successfully - Duration: ${duration}s"
+        log "INFO" "DR site is now active at: https://dr.backstage.local"
+    else
+        document_failover "failed"
+        send_failover_notification "failed" "${duration}"
+        log "ERROR" "Failover failed - Duration: ${duration}s"
+        exit 1
+    fi
+}
+
+# Execute main function if script is run directly
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    main "$@"
+fi

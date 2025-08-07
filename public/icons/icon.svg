@@ -1,0 +1,9 @@
+<svg viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <rect width="512" height="512" rx="64" fill="#2196F3"/>
+  <g transform="translate(128, 128)">
+    <path d="M128 32C57.3 32 0 89.3 0 160s57.3 128 128 128 128-57.3 128-128S198.7 32 128 32zm0 208c-44.2 0-80-35.8-80-80s35.8-80 80-80 80 35.8 80 80-35.8 80-80 80z" fill="white" opacity="0.9"/>
+    <circle cx="128" cy="160" r="40" fill="white"/>
+    <path d="M192 96v128M64 160h128" stroke="white" stroke-width="16" stroke-linecap="round" opacity="0.7"/>
+  </g>
+  <text x="256" y="400" font-family="Inter, -apple-system, BlinkMacSystemFont, sans-serif" font-size="72" font-weight="600" text-anchor="middle" fill="white">IDP</text>
+</svg>

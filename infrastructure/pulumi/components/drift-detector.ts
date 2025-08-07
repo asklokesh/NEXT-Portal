@@ -1,0 +1,576 @@
+import * as pulumi from '@pulumi/pulumi';
+import * as aws from '@pulumi/aws';
+import { exec } from 'child_process';
+import { promisify } from 'util';
+
+const execAsync = promisify(exec);
+
+export interface DriftDetectorArgs {
+  stackName: string;
+  checkInterval: string; // Cron expression
+  notificationChannels: Array<{
+    type: 'slack' | 'email' | 'sns' | 'webhook';
+    webhook?: string;
+    recipients?: string[];
+    topic?: string;
+  }>;
+}
+
+export class DriftDetector extends pulumi.ComponentResource {
+  public readonly status: pulumi.Output<string>;
+  public readonly lastCheckTime: pulumi.Output<string>;
+  public readonly driftedResources: pulumi.Output<any[]>;
+  public readonly driftReport: pulumi.Output<any>;
+
+  constructor(args: DriftDetectorArgs, opts?: pulumi.ComponentResourceOptions) {
+    super('saas-idp:drift:Detector', 'drift-detector', {}, opts);
+
+    // Create CloudWatch Event Rule for scheduled drift detection
+    const scheduleRule = new aws.cloudwatch.EventRule(`${args.stackName}-drift-schedule`, {
+      description: `Drift detection schedule for ${args.stackName}`,
+      scheduleExpression: `cron(${args.checkInterval})`,
+      tags: {
+        Stack: args.stackName,
+        Purpose: 'DriftDetection'
+      }
+    }, { parent: this });
+
+    // Create Lambda function for drift detection
+    const driftDetectionLambda = new aws.lambda.Function(`${args.stackName}-drift-detector`, {
+      runtime: 'nodejs18.x',
+      handler: 'index.handler',
+      role: this.createDriftDetectionRole(args.stackName).arn,
+      timeout: 300,
+      memorySize: 512,
+      environment: {
+        variables: {
+          STACK_NAME: args.stackName,
+          NOTIFICATION_CHANNELS: JSON.stringify(args.notificationChannels),
+          PULUMI_ACCESS_TOKEN: process.env.PULUMI_ACCESS_TOKEN || '',
+          PULUMI_ORG: process.env.PULUMI_ORG || 'saas-idp'
+        }
+      },
+      code: new pulumi.asset.AssetArchive({
+        'index.js': new pulumi.asset.StringAsset(this.getDriftDetectionCode())
+      }),
+      tags: {
+        Stack: args.stackName,
+        Purpose: 'DriftDetection'
+      }
+    }, { parent: this });
+
+    // Create Event Target
+    new aws.cloudwatch.EventTarget(`${args.stackName}-drift-target`, {
+      rule: scheduleRule.name,
+      arn: driftDetectionLambda.arn
+    }, { parent: this });
+
+    // Grant EventBridge permission to invoke Lambda
+    new aws.lambda.Permission(`${args.stackName}-drift-permission`, {
+      function: driftDetectionLambda.name,
+      action: 'lambda:InvokeFunction',
+      principal: 'events.amazonaws.com',
+      sourceArn: scheduleRule.arn
+    }, { parent: this });
+
+    // Create DynamoDB table for drift history
+    const driftTable = new aws.dynamodb.Table(`${args.stackName}-drift-history`, {
+      attributes: [
+        { name: 'stackName', type: 'S' },
+        { name: 'timestamp', type: 'N' }
+      ],
+      hashKey: 'stackName',
+      rangeKey: 'timestamp',
+      billingMode: 'PAY_PER_REQUEST',
+      ttl: {
+        attributeName: 'ttl',
+        enabled: true
+      },
+      pointInTimeRecovery: {
+        enabled: true
+      },
+      tags: {
+        Stack: args.stackName,
+        Purpose: 'DriftHistory'
+      }
+    }, { parent: this });
+
+    // Create SNS Topic for notifications
+    const notificationTopic = new aws.sns.Topic(`${args.stackName}-drift-notifications`, {
+      displayName: `Drift notifications for ${args.stackName}`,
+      tags: {
+        Stack: args.stackName,
+        Purpose: 'DriftNotifications'
+      }
+    }, { parent: this });
+
+    // Subscribe notification channels
+    args.notificationChannels.forEach((channel, index) => {
+      if (channel.type === 'email' && channel.recipients) {
+        channel.recipients.forEach((email, emailIndex) => {
+          new aws.sns.TopicSubscription(`${args.stackName}-drift-email-${index}-${emailIndex}`, {
+            topic: notificationTopic.arn,
+            protocol: 'email',
+            endpoint: email
+          }, { parent: this });
+        });
+      } else if (channel.type === 'sns' && channel.topic) {
+        new aws.sns.TopicSubscription(`${args.stackName}-drift-sns-${index}`, {
+          topic: notificationTopic.arn,
+          protocol: 'sns',
+          endpoint: channel.topic
+        }, { parent: this });
+      }
+    });
+
+    // Output values
+    this.status = pulumi.output('active');
+    this.lastCheckTime = pulumi.output(new Date().toISOString());
+    this.driftedResources = pulumi.output([]);
+    this.driftReport = pulumi.output({
+      stackName: args.stackName,
+      checkInterval: args.checkInterval,
+      notificationChannels: args.notificationChannels.length,
+      status: 'initialized',
+      message: 'Drift detection configured successfully'
+    });
+
+    this.registerOutputs({
+      status: this.status,
+      lastCheckTime: this.lastCheckTime,
+      driftedResources: this.driftedResources,
+      driftReport: this.driftReport
+    });
+  }
+
+  private createDriftDetectionRole(stackName: string): aws.iam.Role {
+    const role = new aws.iam.Role(`${stackName}-drift-role`, {
+      assumeRolePolicy: JSON.stringify({
+        Version: '2012-10-17',
+        Statement: [{
+          Action: 'sts:AssumeRole',
+          Effect: 'Allow',
+          Principal: {
+            Service: 'lambda.amazonaws.com'
+          }
+        }]
+      }),
+      tags: {
+        Stack: stackName,
+        Purpose: 'DriftDetection'
+      }
+    }, { parent: this });
+
+    // Attach basic Lambda execution policy
+    new aws.iam.RolePolicyAttachment(`${stackName}-drift-basic-policy`, {
+      role: role.name,
+      policyArn: 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+    }, { parent: this });
+
+    // Attach custom policy for drift detection
+    new aws.iam.RolePolicy(`${stackName}-drift-custom-policy`, {
+      role: role.name,
+      policy: JSON.stringify({
+        Version: '2012-10-17',
+        Statement: [
+          {
+            Effect: 'Allow',
+            Action: [
+              'cloudformation:DetectStackDrift',
+              'cloudformation:DetectStackResourceDrift',
+              'cloudformation:DescribeStackDriftDetectionStatus',
+              'cloudformation:DescribeStackResourceDrifts',
+              'cloudformation:DescribeStacks',
+              'cloudformation:ListStacks'
+            ],
+            Resource: '*'
+          },
+          {
+            Effect: 'Allow',
+            Action: [
+              'dynamodb:PutItem',
+              'dynamodb:GetItem',
+              'dynamodb:Query',
+              'dynamodb:Scan'
+            ],
+            Resource: `arn:aws:dynamodb:*:*:table/${stackName}-drift-history*`
+          },
+          {
+            Effect: 'Allow',
+            Action: [
+              'sns:Publish'
+            ],
+            Resource: `arn:aws:sns:*:*:${stackName}-drift-notifications`
+          },
+          {
+            Effect: 'Allow',
+            Action: [
+              'secretsmanager:GetSecretValue'
+            ],
+            Resource: `arn:aws:secretsmanager:*:*:secret:pulumi/*`
+          },
+          {
+            Effect: 'Allow',
+            Action: [
+              'ec2:Describe*',
+              'rds:Describe*',
+              's3:List*',
+              's3:GetBucketVersioning',
+              's3:GetBucketPolicy',
+              'iam:GetRole',
+              'iam:GetRolePolicy',
+              'iam:ListRolePolicies',
+              'lambda:GetFunction',
+              'lambda:GetFunctionConfiguration'
+            ],
+            Resource: '*'
+          }
+        ]
+      })
+    }, { parent: this });
+
+    return role;
+  }
+
+  private getDriftDetectionCode(): string {
+    return `
+const AWS = require('aws-sdk');
+const https = require('https');
+const { promisify } = require('util');
+const { exec } = require('child_process');
+
+const execAsync = promisify(exec);
+const dynamodb = new AWS.DynamoDB.DocumentClient();
+const sns = new AWS.SNS();
+const secretsManager = new AWS.SecretsManager();
+
+exports.handler = async (event) => {
+  const stackName = process.env.STACK_NAME;
+  const notificationChannels = JSON.parse(process.env.NOTIFICATION_CHANNELS || '[]');
+  const pulumiOrg = process.env.PULUMI_ORG;
+  
+  console.log(\`Starting drift detection for stack: \${stackName}\`);
+  
+  try {
+    // Get Pulumi access token from Secrets Manager
+    let pulumiToken = process.env.PULUMI_ACCESS_TOKEN;
+    if (!pulumiToken) {
+      try {
+        const secret = await secretsManager.getSecretValue({ 
+          SecretId: 'pulumi/access-token' 
+        }).promise();
+        pulumiToken = secret.SecretString;
+      } catch (err) {
+        console.error('Failed to retrieve Pulumi token from Secrets Manager:', err);
+      }
+    }
+    
+    // Run Pulumi refresh to detect drift
+    const driftReport = await detectDrift(stackName, pulumiToken, pulumiOrg);
+    
+    // Store drift report in DynamoDB
+    await storeDriftReport(stackName, driftReport);
+    
+    // Send notifications if drift detected
+    if (driftReport.hasDrift) {
+      await sendNotifications(stackName, driftReport, notificationChannels);
+    }
+    
+    return {
+      statusCode: 200,
+      body: JSON.stringify({
+        message: 'Drift detection completed',
+        hasDrift: driftReport.hasDrift,
+        driftedResources: driftReport.driftedResources.length
+      })
+    };
+  } catch (error) {
+    console.error('Drift detection failed:', error);
+    
+    // Send error notification
+    await sendErrorNotification(stackName, error, notificationChannels);
+    
+    return {
+      statusCode: 500,
+      body: JSON.stringify({
+        message: 'Drift detection failed',
+        error: error.message
+      })
+    };
+  }
+};
+
+async function detectDrift(stackName, pulumiToken, pulumiOrg) {
+  const startTime = Date.now();
+  const driftedResources = [];
+  
+  try {
+    // Set Pulumi environment variables
+    process.env.PULUMI_ACCESS_TOKEN = pulumiToken;
+    
+    // Run pulumi refresh --diff
+    const { stdout, stderr } = await execAsync(
+      \`pulumi refresh --stack \${pulumiOrg}/\${stackName} --diff --json\`,
+      { 
+        cwd: '/tmp',
+        env: process.env,
+        timeout: 240000 // 4 minutes
+      }
+    );
+    
+    // Parse the output to identify drifted resources
+    const lines = stdout.split('\\n');
+    for (const line of lines) {
+      if (line.includes('drift')) {
+        try {
+          const parsed = JSON.parse(line);
+          if (parsed.type === 'resource' && parsed.drift) {
+            driftedResources.push({
+              urn: parsed.urn,
+              type: parsed.resourceType,
+              name: parsed.name,
+              drift: parsed.drift,
+              properties: parsed.properties
+            });
+          }
+        } catch (e) {
+          // Not JSON, skip
+        }
+      }
+    }
+    
+    // Also check using AWS CloudFormation drift detection for comparison
+    const cfDrift = await checkCloudFormationDrift(stackName);
+    
+    return {
+      hasDrift: driftedResources.length > 0 || cfDrift.hasDrift,
+      driftedResources: [...driftedResources, ...cfDrift.resources],
+      checkDuration: Date.now() - startTime,
+      timestamp: new Date().toISOString(),
+      pulumiDrift: driftedResources,
+      cloudFormationDrift: cfDrift.resources
+    };
+  } catch (error) {
+    console.error('Error during drift detection:', error);
+    return {
+      hasDrift: false,
+      driftedResources: [],
+      checkDuration: Date.now() - startTime,
+      timestamp: new Date().toISOString(),
+      error: error.message
+    };
+  }
+}
+
+async function checkCloudFormationDrift(stackName) {
+  const cloudformation = new AWS.CloudFormation();
+  const driftedResources = [];
+  
+  try {
+    // Check if there's a corresponding CloudFormation stack
+    const stacks = await cloudformation.describeStacks({
+      StackName: stackName
+    }).promise().catch(() => null);
+    
+    if (!stacks || !stacks.Stacks.length) {
+      return { hasDrift: false, resources: [] };
+    }
+    
+    // Initiate drift detection
+    const { StackDriftDetectionId } = await cloudformation.detectStackDrift({
+      StackName: stackName
+    }).promise();
+    
+    // Wait for drift detection to complete (with timeout)
+    let status = 'DETECTION_IN_PROGRESS';
+    let attempts = 0;
+    while (status === 'DETECTION_IN_PROGRESS' && attempts < 30) {
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      const result = await cloudformation.describeStackDriftDetectionStatus({
+        StackDriftDetectionId
+      }).promise();
+      status = result.DetectionStatus;
+      attempts++;
+    }
+    
+    if (status === 'DETECTION_COMPLETE') {
+      // Get drifted resources
+      const drifts = await cloudformation.describeStackResourceDrifts({
+        StackName: stackName,
+        StackResourceDriftStatusFilters: ['MODIFIED', 'DELETED']
+      }).promise();
+      
+      for (const drift of drifts.StackResourceDrifts) {
+        driftedResources.push({
+          logicalId: drift.LogicalResourceId,
+          physicalId: drift.PhysicalResourceId,
+          resourceType: drift.ResourceType,
+          driftStatus: drift.StackResourceDriftStatus,
+          differences: drift.PropertyDifferences
+        });
+      }
+    }
+    
+    return {
+      hasDrift: driftedResources.length > 0,
+      resources: driftedResources
+    };
+  } catch (error) {
+    console.error('CloudFormation drift detection failed:', error);
+    return { hasDrift: false, resources: [] };
+  }
+}
+
+async function storeDriftReport(stackName, report) {
+  const item = {
+    stackName,
+    timestamp: Date.now(),
+    ttl: Math.floor(Date.now() / 1000) + (90 * 24 * 60 * 60), // 90 days
+    report: JSON.stringify(report),
+    hasDrift: report.hasDrift,
+    driftedResourceCount: report.driftedResources.length,
+    checkDuration: report.checkDuration
+  };
+  
+  await dynamodb.put({
+    TableName: \`\${stackName}-drift-history\`,
+    Item: item
+  }).promise();
+}
+
+async function sendNotifications(stackName, driftReport, channels) {
+  const message = formatDriftMessage(stackName, driftReport);
+  
+  for (const channel of channels) {
+    try {
+      if (channel.type === 'slack' && channel.webhook) {
+        await sendSlackNotification(channel.webhook, message);
+      } else if (channel.type === 'webhook' && channel.webhook) {
+        await sendWebhookNotification(channel.webhook, driftReport);
+      } else if (channel.type === 'email' || channel.type === 'sns') {
+        await sns.publish({
+          TopicArn: \`arn:aws:sns:\${AWS.config.region}:\${await getAccountId()}:\${stackName}-drift-notifications\`,
+          Subject: \`Drift Detected in Stack: \${stackName}\`,
+          Message: message
+        }).promise();
+      }
+    } catch (error) {
+      console.error(\`Failed to send notification to \${channel.type}:\`, error);
+    }
+  }
+}
+
+async function sendSlackNotification(webhookUrl, message) {
+  const payload = {
+    text: message,
+    attachments: [{
+      color: 'warning',
+      title: 'Infrastructure Drift Detected',
+      text: message,
+      footer: 'Pulumi Drift Detector',
+      ts: Math.floor(Date.now() / 1000)
+    }]
+  };
+  
+  return new Promise((resolve, reject) => {
+    const data = JSON.stringify(payload);
+    const url = new URL(webhookUrl);
+    
+    const options = {
+      hostname: url.hostname,
+      port: 443,
+      path: url.pathname,
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': data.length
+      }
+    };
+    
+    const req = https.request(options, (res) => {
+      resolve(res);
+    });
+    
+    req.on('error', reject);
+    req.write(data);
+    req.end();
+  });
+}
+
+async function sendWebhookNotification(webhookUrl, driftReport) {
+  return new Promise((resolve, reject) => {
+    const data = JSON.stringify(driftReport);
+    const url = new URL(webhookUrl);
+    
+    const options = {
+      hostname: url.hostname,
+      port: 443,
+      path: url.pathname,
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': data.length
+      }
+    };
+    
+    const req = https.request(options, (res) => {
+      resolve(res);
+    });
+    
+    req.on('error', reject);
+    req.write(data);
+    req.end();
+  });
+}
+
+async function sendErrorNotification(stackName, error, channels) {
+  const message = \`
+Drift detection failed for stack: \${stackName}
+Error: \${error.message}
+Time: \${new Date().toISOString()}
+  \`;
+  
+  await sendNotifications(stackName, { error: error.message }, channels);
+}
+
+function formatDriftMessage(stackName, driftReport) {
+  let message = \`
+🚨 Infrastructure Drift Detected
+
+Stack: \${stackName}
+Time: \${driftReport.timestamp}
+Drifted Resources: \${driftReport.driftedResources.length}
+Check Duration: \${driftReport.checkDuration}ms
+
+Drifted Resources:
+\`;
+
+  for (const resource of driftReport.driftedResources.slice(0, 10)) {
+    message += \`
+- \${resource.type || resource.resourceType}: \${resource.name || resource.logicalId}
+  Status: \${resource.drift || resource.driftStatus || 'MODIFIED'}
+\`;
+  }
+  
+  if (driftReport.driftedResources.length > 10) {
+    message += \`
+... and \${driftReport.driftedResources.length - 10} more resources
+\`;
+  }
+  
+  message += \`
+
+Action Required: Please review and reconcile the drift using 'pulumi refresh' or 'pulumi up'.
+\`;
+
+  return message;
+}
+
+async function getAccountId() {
+  const sts = new AWS.STS();
+  const identity = await sts.getCallerIdentity().promise();
+  return identity.Account;
+}
+    `;
+  }
+}

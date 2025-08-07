@@ -1,0 +1,651 @@
+# Comprehensive Disaster Recovery System Deployment Manifest
+# This manifest deploys the complete plugin backup and disaster recovery system
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: disaster-recovery
+  labels:
+    name: disaster-recovery
+    component: infrastructure
+    security.portal.dev/monitoring: "enabled"
+    compliance.portal.dev/audit: "required"
+
+---
+# Deploy Backup Orchestrator
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - backup-orchestrator.yaml
+
+---
+# Deploy DR Orchestrator  
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - dr-orchestrator.yaml
+
+---
+# Deploy Business Continuity Manager
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - business-continuity-manager.yaml
+
+---
+# Deploy Monitoring and Alerting System
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - monitoring-alerting-system.yaml
+
+---
+# Cross-component networking policies
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: dr-system-networking
+  namespace: developer-portal
+spec:
+  podSelector:
+    matchLabels:
+      component: disaster-recovery
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Allow monitoring scraping
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: monitoring
+      ports:
+        - protocol: TCP
+          port: 8081
+    # Allow inter-component communication
+    - from:
+        - podSelector:
+            matchLabels:
+              component: disaster-recovery
+      ports:
+        - protocol: TCP
+          port: 8080
+        - protocol: TCP
+          port: 9090
+  egress:
+    # Allow external services (S3, databases, etc.)
+    - to: []
+      ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 5432
+        - protocol: TCP
+          port: 6379
+    # Allow DNS resolution
+    - to: []
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+
+---
+# Shared secrets for DR system
+apiVersion: v1
+kind: Secret
+metadata:
+  name: dr-system-secrets
+  namespace: developer-portal
+type: Opaque
+stringData:
+  # AWS credentials for S3 backup storage
+  AWS_ACCESS_KEY_ID: ""
+  AWS_SECRET_ACCESS_KEY: ""
+  AWS_REGION: "us-west-2"
+  
+  # Database credentials
+  POSTGRES_HOST: ""
+  POSTGRES_PORT: "5432"
+  POSTGRES_USER: ""
+  POSTGRES_PASSWORD: ""
+  POSTGRES_DB: "portal"
+  
+  # Redis credentials
+  REDIS_HOST: ""
+  REDIS_PORT: "6379"
+  REDIS_PASSWORD: ""
+  
+  # Multi-cluster access
+  PRIMARY_CLUSTER_ENDPOINT: ""
+  SECONDARY_CLUSTER_ENDPOINT: ""
+  
+  # DNS provider credentials
+  ROUTE53_ACCESS_KEY: ""
+  ROUTE53_SECRET_KEY: ""
+  
+  # Monitoring and alerting
+  GRAFANA_API_KEY: ""
+  PROMETHEUS_ENDPOINT: "http://prometheus:9090"
+  ALERTMANAGER_ENDPOINT: "http://alertmanager:9093"
+  
+  # Notification services
+  SLACK_WEBHOOK_URL: ""
+  PAGERDUTY_SERVICE_KEY: ""
+  SMTP_SERVER: "smtp.company.com"
+  SMTP_USERNAME: ""
+  SMTP_PASSWORD: ""
+  
+  # Contact information
+  INCIDENT_COMMANDER_PHONE: ""
+  DR_TEAM_EMAIL: "dr-team@company.com"
+  OPS_TEAM_EMAIL: "ops-team@company.com"
+
+---
+# ConfigMap for shared DR system configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dr-system-config
+  namespace: developer-portal
+data:
+  # Global DR configuration
+  global-config.yaml: |
+    # Global Disaster Recovery System Configuration
+    system:
+      name: "Plugin Ecosystem DR"
+      version: "2.0"
+      environment: "production"
+      
+    # Service endpoints
+    endpoints:
+      backup_orchestrator: "http://backup-orchestrator:8080"
+      dr_orchestrator: "http://dr-orchestrator:8080"
+      business_continuity_manager: "http://business-continuity-manager:8080"
+      monitoring_system: "http://dr-monitoring-system:8080"
+      
+    # Integration points
+    integrations:
+      kubernetes:
+        primary_context: "portal-primary"
+        secondary_context: "portal-secondary"
+      
+      storage:
+        s3_primary_region: "us-west-2"
+        s3_secondary_region: "us-east-1"
+        backup_bucket_prefix: "portal-dr-backups"
+        
+      monitoring:
+        prometheus_endpoint: "http://prometheus:9090"
+        grafana_endpoint: "http://grafana:3000"
+        alertmanager_endpoint: "http://alertmanager:9093"
+        
+    # Global policies
+    policies:
+      backup_retention: "90d"
+      metrics_retention: "30d"
+      alert_retention: "365d"
+      log_retention: "30d"
+      
+    # Compliance settings
+    compliance:
+      audit_logging: true
+      encryption_required: true
+      access_logging: true
+      change_tracking: true
+
+---
+# RBAC for DR system operations
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: dr-system-operator
+rules:
+  # Full access to DR resources
+  - apiGroups: ["backup.portal.dev", "dr.portal.dev", "continuity.portal.dev", "monitoring.portal.dev"]
+    resources: ["*"]
+    verbs: ["*"]
+  
+  # Read access to all resources for monitoring
+  - apiGroups: ["", "apps", "extensions", "networking.k8s.io"]
+    resources: ["*"]
+    verbs: ["get", "list", "watch"]
+  
+  # Write access for backup operations
+  - apiGroups: ["batch"]
+    resources: ["jobs", "cronjobs"]
+    verbs: ["create", "update", "patch", "delete"]
+  
+  # Access to secrets for credential management
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+    resourceNames: ["dr-system-secrets", "backup-*", "monitoring-*"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: dr-system-operators
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: dr-system-operator
+subjects:
+  - kind: ServiceAccount
+    name: backup-orchestrator
+    namespace: developer-portal
+  - kind: ServiceAccount
+    name: dr-orchestrator
+    namespace: developer-portal
+  - kind: ServiceAccount
+    name: business-continuity-manager
+    namespace: developer-portal
+  - kind: ServiceAccount
+    name: dr-monitoring-system
+    namespace: developer-portal
+
+---
+# Priority classes for DR system components
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: dr-system-critical
+value: 1000000
+globalDefault: false
+description: "Critical priority for disaster recovery system components"
+
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: dr-system-high
+value: 100000
+globalDefault: false
+description: "High priority for disaster recovery system components"
+
+---
+# Resource quotas for DR system
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: dr-system-quota
+  namespace: developer-portal
+spec:
+  hard:
+    # Compute resources
+    requests.cpu: "4"
+    requests.memory: "8Gi"
+    limits.cpu: "8"
+    limits.memory: "16Gi"
+    
+    # Storage resources
+    requests.storage: "1Ti"
+    persistentvolumeclaims: "10"
+    
+    # Object counts
+    pods: "50"
+    services: "20"
+    secrets: "50"
+    configmaps: "50"
+    
+    # Batch job limits
+    count/jobs.batch: "100"
+    count/cronjobs.batch: "50"
+
+---
+# Pod disruption budgets for high availability
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: backup-orchestrator-pdb
+  namespace: developer-portal
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: backup-orchestrator
+
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: dr-orchestrator-pdb
+  namespace: developer-portal
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: dr-orchestrator
+
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: business-continuity-pdb
+  namespace: developer-portal
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: business-continuity-manager
+
+---
+# Horizontal Pod Autoscalers for dynamic scaling
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: backup-orchestrator-hpa
+  namespace: developer-portal
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: backup-orchestrator
+  minReplicas: 2
+  maxReplicas: 5
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Percent
+          value: 10
+          periodSeconds: 60
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+        - type: Percent
+          value: 50
+          periodSeconds: 60
+
+---
+# Monitoring stack integration
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: dr-system-services
+  namespace: developer-portal
+  labels:
+    component: disaster-recovery
+spec:
+  selector:
+    matchLabels:
+      component: disaster-recovery
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: 30s
+      scrapeTimeout: 10s
+
+---
+# Comprehensive Prometheus rules for DR system
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: dr-system-alerts
+  namespace: developer-portal
+  labels:
+    component: disaster-recovery
+spec:
+  groups:
+    - name: disaster-recovery-system
+      interval: 30s
+      rules:
+        # System health alerts
+        - alert: DRSystemDown
+          expr: up{component="disaster-recovery"} == 0
+          for: 2m
+          labels:
+            severity: critical
+            component: disaster-recovery
+          annotations:
+            summary: "DR system component is down"
+            description: "{{ $labels.job }} has been down for more than 2 minutes"
+            runbook_url: "https://runbooks.company.com/dr-system-down"
+
+        - alert: DRSystemOverallHealthLow
+          expr: dr_system_overall_health < 80
+          for: 5m
+          labels:
+            severity: high
+            component: disaster-recovery
+          annotations:
+            summary: "DR system overall health is low"
+            description: "DR system health is {{ $value }}% which is below acceptable threshold"
+
+        # Resource utilization alerts
+        - alert: DRSystemHighMemoryUsage
+          expr: |
+            (container_memory_usage_bytes{pod=~".*orchestrator.*|.*continuity.*|.*monitoring.*"} / 
+             container_spec_memory_limit_bytes{pod=~".*orchestrator.*|.*continuity.*|.*monitoring.*"}) * 100 > 80
+          for: 5m
+          labels:
+            severity: warning
+            component: disaster-recovery
+          annotations:
+            summary: "High memory usage in DR system component"
+            description: "{{ $labels.pod }} memory usage is {{ $value }}%"
+
+        - alert: DRSystemHighCPUUsage
+          expr: |
+            rate(container_cpu_usage_seconds_total{pod=~".*orchestrator.*|.*continuity.*|.*monitoring.*"}[5m]) * 100 > 80
+          for: 10m
+          labels:
+            severity: warning
+            component: disaster-recovery
+          annotations:
+            summary: "High CPU usage in DR system component"
+            description: "{{ $labels.pod }} CPU usage is {{ $value }}%"
+
+        # Storage alerts
+        - alert: DRSystemStorageFull
+          expr: |
+            (kubelet_volume_stats_used_bytes{persistentvolumeclaim=~".*dr.*|.*backup.*|.*monitoring.*"} /
+             kubelet_volume_stats_capacity_bytes{persistentvolumeclaim=~".*dr.*|.*backup.*|.*monitoring.*"}) * 100 > 85
+          for: 5m
+          labels:
+            severity: critical
+            component: disaster-recovery
+          annotations:
+            summary: "DR system storage is almost full"
+            description: "PVC {{ $labels.persistentvolumeclaim }} is {{ $value }}% full"
+
+---
+# Service mesh integration (Istio)
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: dr-system
+  namespace: developer-portal
+spec:
+  hosts:
+    - dr-system.portal.local
+  gateways:
+    - portal-gateway
+  http:
+    - match:
+        - uri:
+            prefix: "/backup"
+      route:
+        - destination:
+            host: backup-orchestrator
+            port:
+              number: 8080
+      timeout: 30s
+      retries:
+        attempts: 3
+        perTryTimeout: 10s
+    - match:
+        - uri:
+            prefix: "/dr"
+      route:
+        - destination:
+            host: dr-orchestrator
+            port:
+              number: 8080
+      timeout: 60s
+    - match:
+        - uri:
+            prefix: "/bcp"
+      route:
+        - destination:
+            host: business-continuity-manager
+            port:
+              number: 8080
+      timeout: 30s
+    - match:
+        - uri:
+            prefix: "/monitoring"
+      route:
+        - destination:
+            host: dr-monitoring-system
+            port:
+              number: 8080
+      timeout: 30s
+
+---
+# Destination rules for circuit breaking
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: dr-system
+  namespace: developer-portal
+spec:
+  host: "*.developer-portal.svc.cluster.local"
+  trafficPolicy:
+    connectionPool:
+      tcp:
+        maxConnections: 50
+      http:
+        http1MaxPendingRequests: 30
+        maxRequestsPerConnection: 10
+    circuitBreaker:
+      consecutiveErrors: 3
+      interval: 30s
+      baseEjectionTime: 30s
+      maxEjectionPercent: 50
+    retryPolicy:
+      attempts: 3
+      perTryTimeout: 10s
+      retryOn: 5xx,gateway-error,connect-failure,refused-stream
+
+---
+# Grafana dashboard ConfigMaps
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dr-grafana-dashboards
+  namespace: developer-portal
+  labels:
+    grafana_dashboard: "1"
+data:
+  dr-overview-dashboard.json: |
+    {
+      "dashboard": {
+        "id": null,
+        "title": "Disaster Recovery Overview",
+        "tags": ["disaster-recovery", "backup", "monitoring"],
+        "timezone": "browser",
+        "panels": [
+          {
+            "id": 1,
+            "title": "System Health",
+            "type": "stat",
+            "targets": [
+              {
+                "expr": "dr_system_overall_health",
+                "legendFormat": "Overall Health"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "percent",
+                "thresholds": {
+                  "steps": [
+                    {"color": "red", "value": 0},
+                    {"color": "yellow", "value": 70},
+                    {"color": "green", "value": 90}
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "id": 2,
+            "title": "Active Alerts",
+            "type": "stat",
+            "targets": [
+              {
+                "expr": "sum(ALERTS{component=\"disaster-recovery\"})",
+                "legendFormat": "Active Alerts"
+              }
+            ]
+          },
+          {
+            "id": 3,
+            "title": "Backup Success Rate",
+            "type": "graph",
+            "targets": [
+              {
+                "expr": "backup_job_success_rate",
+                "legendFormat": "Success Rate"
+              }
+            ]
+          }
+        ],
+        "time": {
+          "from": "now-6h",
+          "to": "now"
+        },
+        "refresh": "30s"
+      }
+    }
+
+---
+# Final deployment verification job
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: dr-system-verification
+  namespace: developer-portal
+  labels:
+    component: disaster-recovery
+    job-type: verification
+spec:
+  ttlSecondsAfterFinished: 3600
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: verification
+          image: portal.local:5000/dr-verification:v2.0
+          command: ["/verify-dr-deployment.sh"]
+          env:
+            - name: BACKUP_ORCHESTRATOR_ENDPOINT
+              value: "http://backup-orchestrator:8080"
+            - name: DR_ORCHESTRATOR_ENDPOINT
+              value: "http://dr-orchestrator:8080"
+            - name: BCP_MANAGER_ENDPOINT
+              value: "http://business-continuity-manager:8080"
+            - name: MONITORING_ENDPOINT
+              value: "http://dr-monitoring-system:8080"
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "256Mi"
+              cpu: "200m"

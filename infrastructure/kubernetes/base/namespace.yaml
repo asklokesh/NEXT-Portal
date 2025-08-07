@@ -1,0 +1,21 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: developer-portal
+  labels:
+    name: developer-portal
+    environment: production
+    app.kubernetes.io/name: developer-portal
+    app.kubernetes.io/instance: production
+    istio-injection: enabled
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: developer-portal-staging
+  labels:
+    name: developer-portal-staging
+    environment: staging
+    app.kubernetes.io/name: developer-portal
+    app.kubernetes.io/instance: staging
+    istio-injection: enabled

@@ -1,0 +1,27 @@
+version: '3.8'
+
+services:
+  plugin-installer:
+    build:
+      context: ./docker/plugin-installer
+      dockerfile: Dockerfile
+    container_name: backstage-plugin-installer
+    volumes:
+      - ./docker/plugin-installer/plugins:/app/plugins
+      - ./docker/plugin-installer/logs:/app/logs
+      - backstage-app-cache:/app/backstage/packages/app/node_modules
+      - backstage-backend-cache:/app/backstage/packages/backend/node_modules
+    environment:
+      - NODE_ENV=development
+      - NPM_CONFIG_REGISTRY=https://registry.npmjs.org/
+    networks:
+      - backstage-network
+    restart: unless-stopped
+
+volumes:
+  backstage-app-cache:
+  backstage-backend-cache:
+
+networks:
+  backstage-network:
+    driver: bridge

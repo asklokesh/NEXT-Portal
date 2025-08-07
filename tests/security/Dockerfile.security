@@ -1,0 +1,39 @@
+FROM python:3.11-slim
+
+LABEL maintainer="security-team" \
+      description="Plugin Management Security Testing Container"
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    curl \
+    wget \
+    git \
+    jq \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set working directory
+WORKDIR /app
+
+# Copy requirements first for better caching
+COPY requirements-security.txt .
+
+# Install Python dependencies
+RUN pip install --no-cache-dir -r requirements-security.txt
+
+# Copy security testing scripts
+COPY zap-security-scan.py .
+COPY nuclei-security-scan.sh .
+COPY security-test-runner.py .
+
+# Copy configuration files
+COPY zap-config/ ./zap-config/
+COPY test-data/ ./test-data/
+
+# Create output directory
+RUN mkdir -p /app/reports
+
+# Set permissions
+RUN chmod +x *.py *.sh
+
+# Default command runs comprehensive security scan
+CMD ["python", "security-test-runner.py", "--full-scan"]

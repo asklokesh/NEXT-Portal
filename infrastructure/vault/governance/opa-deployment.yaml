@@ -1,0 +1,497 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: opa-system
+  labels:
+    name: opa-system
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: opa
+  namespace: opa-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: opa-reader
+rules:
+- apiGroups: [""]
+  resources: ["configmaps", "secrets", "services", "serviceaccounts"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["extensions", "apps"]
+  resources: ["deployments", "replicasets"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["events"]
+  verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: opa-reader
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: opa-reader
+subjects:
+- kind: ServiceAccount
+  name: opa
+  namespace: opa-system
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: opa-policies
+  namespace: opa-system
+data:
+  vault-governance.rego: |
+    package vault.governance
+
+    import rego.v1
+
+    # Default deny - all requests must be explicitly allowed
+    default allow := false
+
+    # Allow requests that pass all governance checks
+    allow if {
+        not deny_request
+        path_allowed
+        user_authorized
+        time_restrictions_met
+        compliance_check_passed
+        risk_assessment_acceptable
+    }
+
+    # Deny request if any critical violation is found
+    deny_request if {
+        critical_violation
+    }
+
+    # Critical violations that always deny access
+    critical_violation if {
+        # Prevent access to root tokens
+        input.auth.policies[_] == "root"
+        not input.user.emergency_access
+    }
+
+    critical_violation if {
+        # Block access during maintenance windows
+        input.request.operation != "read"
+        maintenance_window_active
+    }
+
+    # Path-based access controls
+    path_allowed if {
+        # Personal secrets access
+        startswith(input.request.path, sprintf("secret/data/users/%s/", [input.user.id]))
+    }
+
+    path_allowed if {
+        # Application secrets for developers
+        startswith(input.request.path, "secret/data/apps/")
+        input.user.role == "developer"
+        app_name := split(input.request.path, "/")[3]
+        app_name in input.user.authorized_apps
+    }
+
+    # User authorization checks
+    user_authorized if {
+        input.user.authenticated
+        not input.user.account_locked
+        session_within_limits
+    }
+
+    # Time-based restrictions
+    time_restrictions_met if {
+        business_hours_active
+    }
+
+    time_restrictions_met if {
+        input.user.emergency_access
+    }
+
+    # Compliance checks
+    compliance_check_passed if {
+        not contains_sensitive_data
+    }
+
+    compliance_check_passed if {
+        contains_sensitive_data
+        compliance_requirements_met
+    }
+
+    # Risk assessment
+    risk_assessment_acceptable if {
+        calculated_risk_score <= 8
+    }
+
+    calculated_risk_score := 5  # Simplified for example
+
+    # Helper functions
+    business_hours_active if {
+        current_hour := time.clock([time.now_ns(), "UTC"])[3]
+        current_hour >= 8
+        current_hour <= 18
+    }
+
+    maintenance_window_active := false  # Simplified
+
+    session_within_limits := true  # Simplified
+
+    contains_sensitive_data if {
+        startswith(input.request.path, "secret/data/pii/")
+    }
+
+    compliance_requirements_met := true  # Simplified
+
+  policy-test.rego: |
+    package vault.governance
+
+    import rego.v1
+
+    test_allow_user_personal_secrets if {
+        allow with input as {
+            "user": {"id": "john.doe", "authenticated": true, "account_locked": false},
+            "request": {"path": "secret/data/users/john.doe/config", "operation": "read"},
+            "auth": {"policies": ["user-policy"]}
+        }
+    }
+
+    test_deny_root_access if {
+        not allow with input as {
+            "user": {"id": "test-user", "authenticated": true},
+            "request": {"path": "secret/data/test", "operation": "read"},
+            "auth": {"policies": ["root"]}
+        }
+    }
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: opa-config
+  namespace: opa-system
+data:
+  config.yaml: |
+    services:
+      vault:
+        url: https://vault.vault-system.svc.cluster.local:8200
+        headers:
+          Authorization: "Bearer ${VAULT_TOKEN}"
+
+    bundles:
+      vault/governance:
+        resource: "/v1/policies"
+        persist: true
+        polling:
+          min_delay_seconds: 60
+          max_delay_seconds: 120
+
+    decision_logs:
+      console: true
+      reporting:
+        min_delay_seconds: 5
+        max_delay_seconds: 10
+
+    plugins:
+      envoy_ext_authz_grpc:
+        addr: :9191
+        query: data.vault.governance.allow
+        enable_reflection: true
+
+    status:
+      service: vault
+      partition_name: opa-vault
+
+    default_decision: "/vault/governance/allow"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: opa
+  namespace: opa-system
+  labels:
+    app: opa
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: opa
+  template:
+    metadata:
+      labels:
+        app: opa
+    spec:
+      serviceAccountName: opa
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchLabels:
+                app: opa
+            topologyKey: kubernetes.io/hostname
+      containers:
+      - name: opa
+        image: openpolicyagent/opa:0.63.0-envoy
+        ports:
+        - name: http
+          containerPort: 8181
+        - name: grpc
+          containerPort: 9191
+        args:
+        - "run"
+        - "--server"
+        - "--config-file=/etc/opa/config.yaml"
+        - "--addr=0.0.0.0:8181"
+        - "--diagnostic-addr=0.0.0.0:8282"
+        - "/etc/opa/policies/"
+        env:
+        - name: VAULT_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: opa-vault-token
+              key: token
+        volumeMounts:
+        - name: opa-policies
+          mountPath: /etc/opa/policies
+          readOnly: true
+        - name: opa-config
+          mountPath: /etc/opa
+          readOnly: true
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8181
+            scheme: HTTP
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        readinessProbe:
+          httpGet:
+            path: /health?bundles=true
+            port: 8181
+            scheme: HTTP
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          runAsUser: 1000
+      volumes:
+      - name: opa-policies
+        configMap:
+          name: opa-policies
+      - name: opa-config
+        configMap:
+          name: opa-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: opa
+  namespace: opa-system
+  labels:
+    app: opa
+spec:
+  type: ClusterIP
+  ports:
+  - name: http
+    port: 8181
+    targetPort: 8181
+  - name: grpc
+    port: 9191
+    targetPort: 9191
+  selector:
+    app: opa
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: opa-vault-token
+  namespace: opa-system
+type: Opaque
+stringData:
+  token: "hvs.CAESIJ..." # Replace with actual Vault token
+---
+apiVersion: networking.istio.io/v1alpha3
+kind: EnvoyFilter
+metadata:
+  name: opa-ext-authz
+  namespace: vault-system
+spec:
+  workloadSelector:
+    labels:
+      app: vault
+  configPatches:
+  - applyTo: HTTP_FILTER
+    match:
+      context: SIDECAR_INBOUND
+      listener:
+        filterChain:
+          filter:
+            name: "envoy.filters.network.http_connection_manager"
+    patch:
+      operation: INSERT_BEFORE
+      value:
+        name: envoy.filters.http.ext_authz
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.HttpExtAuthz
+          transport_api_version: V3
+          with_request_body:
+            max_request_bytes: 8192
+            allow_partial_message: true
+          failure_mode_allow: false
+          grpc_service:
+            envoy_grpc:
+              cluster_name: opa-ext-authz
+            timeout: 10s
+          include_peer_certificate: true
+  - applyTo: CLUSTER
+    match:
+      context: SIDECAR_INBOUND
+    patch:
+      operation: ADD
+      value:
+        name: opa-ext-authz
+        type: STRICT_DNS
+        connect_timeout: 10s
+        lb_policy: ROUND_ROBIN
+        protocol_selection: USE_DOWNSTREAM_PROTOCOL
+        load_assignment:
+          cluster_name: opa-ext-authz
+          endpoints:
+          - lb_endpoints:
+            - endpoint:
+                address:
+                  socket_address:
+                    address: opa.opa-system.svc.cluster.local
+                    port_value: 9191
+        http2_protocol_options: {}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: opa-test-data
+  namespace: opa-system
+data:
+  test-input.json: |
+    {
+      "user": {
+        "id": "john.doe",
+        "authenticated": true,
+        "account_locked": false,
+        "role": "developer",
+        "authorized_apps": ["app1", "app2"],
+        "emergency_access": false
+      },
+      "request": {
+        "path": "secret/data/apps/app1/config",
+        "operation": "read",
+        "justification": "Debugging production issue #12345"
+      },
+      "auth": {
+        "policies": ["developer-policy"],
+        "issued_at": "2024-08-07T10:00:00Z"
+      },
+      "client": {
+        "ip": "10.0.1.100",
+        "user_agent": "Vault CLI/1.16.1"
+      }
+    }
+
+  performance-test.json: |
+    {
+      "scenarios": [
+        {
+          "name": "high-throughput-reads",
+          "duration": "60s",
+          "rate": "100/s",
+          "input_template": {
+            "user": {
+              "id": "service-{{.ID}}",
+              "authenticated": true,
+              "account_locked": false,
+              "type": "service_account"
+            },
+            "request": {
+              "path": "secret/data/apps/{{.AppName}}/config",
+              "operation": "read"
+            }
+          }
+        },
+        {
+          "name": "mixed-operations",
+          "duration": "300s",
+          "rate": "50/s",
+          "input_template": {
+            "user": {
+              "id": "user-{{.ID}}",
+              "authenticated": true,
+              "role": "{{.Role}}"
+            },
+            "request": {
+              "path": "{{.Path}}",
+              "operation": "{{.Operation}}"
+            }
+          }
+        }
+      ]
+    }
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: opa-policy-test
+  namespace: opa-system
+spec:
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: policy-test
+        image: openpolicyagent/opa:0.63.0
+        command:
+        - /bin/sh
+        - -c
+        - |
+          echo "Running OPA policy tests..."
+          opa fmt /etc/policies/ --diff
+          opa test /etc/policies/
+          echo "Testing policy decision endpoint..."
+          curl -X POST http://opa:8181/v1/data/vault/governance/allow \
+            -H 'Content-Type: application/json' \
+            -d @/etc/test-data/test-input.json
+        volumeMounts:
+        - name: opa-policies
+          mountPath: /etc/policies
+        - name: opa-test-data
+          mountPath: /etc/test-data
+      volumes:
+      - name: opa-policies
+        configMap:
+          name: opa-policies
+      - name: opa-test-data
+        configMap:
+          name: opa-test-data
+---
+apiVersion: v1
+kind: ServiceMonitor
+metadata:
+  name: opa-metrics
+  namespace: opa-system
+spec:
+  selector:
+    matchLabels:
+      app: opa
+  endpoints:
+  - port: http
+    path: /metrics
+    interval: 30s

@@ -1,0 +1,568 @@
+# Plugin Pipeline Orchestrator - Production Environment
+# Production-ready setup with high availability, monitoring, and security
+
+version: '3.8'
+
+networks:
+  plugin-pipeline-prod:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.30.0.0/16
+  monitoring:
+    driver: bridge
+
+volumes:
+  postgres_primary_data:
+    driver: local
+  postgres_replica_data:
+    driver: local
+  redis_master_data:
+    driver: local
+  redis_replica_data:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local
+  plugin_cache:
+    driver: local
+
+services:
+  # Load Balancer
+  nginx:
+    image: nginx:alpine
+    container_name: nginx-lb
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./config/nginx/production.conf:/etc/nginx/nginx.conf:ro
+      - ./ssl/production:/etc/nginx/ssl:ro
+      - ./config/nginx/conf.d/production:/etc/nginx/conf.d:ro
+    networks:
+      - plugin-pipeline-prod
+    depends_on:
+      - plugin-orchestrator-1
+      - plugin-orchestrator-2
+      - plugin-orchestrator-3
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.5'
+          memory: 256M
+
+  # Plugin Orchestrator - High Availability Setup (3 replicas)
+  plugin-orchestrator-1:
+    image: ${REGISTRY:-ghcr.io}/plugin-orchestrator:${VERSION:-latest}
+    container_name: plugin-orchestrator-1
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - LOG_LEVEL=info
+      - INSTANCE_ID=orchestrator-1
+      - PORT=8080
+      - HEALTH_PORT=8081
+      - METRICS_PORT=9090
+      - DATABASE_URL=postgresql://plugin_user:${POSTGRES_PASSWORD}@postgres-primary:5432/plugin_pipeline
+      - DATABASE_READ_URL=postgresql://plugin_user:${POSTGRES_PASSWORD}@postgres-replica:5432/plugin_pipeline
+      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis-master:6379/0
+      - REDIS_REPLICA_URL=redis://:${REDIS_PASSWORD}@redis-replica:6379/0
+      - KUBERNETES_IN_CLUSTER=false
+      - DOCKER_REGISTRY_URL=${DOCKER_REGISTRY_URL}
+      - SERVICE_MESH_PROVIDER=none
+      - PROMETHEUS_ENABLED=true
+      - TRACING_ENABLED=true
+      - TRACING_ENDPOINT=http://jaeger:14268/api/traces
+      - SECURITY_TRIVY_ENABLED=true
+      - CLUSTER_MODE=true
+      - CLUSTER_NODES=orchestrator-1,orchestrator-2,orchestrator-3
+    volumes:
+      - plugin_cache:/app/cache
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      plugin-pipeline-prod:
+        ipv4_address: 172.30.0.10
+    depends_on:
+      postgres-primary:
+        condition: service_healthy
+      redis-master:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 4G
+        reservations:
+          cpus: '1.0'
+          memory: 2G
+
+  plugin-orchestrator-2:
+    image: ${REGISTRY:-ghcr.io}/plugin-orchestrator:${VERSION:-latest}
+    container_name: plugin-orchestrator-2
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - LOG_LEVEL=info
+      - INSTANCE_ID=orchestrator-2
+      - PORT=8080
+      - HEALTH_PORT=8081
+      - METRICS_PORT=9090
+      - DATABASE_URL=postgresql://plugin_user:${POSTGRES_PASSWORD}@postgres-primary:5432/plugin_pipeline
+      - DATABASE_READ_URL=postgresql://plugin_user:${POSTGRES_PASSWORD}@postgres-replica:5432/plugin_pipeline
+      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis-master:6379/0
+      - REDIS_REPLICA_URL=redis://:${REDIS_PASSWORD}@redis-replica:6379/0
+      - KUBERNETES_IN_CLUSTER=false
+      - DOCKER_REGISTRY_URL=${DOCKER_REGISTRY_URL}
+      - SERVICE_MESH_PROVIDER=none
+      - PROMETHEUS_ENABLED=true
+      - TRACING_ENABLED=true
+      - TRACING_ENDPOINT=http://jaeger:14268/api/traces
+      - SECURITY_TRIVY_ENABLED=true
+      - CLUSTER_MODE=true
+      - CLUSTER_NODES=orchestrator-1,orchestrator-2,orchestrator-3
+    volumes:
+      - plugin_cache:/app/cache
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      plugin-pipeline-prod:
+        ipv4_address: 172.30.0.11
+    depends_on:
+      postgres-primary:
+        condition: service_healthy
+      redis-master:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 4G
+        reservations:
+          cpus: '1.0'
+          memory: 2G
+
+  plugin-orchestrator-3:
+    image: ${REGISTRY:-ghcr.io}/plugin-orchestrator:${VERSION:-latest}
+    container_name: plugin-orchestrator-3
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - LOG_LEVEL=info
+      - INSTANCE_ID=orchestrator-3
+      - PORT=8080
+      - HEALTH_PORT=8081
+      - METRICS_PORT=9090
+      - DATABASE_URL=postgresql://plugin_user:${POSTGRES_PASSWORD}@postgres-primary:5432/plugin_pipeline
+      - DATABASE_READ_URL=postgresql://plugin_user:${POSTGRES_PASSWORD}@postgres-replica:5432/plugin_pipeline
+      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis-master:6379/0
+      - REDIS_REPLICA_URL=redis://:${REDIS_PASSWORD}@redis-replica:6379/0
+      - KUBERNETES_IN_CLUSTER=false
+      - DOCKER_REGISTRY_URL=${DOCKER_REGISTRY_URL}
+      - SERVICE_MESH_PROVIDER=none
+      - PROMETHEUS_ENABLED=true
+      - TRACING_ENABLED=true
+      - TRACING_ENDPOINT=http://jaeger:14268/api/traces
+      - SECURITY_TRIVY_ENABLED=true
+      - CLUSTER_MODE=true
+      - CLUSTER_NODES=orchestrator-1,orchestrator-2,orchestrator-3
+    volumes:
+      - plugin_cache:/app/cache
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      plugin-pipeline-prod:
+        ipv4_address: 172.30.0.12
+    depends_on:
+      postgres-primary:
+        condition: service_healthy
+      redis-master:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 4G
+        reservations:
+          cpus: '1.0'
+          memory: 2G
+
+  # Database - Primary/Replica Setup
+  postgres-primary:
+    image: postgres:15-alpine
+    container_name: postgres-primary
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=plugin_pipeline
+      - POSTGRES_USER=plugin_user
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_REPLICATION_USER=replicator
+      - POSTGRES_REPLICATION_PASSWORD=${POSTGRES_REPLICATION_PASSWORD}
+      - POSTGRES_INITDB_ARGS=--auth-host=scram-sha-256 --auth-local=scram-sha-256
+    volumes:
+      - postgres_primary_data:/var/lib/postgresql/data
+      - ./config/postgresql/postgresql.conf:/etc/postgresql/postgresql.conf:ro
+      - ./config/postgresql/pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
+      - ./scripts/init-replication.sql:/docker-entrypoint-initdb.d/init-replication.sql:ro
+    networks:
+      plugin-pipeline-prod:
+        ipv4_address: 172.30.0.20
+    command: postgres -c config_file=/etc/postgresql/postgresql.conf
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U plugin_user -d plugin_pipeline"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 8G
+        reservations:
+          cpus: '1.0'
+          memory: 4G
+
+  postgres-replica:
+    image: postgres:15-alpine
+    container_name: postgres-replica
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=plugin_pipeline
+      - POSTGRES_USER=plugin_user
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - PGUSER=postgres
+      - POSTGRES_MASTER_SERVICE=postgres-primary
+      - POSTGRES_REPLICATION_USER=replicator
+      - POSTGRES_REPLICATION_PASSWORD=${POSTGRES_REPLICATION_PASSWORD}
+    volumes:
+      - postgres_replica_data:/var/lib/postgresql/data
+      - ./config/postgresql/recovery.conf:/etc/postgresql/recovery.conf:ro
+    networks:
+      plugin-pipeline-prod:
+        ipv4_address: 172.30.0.21
+    depends_on:
+      postgres-primary:
+        condition: service_healthy
+    command: |
+      bash -c "
+      if [ ! -s /var/lib/postgresql/data/PG_VERSION ]; then
+        pg_basebackup -h postgres-primary -D /var/lib/postgresql/data -U replicator -W -R
+      fi
+      postgres
+      "
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U plugin_user -d plugin_pipeline"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 4G
+        reservations:
+          cpus: '0.5'
+          memory: 2G
+
+  # Redis - Master/Replica Setup
+  redis-master:
+    image: redis:7-alpine
+    container_name: redis-master
+    restart: unless-stopped
+    environment:
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+    volumes:
+      - redis_master_data:/data
+      - ./config/redis/master.conf:/usr/local/etc/redis/redis.conf:ro
+    networks:
+      plugin-pipeline-prod:
+        ipv4_address: 172.30.0.30
+    command: redis-server /usr/local/etc/redis/redis.conf
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 1G
+
+  redis-replica:
+    image: redis:7-alpine
+    container_name: redis-replica
+    restart: unless-stopped
+    environment:
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+    volumes:
+      - redis_replica_data:/data
+      - ./config/redis/replica.conf:/usr/local/etc/redis/redis.conf:ro
+    networks:
+      plugin-pipeline-prod:
+        ipv4_address: 172.30.0.31
+    depends_on:
+      redis-master:
+        condition: service_healthy
+    command: redis-server /usr/local/etc/redis/redis.conf --replicaof redis-master 6379
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 1G
+        reservations:
+          cpus: '0.25'
+          memory: 512M
+
+  # Monitoring Stack
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    restart: unless-stopped
+    volumes:
+      - ./config/prometheus/production.yml:/etc/prometheus/prometheus.yml:ro
+      - ./config/prometheus/rules:/etc/prometheus/rules:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=30d'
+      - '--web.enable-lifecycle'
+      - '--web.enable-admin-api'
+      - '--storage.tsdb.wal-compression'
+    networks:
+      monitoring:
+      plugin-pipeline-prod:
+        ipv4_address: 172.30.0.40
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:9090/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 4G
+        reservations:
+          cpus: '1.0'
+          memory: 2G
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    restart: unless-stopped
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD}
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_SERVER_DOMAIN=${GRAFANA_DOMAIN:-localhost}
+      - GF_SERVER_ROOT_URL=https://${GRAFANA_DOMAIN:-localhost}
+      - GF_DATABASE_TYPE=postgres
+      - GF_DATABASE_HOST=postgres-primary:5432
+      - GF_DATABASE_NAME=grafana
+      - GF_DATABASE_USER=grafana_user
+      - GF_DATABASE_PASSWORD=${GRAFANA_DB_PASSWORD}
+      - GF_SMTP_ENABLED=true
+      - GF_SMTP_HOST=${SMTP_HOST}
+      - GF_SMTP_USER=${SMTP_USER}
+      - GF_SMTP_PASSWORD=${SMTP_PASSWORD}
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./config/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./config/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    networks:
+      monitoring:
+      plugin-pipeline-prod:
+        ipv4_address: 172.30.0.41
+    depends_on:
+      - prometheus
+      - postgres-primary
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:3000/api/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 1G
+
+  # Alertmanager
+  alertmanager:
+    image: prom/alertmanager:latest
+    container_name: alertmanager
+    restart: unless-stopped
+    volumes:
+      - ./config/alertmanager/production.yml:/etc/alertmanager/alertmanager.yml:ro
+      - ./data/alertmanager:/alertmanager
+    command:
+      - '--config.file=/etc/alertmanager/alertmanager.yml'
+      - '--storage.path=/alertmanager'
+      - '--web.external-url=https://${ALERTMANAGER_DOMAIN:-localhost}'
+      - '--cluster.listen-address=0.0.0.0:9094'
+    networks:
+      monitoring:
+      plugin-pipeline-prod:
+        ipv4_address: 172.30.0.42
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:9093/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Distributed Tracing
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    container_name: jaeger
+    restart: unless-stopped
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+      - SPAN_STORAGE_TYPE=elasticsearch
+      - ES_SERVER_URLS=http://elasticsearch:9200
+      - ES_NUM_SHARDS=1
+      - ES_NUM_REPLICAS=0
+    networks:
+      plugin-pipeline-prod:
+        ipv4_address: 172.30.0.50
+    depends_on:
+      - elasticsearch
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:14269/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Logging Infrastructure
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.11.0
+    container_name: elasticsearch
+    restart: unless-stopped
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=-Xms2g -Xmx2g"
+      - network.host=0.0.0.0
+    volumes:
+      - ./data/elasticsearch:/usr/share/elasticsearch/data
+    networks:
+      plugin-pipeline-prod:
+        ipv4_address: 172.30.0.60
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9200/_cluster/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 4G
+        reservations:
+          cpus: '1.0'
+          memory: 2G
+
+  # Log Shipping
+  fluentbit:
+    image: fluent/fluent-bit:latest
+    container_name: fluentbit
+    restart: unless-stopped
+    volumes:
+      - ./config/fluent-bit/production.conf:/fluent-bit/etc/fluent-bit.conf:ro
+      - /var/log:/var/log:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+    networks:
+      plugin-pipeline-prod:
+        ipv4_address: 172.30.0.61
+    depends_on:
+      - elasticsearch
+
+  # Security Services
+  vault:
+    image: vault:latest
+    container_name: vault
+    restart: unless-stopped
+    cap_add:
+      - IPC_LOCK
+    environment:
+      - VAULT_DEV_ROOT_TOKEN_ID=${VAULT_ROOT_TOKEN}
+      - VAULT_DEV_LISTEN_ADDRESS=0.0.0.0:8200
+    volumes:
+      - ./config/vault:/vault/config:ro
+      - ./data/vault:/vault/data
+    networks:
+      plugin-pipeline-prod:
+        ipv4_address: 172.30.0.70
+    command: vault server -config=/vault/config/vault.hcl
+    healthcheck:
+      test: ["CMD", "vault", "status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Backup Service
+  backup-manager:
+    image: ${REGISTRY:-ghcr.io}/backup-manager:${VERSION:-latest}
+    container_name: backup-manager
+    restart: unless-stopped
+    environment:
+      - BACKUP_SCHEDULE=0 2 * * *
+      - S3_BUCKET=${BACKUP_S3_BUCKET}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - AWS_REGION=${AWS_REGION}
+      - POSTGRES_URL=postgresql://plugin_user:${POSTGRES_PASSWORD}@postgres-primary:5432/plugin_pipeline
+      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis-master:6379/0
+    volumes:
+      - postgres_primary_data:/backup/postgres:ro
+      - redis_master_data:/backup/redis:ro
+      - ./scripts/backup:/scripts:ro
+    networks:
+      plugin-pipeline-prod:
+        ipv4_address: 172.30.0.80
+    depends_on:
+      - postgres-primary
+      - redis-master

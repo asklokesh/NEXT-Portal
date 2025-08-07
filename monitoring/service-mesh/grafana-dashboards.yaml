@@ -1,0 +1,934 @@
+# Grafana Dashboards for Istio Service Mesh Monitoring
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: istio-service-mesh-dashboards
+  namespace: istio-system
+  labels:
+    grafana_dashboard: "1"
+data:
+  # Main Service Mesh Overview Dashboard
+  service-mesh-overview.json: |
+    {
+      "dashboard": {
+        "id": null,
+        "title": "Backstage Service Mesh Overview",
+        "tags": ["istio", "service-mesh", "backstage"],
+        "style": "dark",
+        "timezone": "browser",
+        "refresh": "30s",
+        "time": {
+          "from": "now-1h",
+          "to": "now"
+        },
+        "panels": [
+          {
+            "id": 1,
+            "title": "Request Rate",
+            "type": "stat",
+            "targets": [
+              {
+                "expr": "sum(rate(istio_requests_total{destination_app=\"backstage\"}[5m]))",
+                "legendFormat": "Requests/sec"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "mode": "palette-classic"
+                },
+                "custom": {
+                  "displayMode": "lcd",
+                  "orientation": "horizontal"
+                },
+                "mappings": [],
+                "thresholds": {
+                  "steps": [
+                    {"color": "green", "value": null},
+                    {"color": "yellow", "value": 100},
+                    {"color": "red", "value": 1000}
+                  ]
+                },
+                "unit": "reqps"
+              }
+            },
+            "options": {
+              "reduceOptions": {
+                "values": false,
+                "calcs": ["lastNotNull"],
+                "fields": ""
+              },
+              "orientation": "auto",
+              "textMode": "auto",
+              "colorMode": "value",
+              "graphMode": "area",
+              "justifyMode": "auto"
+            },
+            "gridPos": {"h": 8, "w": 6, "x": 0, "y": 0}
+          },
+          {
+            "id": 2,
+            "title": "Error Rate",
+            "type": "stat",
+            "targets": [
+              {
+                "expr": "(sum(rate(istio_requests_total{destination_app=\"backstage\",response_code!~\"2..\"}[5m])) / sum(rate(istio_requests_total{destination_app=\"backstage\"}[5m]))) * 100",
+                "legendFormat": "Error Rate %"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "mode": "thresholds"
+                },
+                "custom": {
+                  "displayMode": "lcd",
+                  "orientation": "horizontal"
+                },
+                "mappings": [],
+                "thresholds": {
+                  "steps": [
+                    {"color": "green", "value": null},
+                    {"color": "yellow", "value": 1},
+                    {"color": "red", "value": 5}
+                  ]
+                },
+                "unit": "percent"
+              }
+            },
+            "gridPos": {"h": 8, "w": 6, "x": 6, "y": 0}
+          },
+          {
+            "id": 3,
+            "title": "P99 Latency",
+            "type": "stat",
+            "targets": [
+              {
+                "expr": "histogram_quantile(0.99, sum(rate(istio_request_duration_milliseconds_bucket{destination_app=\"backstage\"}[5m])) by (le))",
+                "legendFormat": "P99 Latency"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "mode": "thresholds"
+                },
+                "custom": {
+                  "displayMode": "lcd",
+                  "orientation": "horizontal"
+                },
+                "mappings": [],
+                "thresholds": {
+                  "steps": [
+                    {"color": "green", "value": null},
+                    {"color": "yellow", "value": 1000},
+                    {"color": "red", "value": 5000}
+                  ]
+                },
+                "unit": "ms"
+              }
+            },
+            "gridPos": {"h": 8, "w": 6, "x": 12, "y": 0}
+          },
+          {
+            "id": 4,
+            "title": "Success Rate",
+            "type": "stat",
+            "targets": [
+              {
+                "expr": "(sum(rate(istio_requests_total{destination_app=\"backstage\",response_code=~\"2..\"}[5m])) / sum(rate(istio_requests_total{destination_app=\"backstage\"}[5m]))) * 100",
+                "legendFormat": "Success Rate %"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "mode": "thresholds"
+                },
+                "custom": {
+                  "displayMode": "lcd",
+                  "orientation": "horizontal"
+                },
+                "mappings": [],
+                "thresholds": {
+                  "steps": [
+                    {"color": "red", "value": null},
+                    {"color": "yellow", "value": 95},
+                    {"color": "green", "value": 99}
+                  ]
+                },
+                "unit": "percent"
+              }
+            },
+            "gridPos": {"h": 8, "w": 6, "x": 18, "y": 0}
+          },
+          {
+            "id": 5,
+            "title": "Request Volume by Service",
+            "type": "timeseries",
+            "targets": [
+              {
+                "expr": "sum(rate(istio_requests_total[5m])) by (destination_service_name)",
+                "legendFormat": "{{ destination_service_name }}"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "mode": "palette-classic"
+                },
+                "custom": {
+                  "axisLabel": "",
+                  "axisPlacement": "auto",
+                  "barAlignment": 0,
+                  "drawStyle": "line",
+                  "fillOpacity": 10,
+                  "gradientMode": "none",
+                  "hideFrom": {
+                    "legend": false,
+                    "tooltip": false,
+                    "vis": false
+                  },
+                  "lineInterpolation": "linear",
+                  "lineWidth": 1,
+                  "pointSize": 5,
+                  "scaleDistribution": {
+                    "type": "linear"
+                  },
+                  "showPoints": "never",
+                  "spanNulls": false,
+                  "stacking": {
+                    "group": "A",
+                    "mode": "none"
+                  },
+                  "thresholdsStyle": {
+                    "mode": "off"
+                  }
+                },
+                "mappings": [],
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {"color": "green", "value": null}
+                  ]
+                },
+                "unit": "reqps"
+              }
+            },
+            "options": {
+              "legend": {
+                "calcs": [],
+                "displayMode": "list",
+                "placement": "bottom"
+              },
+              "tooltip": {
+                "mode": "single"
+              }
+            },
+            "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8}
+          },
+          {
+            "id": 6,
+            "title": "Response Times by Percentile",
+            "type": "timeseries",
+            "targets": [
+              {
+                "expr": "histogram_quantile(0.50, sum(rate(istio_request_duration_milliseconds_bucket{destination_app=\"backstage\"}[5m])) by (le))",
+                "legendFormat": "P50"
+              },
+              {
+                "expr": "histogram_quantile(0.95, sum(rate(istio_request_duration_milliseconds_bucket{destination_app=\"backstage\"}[5m])) by (le))",
+                "legendFormat": "P95"
+              },
+              {
+                "expr": "histogram_quantile(0.99, sum(rate(istio_request_duration_milliseconds_bucket{destination_app=\"backstage\"}[5m])) by (le))",
+                "legendFormat": "P99"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "mode": "palette-classic"
+                },
+                "custom": {
+                  "axisLabel": "",
+                  "axisPlacement": "auto",
+                  "barAlignment": 0,
+                  "drawStyle": "line",
+                  "fillOpacity": 10,
+                  "gradientMode": "none",
+                  "hideFrom": {
+                    "legend": false,
+                    "tooltip": false,
+                    "vis": false
+                  },
+                  "lineInterpolation": "linear",
+                  "lineWidth": 1,
+                  "pointSize": 5,
+                  "scaleDistribution": {
+                    "type": "linear"
+                  },
+                  "showPoints": "never",
+                  "spanNulls": false,
+                  "stacking": {
+                    "group": "A",
+                    "mode": "none"
+                  },
+                  "thresholdsStyle": {
+                    "mode": "off"
+                  }
+                },
+                "mappings": [],
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {"color": "green", "value": null}
+                  ]
+                },
+                "unit": "ms"
+              }
+            },
+            "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8}
+          },
+          {
+            "id": 7,
+            "title": "Circuit Breaker Status",
+            "type": "timeseries",
+            "targets": [
+              {
+                "expr": "sum(rate(envoy_cluster_outlier_detection_ejections_total[5m])) by (cluster_name)",
+                "legendFormat": "Ejections - {{ cluster_name }}"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "mode": "palette-classic"
+                },
+                "custom": {
+                  "axisLabel": "",
+                  "axisPlacement": "auto",
+                  "barAlignment": 0,
+                  "drawStyle": "bars",
+                  "fillOpacity": 80,
+                  "gradientMode": "none",
+                  "hideFrom": {
+                    "legend": false,
+                    "tooltip": false,
+                    "vis": false
+                  },
+                  "lineInterpolation": "linear",
+                  "lineWidth": 1,
+                  "pointSize": 5,
+                  "scaleDistribution": {
+                    "type": "linear"
+                  },
+                  "showPoints": "never",
+                  "spanNulls": false,
+                  "stacking": {
+                    "group": "A",
+                    "mode": "none"
+                  },
+                  "thresholdsStyle": {
+                    "mode": "off"
+                  }
+                },
+                "mappings": [],
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {"color": "green", "value": null},
+                    {"color": "red", "value": 1}
+                  ]
+                },
+                "unit": "short"
+              }
+            },
+            "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16}
+          },
+          {
+            "id": 8,
+            "title": "Connection Pool Utilization",
+            "type": "timeseries",
+            "targets": [
+              {
+                "expr": "(envoy_cluster_upstream_cx_active / envoy_cluster_upstream_cx_max) * 100",
+                "legendFormat": "{{ cluster_name }} Pool Utilization"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "mode": "palette-classic"
+                },
+                "custom": {
+                  "axisLabel": "",
+                  "axisPlacement": "auto",
+                  "barAlignment": 0,
+                  "drawStyle": "line",
+                  "fillOpacity": 10,
+                  "gradientMode": "none",
+                  "hideFrom": {
+                    "legend": false,
+                    "tooltip": false,
+                    "vis": false
+                  },
+                  "lineInterpolation": "linear",
+                  "lineWidth": 1,
+                  "pointSize": 5,
+                  "scaleDistribution": {
+                    "type": "linear"
+                  },
+                  "showPoints": "never",
+                  "spanNulls": false,
+                  "stacking": {
+                    "group": "A",
+                    "mode": "none"
+                  },
+                  "thresholdsStyle": {
+                    "mode": "line"
+                  }
+                },
+                "mappings": [],
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {"color": "green", "value": null},
+                    {"color": "yellow", "value": 70},
+                    {"color": "red", "value": 90}
+                  ]
+                },
+                "unit": "percent"
+              }
+            },
+            "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16}
+          }
+        ]
+      }
+    }
+  
+  # Disaster Recovery Dashboard
+  disaster-recovery-dashboard.json: |
+    {
+      "dashboard": {
+        "id": null,
+        "title": "Backstage Disaster Recovery Status",
+        "tags": ["disaster-recovery", "backstage", "failover"],
+        "style": "dark",
+        "timezone": "browser",
+        "refresh": "30s",
+        "time": {
+          "from": "now-6h",
+          "to": "now"
+        },
+        "panels": [
+          {
+            "id": 1,
+            "title": "Primary Site Health",
+            "type": "stat",
+            "targets": [
+              {
+                "expr": "up{job=\"backstage-primary\"} * 100",
+                "legendFormat": "Primary Site"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "mode": "thresholds"
+                },
+                "mappings": [
+                  {"options": {"0": {"text": "DOWN"}}, "type": "value"},
+                  {"options": {"100": {"text": "UP"}}, "type": "value"}
+                ],
+                "thresholds": {
+                  "steps": [
+                    {"color": "red", "value": null},
+                    {"color": "green", "value": 1}
+                  ]
+                },
+                "unit": "none"
+              }
+            },
+            "gridPos": {"h": 8, "w": 6, "x": 0, "y": 0}
+          },
+          {
+            "id": 2,
+            "title": "DR Site Health",
+            "type": "stat",
+            "targets": [
+              {
+                "expr": "up{job=\"backstage-dr\"} * 100",
+                "legendFormat": "DR Site"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "mode": "thresholds"
+                },
+                "mappings": [
+                  {"options": {"0": {"text": "DOWN"}}, "type": "value"},
+                  {"options": {"100": {"text": "READY"}}, "type": "value"}
+                ],
+                "thresholds": {
+                  "steps": [
+                    {"color": "red", "value": null},
+                    {"color": "green", "value": 1}
+                  ]
+                },
+                "unit": "none"
+              }
+            },
+            "gridPos": {"h": 8, "w": 6, "x": 6, "y": 0}
+          },
+          {
+            "id": 3,
+            "title": "Database Replication Lag",
+            "type": "stat",
+            "targets": [
+              {
+                "expr": "pg_stat_replication_replay_lag_seconds",
+                "legendFormat": "Replication Lag"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "mode": "thresholds"
+                },
+                "thresholds": {
+                  "steps": [
+                    {"color": "green", "value": null},
+                    {"color": "yellow", "value": 60},
+                    {"color": "red", "value": 300}
+                  ]
+                },
+                "unit": "s"
+              }
+            },
+            "gridPos": {"h": 8, "w": 6, "x": 12, "y": 0}
+          },
+          {
+            "id": 4,
+            "title": "Last Backup Status",
+            "type": "stat",
+            "targets": [
+              {
+                "expr": "time() - backstage_last_backup_timestamp",
+                "legendFormat": "Time Since Last Backup"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "mode": "thresholds"
+                },
+                "thresholds": {
+                  "steps": [
+                    {"color": "green", "value": null},
+                    {"color": "yellow", "value": 3600},
+                    {"color": "red", "value": 7200}
+                  ]
+                },
+                "unit": "s"
+              }
+            },
+            "gridPos": {"h": 8, "w": 6, "x": 18, "y": 0}
+          },
+          {
+            "id": 5,
+            "title": "Traffic Split (Primary vs DR)",
+            "type": "piechart",
+            "targets": [
+              {
+                "expr": "sum(rate(istio_requests_total{destination_app=\"backstage\",source_cluster=\"primary\"}[5m]))",
+                "legendFormat": "Primary"
+              },
+              {
+                "expr": "sum(rate(istio_requests_total{destination_app=\"backstage\",source_cluster=\"dr\"}[5m]))",
+                "legendFormat": "DR"
+              }
+            ],
+            "options": {
+              "pieType": "pie",
+              "reduceOptions": {
+                "values": false,
+                "calcs": ["lastNotNull"],
+                "fields": ""
+              },
+              "legend": {
+                "displayMode": "list",
+                "placement": "right"
+              }
+            },
+            "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8}
+          },
+          {
+            "id": 6,
+            "title": "Certificate Expiry",
+            "type": "timeseries",
+            "targets": [
+              {
+                "expr": "(x509_cert_not_after - time()) / 86400",
+                "legendFormat": "{{ name }} - Days to Expiry"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "mode": "palette-classic"
+                },
+                "custom": {
+                  "axisLabel": "",
+                  "axisPlacement": "auto",
+                  "barAlignment": 0,
+                  "drawStyle": "line",
+                  "fillOpacity": 10,
+                  "gradientMode": "none",
+                  "hideFrom": {
+                    "legend": false,
+                    "tooltip": false,
+                    "vis": false
+                  },
+                  "lineInterpolation": "linear",
+                  "lineWidth": 1,
+                  "pointSize": 5,
+                  "scaleDistribution": {
+                    "type": "linear"
+                  },
+                  "showPoints": "never",
+                  "spanNulls": false,
+                  "stacking": {
+                    "group": "A",
+                    "mode": "none"
+                  },
+                  "thresholdsStyle": {
+                    "mode": "line"
+                  }
+                },
+                "mappings": [],
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {"color": "red", "value": null},
+                    {"color": "yellow", "value": 7},
+                    {"color": "green", "value": 30}
+                  ]
+                },
+                "unit": "d"
+              }
+            },
+            "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8}
+          },
+          {
+            "id": 7,
+            "title": "Failover History",
+            "type": "timeseries",
+            "targets": [
+              {
+                "expr": "increase(backstage_failover_events_total[1h])",
+                "legendFormat": "Failover Events"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "mode": "palette-classic"
+                },
+                "custom": {
+                  "axisLabel": "",
+                  "axisPlacement": "auto",
+                  "barAlignment": 0,
+                  "drawStyle": "bars",
+                  "fillOpacity": 80,
+                  "gradientMode": "none",
+                  "hideFrom": {
+                    "legend": false,
+                    "tooltip": false,
+                    "vis": false
+                  },
+                  "lineInterpolation": "linear",
+                  "lineWidth": 1,
+                  "pointSize": 5,
+                  "scaleDistribution": {
+                    "type": "linear"
+                  },
+                  "showPoints": "never",
+                  "spanNulls": false,
+                  "stacking": {
+                    "group": "A",
+                    "mode": "none"
+                  },
+                  "thresholdsStyle": {
+                    "mode": "off"
+                  }
+                },
+                "mappings": [],
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {"color": "green", "value": null},
+                    {"color": "red", "value": 1}
+                  ]
+                },
+                "unit": "short"
+              }
+            },
+            "gridPos": {"h": 8, "w": 24, "x": 0, "y": 16}
+          }
+        ]
+      }
+    }
+
+  # Performance and SLA Dashboard
+  performance-sla-dashboard.json: |
+    {
+      "dashboard": {
+        "id": null,
+        "title": "Backstage Performance and SLA",
+        "tags": ["performance", "sla", "backstage"],
+        "style": "dark",
+        "timezone": "browser",
+        "refresh": "30s",
+        "time": {
+          "from": "now-24h",
+          "to": "now"
+        },
+        "panels": [
+          {
+            "id": 1,
+            "title": "Service Availability (SLA)",
+            "type": "stat",
+            "targets": [
+              {
+                "expr": "(sum(rate(istio_requests_total{destination_app=\"backstage\",response_code=~\"2..\"}[24h])) / sum(rate(istio_requests_total{destination_app=\"backstage\"}[24h]))) * 100",
+                "legendFormat": "24h Availability"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "mode": "thresholds"
+                },
+                "mappings": [],
+                "thresholds": {
+                  "steps": [
+                    {"color": "red", "value": null},
+                    {"color": "yellow", "value": 99},
+                    {"color": "green", "value": 99.9}
+                  ]
+                },
+                "unit": "percent",
+                "decimals": 3
+              }
+            },
+            "gridPos": {"h": 8, "w": 6, "x": 0, "y": 0}
+          },
+          {
+            "id": 2,
+            "title": "Mean Time Between Failures (MTBF)",
+            "type": "stat",
+            "targets": [
+              {
+                "expr": "time() / (sum(increase(backstage_failure_events_total[24h])) + 1)",
+                "legendFormat": "MTBF"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "mode": "thresholds"
+                },
+                "mappings": [],
+                "thresholds": {
+                  "steps": [
+                    {"color": "red", "value": null},
+                    {"color": "yellow", "value": 3600},
+                    {"color": "green", "value": 86400}
+                  ]
+                },
+                "unit": "s"
+              }
+            },
+            "gridPos": {"h": 8, "w": 6, "x": 6, "y": 0}
+          },
+          {
+            "id": 3,
+            "title": "Mean Time to Recovery (MTTR)",
+            "type": "stat",
+            "targets": [
+              {
+                "expr": "avg(backstage_recovery_time_seconds)",
+                "legendFormat": "MTTR"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "mode": "thresholds"
+                },
+                "mappings": [],
+                "thresholds": {
+                  "steps": [
+                    {"color": "green", "value": null},
+                    {"color": "yellow", "value": 1800},
+                    {"color": "red", "value": 3600}
+                  ]
+                },
+                "unit": "s"
+              }
+            },
+            "gridPos": {"h": 8, "w": 6, "x": 12, "y": 0}
+          },
+          {
+            "id": 4,
+            "title": "Error Budget Remaining",
+            "type": "stat",
+            "targets": [
+              {
+                "expr": "100 - ((1 - (sum(rate(istio_requests_total{destination_app=\"backstage\",response_code=~\"2..\"}[30d])) / sum(rate(istio_requests_total{destination_app=\"backstage\"}[30d])))) * 100) / 0.1 * 100",
+                "legendFormat": "Error Budget %"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "mode": "thresholds"
+                },
+                "mappings": [],
+                "thresholds": {
+                  "steps": [
+                    {"color": "red", "value": null},
+                    {"color": "yellow", "value": 25},
+                    {"color": "green", "value": 50}
+                  ]
+                },
+                "unit": "percent"
+              }
+            },
+            "gridPos": {"h": 8, "w": 6, "x": 18, "y": 0}
+          },
+          {
+            "id": 5,
+            "title": "Apdex Score",
+            "type": "timeseries",
+            "targets": [
+              {
+                "expr": "(sum(rate(istio_request_duration_milliseconds_bucket{destination_app=\"backstage\",le=\"100\"}[5m])) + sum(rate(istio_request_duration_milliseconds_bucket{destination_app=\"backstage\",le=\"500\"}[5m])) / 2) / sum(rate(istio_request_duration_milliseconds_count{destination_app=\"backstage\"}[5m]))",
+                "legendFormat": "Apdex Score"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "mode": "palette-classic"
+                },
+                "custom": {
+                  "axisLabel": "",
+                  "axisPlacement": "auto",
+                  "barAlignment": 0,
+                  "drawStyle": "line",
+                  "fillOpacity": 10,
+                  "gradientMode": "none",
+                  "hideFrom": {
+                    "legend": false,
+                    "tooltip": false,
+                    "vis": false
+                  },
+                  "lineInterpolation": "linear",
+                  "lineWidth": 1,
+                  "pointSize": 5,
+                  "scaleDistribution": {
+                    "type": "linear"
+                  },
+                  "showPoints": "never",
+                  "spanNulls": false,
+                  "stacking": {
+                    "group": "A",
+                    "mode": "none"
+                  },
+                  "thresholdsStyle": {
+                    "mode": "line"
+                  }
+                },
+                "mappings": [],
+                "max": 1,
+                "min": 0,
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {"color": "red", "value": null},
+                    {"color": "yellow", "value": 0.7},
+                    {"color": "green", "value": 0.85}
+                  ]
+                },
+                "unit": "short"
+              }
+            },
+            "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8}
+          },
+          {
+            "id": 6,
+            "title": "Service Level Objectives",
+            "type": "timeseries",
+            "targets": [
+              {
+                "expr": "(sum(rate(istio_requests_total{destination_app=\"backstage\",response_code=~\"2..\"}[1h])) / sum(rate(istio_requests_total{destination_app=\"backstage\"}[1h]))) * 100",
+                "legendFormat": "Availability SLO (99.9%)"
+              },
+              {
+                "expr": "(sum(rate(istio_request_duration_milliseconds_bucket{destination_app=\"backstage\",le=\"1000\"}[1h])) / sum(rate(istio_request_duration_milliseconds_count{destination_app=\"backstage\"}[1h]))) * 100",
+                "legendFormat": "Latency SLO (<1s - 95%)"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "mode": "palette-classic"
+                },
+                "custom": {
+                  "axisLabel": "",
+                  "axisPlacement": "auto",
+                  "barAlignment": 0,
+                  "drawStyle": "line",
+                  "fillOpacity": 10,
+                  "gradientMode": "none",
+                  "hideFrom": {
+                    "legend": false,
+                    "tooltip": false,
+                    "vis": false
+                  },
+                  "lineInterpolation": "linear",
+                  "lineWidth": 1,
+                  "pointSize": 5,
+                  "scaleDistribution": {
+                    "type": "linear"
+                  },
+                  "showPoints": "never",
+                  "spanNulls": false,
+                  "stacking": {
+                    "group": "A",
+                    "mode": "none"
+                  },
+                  "thresholdsStyle": {
+                    "mode": "line"
+                  }
+                },
+                "mappings": [],
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {"color": "red", "value": null},
+                    {"color": "yellow", "value": 95},
+                    {"color": "green", "value": 99}
+                  ]
+                },
+                "unit": "percent"
+              }
+            },
+            "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8}
+          }
+        ]
+      }
+    }

@@ -1,0 +1,49 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: governance-system
+  labels:
+    name: governance-system
+    purpose: service-governance
+    component: platform
+  annotations:
+    description: "Service governance and compliance automation system"
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: governance-resource-quota
+  namespace: governance-system
+spec:
+  hard:
+    requests.cpu: "20"
+    requests.memory: 40Gi
+    limits.cpu: "40"
+    limits.memory: 80Gi
+    pods: "50"
+    persistentvolumeclaims: "20"
+    services: "20"
+    secrets: "50"
+    configmaps: "50"
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: governance-limit-range
+  namespace: governance-system
+spec:
+  limits:
+  - default:
+      cpu: "2"
+      memory: "4Gi"
+    defaultRequest:
+      cpu: "200m"
+      memory: "512Mi"
+    type: Container
+  - max:
+      cpu: "8"
+      memory: "16Gi"
+    min:
+      cpu: "100m"
+      memory: "128Mi"
+    type: Container

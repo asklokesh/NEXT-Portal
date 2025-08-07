@@ -1,0 +1,254 @@
+import chalk from 'chalk';
+import { dump } from 'js-yaml';
+
+export function formatOutput(data: any, format: 'json' | 'yaml' | 'table' = 'json'): string {
+  switch (format) {
+    case 'json':
+      return JSON.stringify(data, null, 2);
+    case 'yaml':
+      return dump(data, { indent: 2, lineWidth: 120 });
+    case 'table':
+      return formatAsTable(data);
+    default:
+      return JSON.stringify(data, null, 2);
+  }
+}
+
+function formatAsTable(data: any): string {
+  if (!data) return 'No data';
+  
+  if (Array.isArray(data)) {
+    if (data.length === 0) return 'No items';
+    
+    // If array of objects, create table
+    if (typeof data[0] === 'object') {
+      return formatObjectArrayAsTable(data);
+    } else {
+      // Array of primitives
+      return data.map((item, index) => `${index + 1}. ${item}`).join('\n');
+    }
+  } else if (typeof data === 'object') {
+    return formatObjectAsTable(data);
+  } else {
+    return String(data);
+  }
+}
+
+function formatObjectArrayAsTable(objects: any[]): string {
+  if (objects.length === 0) return 'No items';
+  
+  // Get all unique keys
+  const allKeys = Array.from(
+    new Set(objects.flatMap(obj => Object.keys(obj)))
+  );
+  
+  // Calculate column widths
+  const columnWidths = allKeys.map(key => {
+    const headerWidth = key.length;
+    const maxValueWidth = Math.max(
+      ...objects.map(obj => String(obj[key] || '').length)
+    );
+    return Math.max(headerWidth, maxValueWidth, 3);
+  });
+  
+  // Build table
+  const lines: string[] = [];
+  
+  // Header
+  const header = allKeys.map((key, index) => 
+    chalk.bold(key.padEnd(columnWidths[index]))
+  ).join(' │ ');
+  lines.push(header);
+  
+  // Separator
+  const separator = columnWidths.map(width => '─'.repeat(width)).join('─┼─');
+  lines.push(separator);
+  
+  // Data rows
+  objects.forEach(obj => {
+    const row = allKeys.map((key, index) => {
+      const value = obj[key];
+      let formatted = '';
+      
+      if (value === null || value === undefined) {
+        formatted = chalk.gray('-');
+      } else if (typeof value === 'boolean') {
+        formatted = value ? chalk.green('✓') : chalk.red('✗');
+      } else if (typeof value === 'number') {
+        formatted = chalk.cyan(value.toString());
+      } else if (typeof value === 'string') {
+        // Truncate long strings
+        if (value.length > columnWidths[index]) {
+          formatted = value.substring(0, columnWidths[index] - 3) + '...';
+        } else {
+          formatted = value;
+        }
+      } else {
+        formatted = JSON.stringify(value);
+        if (formatted.length > columnWidths[index]) {
+          formatted = formatted.substring(0, columnWidths[index] - 3) + '...';
+        }
+      }
+      
+      return formatted.padEnd(columnWidths[index]);
+    }).join(' │ ');
+    
+    lines.push(row);
+  });
+  
+  return lines.join('\n');
+}
+
+function formatObjectAsTable(obj: any): string {
+  const entries = Object.entries(obj);
+  if (entries.length === 0) return 'Empty object';
+  
+  const maxKeyLength = Math.max(...entries.map(([key]) => key.length));
+  
+  return entries.map(([key, value]) => {
+    const paddedKey = chalk.bold(key.padEnd(maxKeyLength));
+    let formattedValue = '';
+    
+    if (value === null || value === undefined) {
+      formattedValue = chalk.gray('-');
+    } else if (typeof value === 'boolean') {
+      formattedValue = value ? chalk.green('✓') : chalk.red('✗');
+    } else if (typeof value === 'number') {
+      formattedValue = chalk.cyan(value.toString());
+    } else if (typeof value === 'string') {
+      formattedValue = value;
+    } else if (Array.isArray(value)) {
+      if (value.length === 0) {
+        formattedValue = chalk.gray('[]');
+      } else if (value.every(item => typeof item === 'string')) {
+        formattedValue = value.join(', ');
+      } else {
+        formattedValue = `[${value.length} items]`;
+      }
+    } else {
+      formattedValue = JSON.stringify(value, null, 2);
+    }
+    
+    return `${paddedKey} │ ${formattedValue}`;
+  }).join('\n');
+}
+
+export function formatSize(bytes: number): string {
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let size = bytes;
+  let unitIndex = 0;
+  
+  while (size >= 1024 && unitIndex < units.length - 1) {
+    size /= 1024;
+    unitIndex++;
+  }
+  
+  return `${size.toFixed(unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`;
+}
+
+export function formatDuration(ms: number): string {
+  if (ms < 1000) {
+    return `${ms}ms`;
+  }
+  
+  const seconds = Math.floor(ms / 1000);
+  if (seconds < 60) {
+    return `${seconds}s`;
+  }
+  
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = seconds % 60;
+  
+  if (minutes < 60) {
+    return remainingSeconds > 0 ? `${minutes}m ${remainingSeconds}s` : `${minutes}m`;
+  }
+  
+  const hours = Math.floor(minutes / 60);
+  const remainingMinutes = minutes % 60;
+  
+  return remainingMinutes > 0 ? `${hours}h ${remainingMinutes}m` : `${hours}h`;
+}
+
+export function formatDate(date: string | Date): string {
+  const d = typeof date === 'string' ? new Date(date) : date;
+  return d.toLocaleDateString() + ' ' + d.toLocaleTimeString();
+}
+
+export function formatRelativeTime(date: string | Date): string {
+  const now = new Date();
+  const d = typeof date === 'string' ? new Date(date) : date;
+  const diffMs = now.getTime() - d.getTime();
+  
+  const diffSeconds = Math.floor(diffMs / 1000);
+  const diffMinutes = Math.floor(diffSeconds / 60);
+  const diffHours = Math.floor(diffMinutes / 60);
+  const diffDays = Math.floor(diffHours / 24);
+  
+  if (diffSeconds < 60) {
+    return 'just now';
+  } else if (diffMinutes < 60) {
+    return `${diffMinutes} minute${diffMinutes === 1 ? '' : 's'} ago`;
+  } else if (diffHours < 24) {
+    return `${diffHours} hour${diffHours === 1 ? '' : 's'} ago`;
+  } else if (diffDays < 30) {
+    return `${diffDays} day${diffDays === 1 ? '' : 's'} ago`;
+  } else {
+    return formatDate(d);
+  }
+}
+
+export function formatStatus(status: string): string {
+  switch (status.toLowerCase()) {
+    case 'ok':
+    case 'healthy':
+    case 'active':
+    case 'running':
+    case 'completed':
+    case 'installed':
+    case 'success':
+      return chalk.green(`✓ ${status}`);
+    
+    case 'warning':
+    case 'degraded':
+    case 'pending':
+    case 'installing':
+    case 'updating':
+      return chalk.yellow(`⚠ ${status}`);
+    
+    case 'error':
+    case 'failed':
+    case 'unhealthy':
+    case 'stopped':
+    case 'deprecated':
+      return chalk.red(`✗ ${status}`);
+    
+    default:
+      return chalk.gray(status);
+  }
+}
+
+export function formatProgress(current: number, total: number): string {
+  const percentage = Math.round((current / total) * 100);
+  const barLength = 20;
+  const filledLength = Math.round((current / total) * barLength);
+  const emptyLength = barLength - filledLength;
+  
+  const bar = chalk.green('█'.repeat(filledLength)) + 
+              chalk.gray('░'.repeat(emptyLength));
+  
+  return `${bar} ${percentage}% (${current}/${total})`;
+}
+
+export function truncate(text: string, maxLength: number): string {
+  if (text.length <= maxLength) {
+    return text;
+  }
+  return text.substring(0, maxLength - 3) + '...';
+}
+
+export function highlight(text: string, search: string): string {
+  if (!search) return text;
+  
+  const regex = new RegExp(`(${search})`, 'gi');
+  return text.replace(regex, chalk.yellow('$1'));
+}

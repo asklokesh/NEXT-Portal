@@ -1,0 +1,173 @@
+name: Pulumi Deploy
+
+on:
+  push:
+    branches:
+      - main
+      - production
+    paths:
+      - 'infrastructure/pulumi/**'
+      - '.github/workflows/infrastructure/**'
+  workflow_dispatch:
+    inputs:
+      stack:
+        description: 'Stack to deploy'
+        required: true
+        type: choice
+        options:
+          - dev
+          - staging
+          - production
+      action:
+        description: 'Deployment action'
+        required: true
+        type: choice
+        options:
+          - up
+          - refresh
+          - destroy
+        default: 'up'
+
+env:
+  PULUMI_ACCESS_TOKEN: ${{ secrets.PULUMI_ACCESS_TOKEN }}
+  AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+  AWS_REGION: us-east-1
+  NODE_VERSION: '18'
+
+jobs:
+  determine-stack:
+    name: Determine Stack
+    runs-on: ubuntu-latest
+    outputs:
+      stack: ${{ steps.determine.outputs.stack }}
+      action: ${{ steps.determine.outputs.action }}
+    steps:
+      - id: determine
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "stack=${{ github.event.inputs.stack }}" >> $GITHUB_OUTPUT
+            echo "action=${{ github.event.inputs.action }}" >> $GITHUB_OUTPUT
+          elif [[ "${{ github.ref }}" == "refs/heads/production" ]]; then
+            echo "stack=production" >> $GITHUB_OUTPUT
+            echo "action=up" >> $GITHUB_OUTPUT
+          elif [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+            echo "stack=staging" >> $GITHUB_OUTPUT
+            echo "action=up" >> $GITHUB_OUTPUT
+          else
+            echo "stack=dev" >> $GITHUB_OUTPUT
+            echo "action=up" >> $GITHUB_OUTPUT
+          fi
+
+  deploy:
+    name: Deploy Infrastructure
+    needs: determine-stack
+    runs-on: ubuntu-latest
+    environment: ${{ needs.determine-stack.outputs.stack }}
+    concurrency:
+      group: pulumi-${{ needs.determine-stack.outputs.stack }}
+      cancel-in-progress: false
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: infrastructure/pulumi/package-lock.json
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Install Dependencies
+        working-directory: infrastructure/pulumi
+        run: |
+          npm ci
+          npm install -g @pulumi/pulumi
+
+      - name: Pulumi Login
+        run: pulumi login
+
+      - name: Select Stack
+        working-directory: infrastructure/pulumi
+        run: pulumi stack select ${{ needs.determine-stack.outputs.stack }}
+
+      - name: Pulumi Refresh
+        if: needs.determine-stack.outputs.action == 'refresh' || needs.determine-stack.outputs.action == 'up'
+        working-directory: infrastructure/pulumi
+        run: pulumi refresh --yes
+
+      - name: Run Pre-deployment Tests
+        working-directory: infrastructure/pulumi
+        run: npm test
+
+      - name: Pulumi Up
+        if: needs.determine-stack.outputs.action == 'up'
+        working-directory: infrastructure/pulumi
+        run: |
+          pulumi up --yes --skip-preview \
+            --message "Deployment by ${{ github.actor }} from ${{ github.sha }}"
+
+      - name: Pulumi Destroy
+        if: needs.determine-stack.outputs.action == 'destroy'
+        working-directory: infrastructure/pulumi
+        run: |
+          pulumi destroy --yes --skip-preview \
+            --message "Destruction by ${{ github.actor }} from ${{ github.sha }}"
+
+      - name: Export Stack Outputs
+        if: needs.determine-stack.outputs.action == 'up'
+        working-directory: infrastructure/pulumi
+        run: |
+          pulumi stack output --json > stack-outputs.json
+          echo "## Stack Outputs" >> $GITHUB_STEP_SUMMARY
+          echo '```json' >> $GITHUB_STEP_SUMMARY
+          cat stack-outputs.json | jq '.' >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+      - name: Run Post-deployment Tests
+        if: needs.determine-stack.outputs.action == 'up'
+        working-directory: infrastructure/pulumi
+        run: |
+          npm run test:integration
+          npm run test:smoke
+
+      - name: Update Documentation
+        if: needs.determine-stack.outputs.action == 'up' && needs.determine-stack.outputs.stack == 'production'
+        run: |
+          pulumi stack output --json > docs/infrastructure-outputs.json
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add docs/infrastructure-outputs.json
+          git commit -m "Update infrastructure outputs [skip ci]" || true
+          git push
+
+      - name: Send Notification
+        if: always()
+        uses: 8398a7/action-slack@v3
+        with:
+          status: ${{ job.status }}
+          text: |
+            Infrastructure ${{ needs.determine-stack.outputs.action }} on ${{ needs.determine-stack.outputs.stack }}
+            Status: ${{ job.status }}
+            Actor: ${{ github.actor }}
+            Commit: ${{ github.sha }}
+          webhook_url: ${{ secrets.SLACK_WEBHOOK }}
+
+      - name: Upload Artifacts
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: pulumi-deploy-${{ needs.determine-stack.outputs.stack }}
+          path: |
+            infrastructure/pulumi/stack-outputs.json
+            infrastructure/pulumi/Pulumi.${{ needs.determine-stack.outputs.stack }}.yaml

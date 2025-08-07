@@ -1,0 +1,1028 @@
+#!/usr/bin/env node
+
+const fs = require('fs');
+const path = require('path');
+const { execSync } = require('child_process');
+
+/**
+ * Test Results Aggregation Script
+ * Aggregates test results from multiple test suites and generates comprehensive reports
+ */
+
+const RESULT_TYPES = {
+  UNIT: 'unit-test-results',
+  INTEGRATION: 'integration-test-results',
+  E2E: 'e2e-test-results',
+  PERFORMANCE: 'performance-test-results',
+  SECURITY: 'security-test-results',
+  COMPATIBILITY: 'compatibility-test-results',
+  FAILURE_SCENARIOS: 'failure-scenario-results'
+};
+
+const PERFORMANCE_THRESHOLDS = {
+  MARKETPLACE_LOAD_TIME: 3000,
+  PLUGIN_INSTALLATION_TIME: 30000,
+  API_RESPONSE_TIME: 1000,
+  SEARCH_RESPONSE_TIME: 500,
+  ERROR_RATE: 0.05,
+  SUCCESS_RATE: 0.95
+};
+
+class TestResultsAggregator {
+  constructor(resultsPath) {
+    this.resultsPath = resultsPath;
+    this.aggregatedResults = {
+      summary: {
+        timestamp: new Date().toISOString(),
+        totalTests: 0,
+        passedTests: 0,
+        failedTests: 0,
+        skippedTests: 0,
+        successRate: 0,
+        executionTime: 0
+      },
+      suites: {},
+      coverage: {},
+      performance: {},
+      security: {},
+      compatibility: {},
+      failures: [],
+      recommendations: []
+    };
+  }
+
+  async aggregate() {
+    console.log('Starting test results aggregation...');
+    
+    try {
+      await this.collectTestResults();
+      await this.processCoverage();
+      await this.analyzePerformance();
+      await this.evaluateSecurity();
+      await this.checkCompatibility();
+      await this.generateRecommendations();
+      await this.saveResults();
+      
+      console.log('Test results aggregation completed successfully');
+      return this.aggregatedResults;
+    } catch (error) {
+      console.error('Error during test results aggregation:', error);
+      throw error;
+    }
+  }
+
+  async collectTestResults() {
+    console.log('Collecting test results...');
+    
+    const resultDirs = fs.readdirSync(this.resultsPath, { withFileTypes: true })
+      .filter(dirent => dirent.isDirectory())
+      .map(dirent => dirent.name);
+
+    for (const dirName of resultDirs) {
+      const dirPath = path.join(this.resultsPath, dirName);
+      await this.processTestSuite(dirName, dirPath);
+    }
+
+    // Calculate overall summary
+    this.calculateSummary();
+  }
+
+  async processTestSuite(suiteName, suitePath) {
+    console.log(`Processing test suite: ${suiteName}`);
+    
+    const suiteType = this.identifySuiteType(suiteName);
+    const resultFiles = this.findResultFiles(suitePath);
+    
+    const suiteResults = {
+      type: suiteType,
+      name: suiteName,
+      tests: 0,
+      passed: 0,
+      failed: 0,
+      skipped: 0,
+      duration: 0,
+      results: [],
+      artifacts: []
+    };
+
+    for (const resultFile of resultFiles) {
+      try {
+        const result = await this.parseResultFile(resultFile);
+        this.mergeResults(suiteResults, result);
+      } catch (error) {
+        console.warn(`Failed to parse result file ${resultFile}:`, error.message);
+      }
+    }
+
+    // Collect artifacts (screenshots, videos, reports)
+    suiteResults.artifacts = this.collectArtifacts(suitePath);
+    
+    this.aggregatedResults.suites[suiteName] = suiteResults;
+  }
+
+  identifySuiteType(suiteName) {
+    for (const [type, pattern] of Object.entries(RESULT_TYPES)) {
+      if (suiteName.includes(pattern)) {
+        return type.toLowerCase();
+      }
+    }
+    return 'unknown';
+  }
+
+  findResultFiles(dirPath) {
+    const resultFiles = [];
+    
+    if (!fs.existsSync(dirPath)) {
+      return resultFiles;
+    }
+
+    const files = fs.readdirSync(dirPath, { recursive: true });
+    
+    for (const file of files) {
+      const fullPath = path.join(dirPath, file);
+      if (this.isResultFile(fullPath)) {
+        resultFiles.push(fullPath);
+      }
+    }
+    
+    return resultFiles;
+  }
+
+  isResultFile(filePath) {
+    const ext = path.extname(filePath);
+    const fileName = path.basename(filePath);
+    
+    return (
+      ext === '.json' && (
+        fileName.includes('results') ||
+        fileName.includes('report') ||
+        fileName.includes('test')
+      )
+    ) || (
+      ext === '.xml' && fileName.includes('junit')
+    );
+  }
+
+  async parseResultFile(filePath) {
+    const ext = path.extname(filePath);
+    const content = fs.readFileSync(filePath, 'utf8');
+    
+    if (ext === '.json') {
+      return this.parseJSONResults(JSON.parse(content));
+    } else if (ext === '.xml') {
+      return this.parseJUnitResults(content);
+    }
+    
+    throw new Error(`Unsupported result file format: ${ext}`);
+  }
+
+  parseJSONResults(data) {
+    // Handle different JSON formats (Jest, Playwright, k6, etc.)
+    
+    if (data.testResults) {
+      // Jest format
+      return this.parseJestResults(data);
+    } else if (data.suites) {
+      // Playwright format
+      return this.parsePlaywrightResults(data);
+    } else if (data.metrics) {
+      // k6 performance format
+      return this.parseK6Results(data);
+    } else if (data.vulnerabilities) {
+      // Security scan format
+      return this.parseSecurityResults(data);
+    }
+    
+    // Generic format
+    return {
+      tests: data.tests || 0,
+      passed: data.passed || 0,
+      failed: data.failed || 0,
+      skipped: data.skipped || 0,
+      duration: data.duration || 0,
+      details: data
+    };
+  }
+
+  parseJestResults(data) {
+    const summary = data.numTotalTests ? {
+      tests: data.numTotalTests,
+      passed: data.numPassedTests,
+      failed: data.numFailedTests,
+      skipped: data.numTodoTests + data.numPendingTests,
+      duration: data.testResults.reduce((sum, result) => sum + (result.endTime - result.startTime), 0)
+    } : {
+      tests: 0,
+      passed: 0,
+      failed: 0,
+      skipped: 0,
+      duration: 0
+    };
+
+    return {
+      ...summary,
+      details: data,
+      coverage: data.coverageMap
+    };
+  }
+
+  parsePlaywrightResults(data) {
+    let tests = 0, passed = 0, failed = 0, skipped = 0, duration = 0;
+    
+    data.suites.forEach(suite => {
+      suite.specs.forEach(spec => {
+        spec.tests.forEach(test => {
+          tests++;
+          if (test.status === 'passed') passed++;
+          else if (test.status === 'failed') failed++;
+          else if (test.status === 'skipped') skipped++;
+          
+          duration += test.results.reduce((sum, result) => sum + result.duration, 0);
+        });
+      });
+    });
+
+    return {
+      tests,
+      passed,
+      failed,
+      skipped,
+      duration,
+      details: data
+    };
+  }
+
+  parseK6Results(data) {
+    const metrics = data.metrics;
+    const summary = {
+      tests: 1, // k6 runs are single test scenarios
+      passed: data.root_group.checks?.passes || 0,
+      failed: data.root_group.checks?.fails || 0,
+      skipped: 0,
+      duration: data.state?.testRunDurationMs || 0
+    };
+
+    // Extract performance metrics
+    const performanceMetrics = {
+      httpReqDuration: metrics.http_req_duration?.values || {},
+      httpReqFailed: metrics.http_req_failed?.values || {},
+      httpReqRate: metrics.http_reqs?.values || {},
+      dataReceived: metrics.data_received?.values || {},
+      iterations: metrics.iterations?.values || {}
+    };
+
+    return {
+      ...summary,
+      details: data,
+      performance: performanceMetrics
+    };
+  }
+
+  parseSecurityResults(data) {
+    const vulnerabilities = data.vulnerabilities || [];
+    const summary = {
+      tests: 1,
+      passed: vulnerabilities.length === 0 ? 1 : 0,
+      failed: vulnerabilities.length > 0 ? 1 : 0,
+      skipped: 0,
+      duration: data.scanDuration || 0
+    };
+
+    return {
+      ...summary,
+      details: data,
+      security: {
+        vulnerabilities: vulnerabilities.length,
+        critical: vulnerabilities.filter(v => v.severity === 'CRITICAL').length,
+        high: vulnerabilities.filter(v => v.severity === 'HIGH').length,
+        medium: vulnerabilities.filter(v => v.severity === 'MEDIUM').length,
+        low: vulnerabilities.filter(v => v.severity === 'LOW').length
+      }
+    };
+  }
+
+  parseJUnitResults(xmlContent) {
+    // Simple XML parsing for JUnit results
+    const testsuiteMatch = xmlContent.match(/<testsuite[^>]*tests="(\d+)"[^>]*failures="(\d+)"[^>]*skipped="(\d+)"[^>]*time="([\d.]+)"/);
+    
+    if (testsuiteMatch) {
+      const tests = parseInt(testsuiteMatch[1]);
+      const failed = parseInt(testsuiteMatch[2]);
+      const skipped = parseInt(testsuiteMatch[3]);
+      const duration = parseFloat(testsuiteMatch[4]) * 1000; // Convert to ms
+      const passed = tests - failed - skipped;
+      
+      return {
+        tests,
+        passed,
+        failed,
+        skipped,
+        duration,
+        details: { xmlContent }
+      };
+    }
+    
+    return {
+      tests: 0,
+      passed: 0,
+      failed: 0,
+      skipped: 0,
+      duration: 0,
+      details: { xmlContent }
+    };
+  }
+
+  mergeResults(suiteResults, result) {
+    suiteResults.tests += result.tests;
+    suiteResults.passed += result.passed;
+    suiteResults.failed += result.failed;
+    suiteResults.skipped += result.skipped;
+    suiteResults.duration += result.duration;
+    
+    suiteResults.results.push(result);
+    
+    // Merge additional data
+    if (result.coverage) {
+      suiteResults.coverage = result.coverage;
+    }
+    
+    if (result.performance) {
+      suiteResults.performance = result.performance;
+    }
+    
+    if (result.security) {
+      suiteResults.security = result.security;
+    }
+  }
+
+  collectArtifacts(dirPath) {
+    const artifacts = [];
+    
+    if (!fs.existsSync(dirPath)) {
+      return artifacts;
+    }
+
+    const files = fs.readdirSync(dirPath, { recursive: true });
+    
+    for (const file of files) {
+      const fullPath = path.join(dirPath, file);
+      const ext = path.extname(file);
+      
+      if (['.png', '.jpg', '.webm', '.mp4', '.html', '.pdf'].includes(ext)) {
+        artifacts.push({
+          type: this.getArtifactType(ext),
+          path: fullPath,
+          size: fs.statSync(fullPath).size
+        });
+      }
+    }
+    
+    return artifacts;
+  }
+
+  getArtifactType(extension) {
+    switch (extension) {
+      case '.png':
+      case '.jpg':
+        return 'screenshot';
+      case '.webm':
+      case '.mp4':
+        return 'video';
+      case '.html':
+        return 'report';
+      case '.pdf':
+        return 'document';
+      default:
+        return 'other';
+    }
+  }
+
+  calculateSummary() {
+    const summary = this.aggregatedResults.summary;
+    
+    for (const suite of Object.values(this.aggregatedResults.suites)) {
+      summary.totalTests += suite.tests;
+      summary.passedTests += suite.passed;
+      summary.failedTests += suite.failed;
+      summary.skippedTests += suite.skipped;
+      summary.executionTime += suite.duration;
+    }
+    
+    summary.successRate = summary.totalTests > 0 
+      ? summary.passedTests / summary.totalTests 
+      : 0;
+  }
+
+  async processCoverage() {
+    console.log('Processing coverage data...');
+    
+    const coverageData = {
+      overall: {
+        lines: { covered: 0, total: 0, percentage: 0 },
+        functions: { covered: 0, total: 0, percentage: 0 },
+        branches: { covered: 0, total: 0, percentage: 0 },
+        statements: { covered: 0, total: 0, percentage: 0 }
+      },
+      files: []
+    };
+    
+    // Look for coverage files
+    const coverageFiles = this.findCoverageFiles();
+    
+    for (const coverageFile of coverageFiles) {
+      try {
+        const coverage = this.parseCoverageFile(coverageFile);
+        this.mergeCoverage(coverageData, coverage);
+      } catch (error) {
+        console.warn(`Failed to parse coverage file ${coverageFile}:`, error.message);
+      }
+    }
+    
+    this.aggregatedResults.coverage = coverageData;
+  }
+
+  findCoverageFiles() {
+    const coverageFiles = [];
+    const searchPaths = [
+      path.join(this.resultsPath, '**/coverage-summary.json'),
+      path.join(this.resultsPath, '**/lcov.info'),
+      path.join(this.resultsPath, '**/coverage.json')
+    ];
+    
+    for (const pattern of searchPaths) {
+      try {
+        const files = execSync(`find ${this.resultsPath} -name "${path.basename(pattern)}"`, { encoding: 'utf8' })
+          .split('\n')
+          .filter(f => f.trim());
+        coverageFiles.push(...files);
+      } catch (error) {
+        // Ignore find errors
+      }
+    }
+    
+    return coverageFiles;
+  }
+
+  parseCoverageFile(filePath) {
+    const ext = path.extname(filePath);
+    const fileName = path.basename(filePath);
+    
+    if (fileName === 'coverage-summary.json') {
+      const data = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+      return this.parseJestCoverage(data);
+    }
+    
+    return {
+      overall: {
+        lines: { covered: 0, total: 0, percentage: 0 },
+        functions: { covered: 0, total: 0, percentage: 0 },
+        branches: { covered: 0, total: 0, percentage: 0 },
+        statements: { covered: 0, total: 0, percentage: 0 }
+      },
+      files: []
+    };
+  }
+
+  parseJestCoverage(data) {
+    const total = data.total;
+    
+    return {
+      overall: {
+        lines: {
+          covered: total.lines.covered,
+          total: total.lines.total,
+          percentage: total.lines.pct
+        },
+        functions: {
+          covered: total.functions.covered,
+          total: total.functions.total,
+          percentage: total.functions.pct
+        },
+        branches: {
+          covered: total.branches.covered,
+          total: total.branches.total,
+          percentage: total.branches.pct
+        },
+        statements: {
+          covered: total.statements.covered,
+          total: total.statements.total,
+          percentage: total.statements.pct
+        }
+      },
+      files: Object.entries(data)
+        .filter(([key]) => key !== 'total')
+        .map(([file, coverage]) => ({
+          file,
+          lines: coverage.lines.pct,
+          functions: coverage.functions.pct,
+          branches: coverage.branches.pct,
+          statements: coverage.statements.pct
+        }))
+    };
+  }
+
+  mergeCoverage(targetCoverage, sourceCoverage) {
+    // Simple merge - in a real implementation, you'd want more sophisticated merging
+    const target = targetCoverage.overall;
+    const source = sourceCoverage.overall;
+    
+    target.lines.covered += source.lines.covered;
+    target.lines.total += source.lines.total;
+    target.functions.covered += source.functions.covered;
+    target.functions.total += source.functions.total;
+    target.branches.covered += source.branches.covered;
+    target.branches.total += source.branches.total;
+    target.statements.covered += source.statements.covered;
+    target.statements.total += source.statements.total;
+    
+    // Recalculate percentages
+    target.lines.percentage = target.lines.total > 0 ? (target.lines.covered / target.lines.total) * 100 : 0;
+    target.functions.percentage = target.functions.total > 0 ? (target.functions.covered / target.functions.total) * 100 : 0;
+    target.branches.percentage = target.branches.total > 0 ? (target.branches.covered / target.branches.total) * 100 : 0;
+    target.statements.percentage = target.statements.total > 0 ? (target.statements.covered / target.statements.total) * 100 : 0;
+    
+    targetCoverage.files.push(...sourceCoverage.files);
+  }
+
+  async analyzePerformance() {
+    console.log('Analyzing performance metrics...');
+    
+    const performanceData = {
+      summary: {
+        averageResponseTime: 0,
+        errorRate: 0,
+        throughput: 0,
+        p95ResponseTime: 0
+      },
+      thresholds: PERFORMANCE_THRESHOLDS,
+      violations: [],
+      trends: []
+    };
+    
+    // Collect performance data from test results
+    for (const [suiteName, suite] of Object.entries(this.aggregatedResults.suites)) {
+      if (suite.type === 'performance' && suite.performance) {
+        this.analyzePerformanceSuite(performanceData, suite, suiteName);
+      }
+    }
+    
+    this.aggregatedResults.performance = performanceData;
+  }
+
+  analyzePerformanceSuite(performanceData, suite, suiteName) {
+    const perf = suite.performance;
+    
+    // Analyze HTTP request duration
+    if (perf.httpReqDuration) {
+      const avgDuration = perf.httpReqDuration.avg || 0;
+      const p95Duration = perf.httpReqDuration['p(95)'] || 0;
+      
+      performanceData.summary.averageResponseTime = avgDuration;
+      performanceData.summary.p95ResponseTime = p95Duration;
+      
+      // Check thresholds
+      if (avgDuration > PERFORMANCE_THRESHOLDS.API_RESPONSE_TIME) {
+        performanceData.violations.push({
+          suite: suiteName,
+          metric: 'Average Response Time',
+          value: avgDuration,
+          threshold: PERFORMANCE_THRESHOLDS.API_RESPONSE_TIME,
+          severity: 'high'
+        });
+      }
+    }
+    
+    // Analyze error rate
+    if (perf.httpReqFailed) {
+      const errorRate = perf.httpReqFailed.rate || 0;
+      performanceData.summary.errorRate = errorRate;
+      
+      if (errorRate > PERFORMANCE_THRESHOLDS.ERROR_RATE) {
+        performanceData.violations.push({
+          suite: suiteName,
+          metric: 'Error Rate',
+          value: errorRate,
+          threshold: PERFORMANCE_THRESHOLDS.ERROR_RATE,
+          severity: 'critical'
+        });
+      }
+    }
+    
+    // Analyze throughput
+    if (perf.httpReqRate) {
+      const throughput = perf.httpReqRate.rate || 0;
+      performanceData.summary.throughput = throughput;
+    }
+  }
+
+  async evaluateSecurity() {
+    console.log('Evaluating security test results...');
+    
+    const securityData = {
+      summary: {
+        totalVulnerabilities: 0,
+        criticalVulnerabilities: 0,
+        highVulnerabilities: 0,
+        mediumVulnerabilities: 0,
+        lowVulnerabilities: 0
+      },
+      vulnerabilities: [],
+      compliance: {
+        rbacTests: 0,
+        rbacPassed: 0,
+        sandboxTests: 0,
+        sandboxPassed: 0
+      },
+      recommendations: []
+    };
+    
+    // Collect security data from test results
+    for (const [suiteName, suite] of Object.entries(this.aggregatedResults.suites)) {
+      if (suite.type === 'security' && suite.security) {
+        this.evaluateSecuritySuite(securityData, suite, suiteName);
+      }
+    }
+    
+    this.aggregatedResults.security = securityData;
+  }
+
+  evaluateSecuritySuite(securityData, suite, suiteName) {
+    const security = suite.security;
+    
+    // Aggregate vulnerability counts
+    securityData.summary.totalVulnerabilities += security.vulnerabilities || 0;
+    securityData.summary.criticalVulnerabilities += security.critical || 0;
+    securityData.summary.highVulnerabilities += security.high || 0;
+    securityData.summary.mediumVulnerabilities += security.medium || 0;
+    securityData.summary.lowVulnerabilities += security.low || 0;
+    
+    // Extract vulnerabilities from details
+    if (suite.results) {
+      for (const result of suite.results) {
+        if (result.details && result.details.vulnerabilities) {
+          securityData.vulnerabilities.push(...result.details.vulnerabilities);
+        }
+      }
+    }
+    
+    // Evaluate compliance
+    if (suiteName.includes('rbac')) {
+      securityData.compliance.rbacTests += suite.tests;
+      securityData.compliance.rbacPassed += suite.passed;
+    }
+    
+    if (suiteName.includes('sandbox')) {
+      securityData.compliance.sandboxTests += suite.tests;
+      securityData.compliance.sandboxPassed += suite.passed;
+    }
+  }
+
+  async checkCompatibility() {
+    console.log('Checking compatibility test results...');
+    
+    const compatibilityData = {
+      browsers: {},
+      backstageVersions: {},
+      summary: {
+        totalBrowserTests: 0,
+        passedBrowserTests: 0,
+        totalVersionTests: 0,
+        passedVersionTests: 0
+      }
+    };
+    
+    // Collect compatibility data from test results
+    for (const [suiteName, suite] of Object.entries(this.aggregatedResults.suites)) {
+      if (suite.type === 'compatibility') {
+        this.analyzeCompatibilitySuite(compatibilityData, suite, suiteName);
+      }
+    }
+    
+    this.aggregatedResults.compatibility = compatibilityData;
+  }
+
+  analyzeCompatibilitySuite(compatibilityData, suite, suiteName) {
+    // Extract browser and version information from suite name
+    const browserMatch = suiteName.match(/(chromium|firefox|webkit)/);
+    const versionMatch = suiteName.match(/(\d+\.\d+\.\d+)/);
+    
+    if (browserMatch) {
+      const browser = browserMatch[1];
+      if (!compatibilityData.browsers[browser]) {
+        compatibilityData.browsers[browser] = { tests: 0, passed: 0, failed: 0 };
+      }
+      
+      compatibilityData.browsers[browser].tests += suite.tests;
+      compatibilityData.browsers[browser].passed += suite.passed;
+      compatibilityData.browsers[browser].failed += suite.failed;
+      
+      compatibilityData.summary.totalBrowserTests += suite.tests;
+      compatibilityData.summary.passedBrowserTests += suite.passed;
+    }
+    
+    if (versionMatch) {
+      const version = versionMatch[1];
+      if (!compatibilityData.backstageVersions[version]) {
+        compatibilityData.backstageVersions[version] = { tests: 0, passed: 0, failed: 0 };
+      }
+      
+      compatibilityData.backstageVersions[version].tests += suite.tests;
+      compatibilityData.backstageVersions[version].passed += suite.passed;
+      compatibilityData.backstageVersions[version].failed += suite.failed;
+      
+      compatibilityData.summary.totalVersionTests += suite.tests;
+      compatibilityData.summary.passedVersionTests += suite.passed;
+    }
+  }
+
+  async generateRecommendations() {
+    console.log('Generating recommendations...');
+    
+    const recommendations = [];
+    
+    // Coverage recommendations
+    const coverage = this.aggregatedResults.coverage;
+    if (coverage.overall.lines.percentage < 80) {
+      recommendations.push({
+        category: 'Coverage',
+        priority: 'high',
+        message: `Line coverage is ${coverage.overall.lines.percentage.toFixed(1)}%. Target is 80%+.`,
+        action: 'Increase test coverage, especially for uncovered lines'
+      });
+    }
+    
+    // Performance recommendations
+    const performance = this.aggregatedResults.performance;
+    if (performance.violations && performance.violations.length > 0) {
+      for (const violation of performance.violations) {
+        recommendations.push({
+          category: 'Performance',
+          priority: violation.severity,
+          message: `${violation.metric} (${violation.value}) exceeds threshold (${violation.threshold})`,
+          action: `Optimize ${violation.metric.toLowerCase()} in ${violation.suite}`
+        });
+      }
+    }
+    
+    // Security recommendations
+    const security = this.aggregatedResults.security;
+    if (security.summary.criticalVulnerabilities > 0) {
+      recommendations.push({
+        category: 'Security',
+        priority: 'critical',
+        message: `${security.summary.criticalVulnerabilities} critical vulnerabilities found`,
+        action: 'Immediately address critical security vulnerabilities'
+      });
+    }
+    
+    if (security.summary.highVulnerabilities > 0) {
+      recommendations.push({
+        category: 'Security',
+        priority: 'high',
+        message: `${security.summary.highVulnerabilities} high-severity vulnerabilities found`,
+        action: 'Address high-severity vulnerabilities in next release'
+      });
+    }
+    
+    // Test stability recommendations
+    if (this.aggregatedResults.summary.successRate < 0.95) {
+      recommendations.push({
+        category: 'Test Stability',
+        priority: 'medium',
+        message: `Test success rate is ${(this.aggregatedResults.summary.successRate * 100).toFixed(1)}%. Target is 95%+.`,
+        action: 'Investigate and fix flaky tests'
+      });
+    }
+    
+    // Compatibility recommendations
+    const compatibility = this.aggregatedResults.compatibility;
+    for (const [browser, results] of Object.entries(compatibility.browsers)) {
+      const successRate = results.tests > 0 ? results.passed / results.tests : 0;
+      if (successRate < 0.95) {
+        recommendations.push({
+          category: 'Compatibility',
+          priority: 'medium',
+          message: `${browser} compatibility success rate is ${(successRate * 100).toFixed(1)}%`,
+          action: `Investigate ${browser}-specific test failures`
+        });
+      }
+    }
+    
+    this.aggregatedResults.recommendations = recommendations;
+  }
+
+  async saveResults() {
+    console.log('Saving aggregated results...');
+    
+    // Save comprehensive JSON report
+    const jsonReport = JSON.stringify(this.aggregatedResults, null, 2);
+    fs.writeFileSync('test-summary.json', jsonReport);
+    
+    // Generate HTML report
+    await this.generateHTMLReport();
+    
+    // Generate markdown summary for GitHub
+    await this.generateMarkdownSummary();
+    
+    console.log('Results saved successfully');
+  }
+
+  async generateHTMLReport() {
+    const htmlTemplate = this.getHTMLTemplate();
+    const htmlContent = htmlTemplate.replace('{{RESULTS_DATA}}', JSON.stringify(this.aggregatedResults));
+    fs.writeFileSync('test-summary.html', htmlContent);
+  }
+
+  getHTMLTemplate() {
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Plugin System Test Report</title>
+    <style>
+        body { font-family: 'Segoe UI', system-ui, sans-serif; margin: 0; padding: 20px; background: #f5f5f5; }
+        .container { max-width: 1200px; margin: 0 auto; background: white; padding: 30px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        .header { border-bottom: 2px solid #e1e5e9; padding-bottom: 20px; margin-bottom: 30px; }
+        .summary-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 20px; margin-bottom: 30px; }
+        .card { padding: 20px; border-radius: 6px; border-left: 4px solid #0066cc; background: #f8f9fa; }
+        .card.success { border-left-color: #28a745; }
+        .card.warning { border-left-color: #ffc107; }
+        .card.error { border-left-color: #dc3545; }
+        .metric { font-size: 2em; font-weight: bold; margin-bottom: 5px; }
+        .metric-label { color: #666; font-size: 0.9em; }
+        .section { margin-bottom: 40px; }
+        .section h2 { border-bottom: 1px solid #e1e5e9; padding-bottom: 10px; }
+        table { width: 100%; border-collapse: collapse; margin-top: 15px; }
+        th, td { padding: 12px; text-align: left; border-bottom: 1px solid #e1e5e9; }
+        th { background: #f8f9fa; font-weight: 600; }
+        .success { color: #28a745; }
+        .error { color: #dc3545; }
+        .warning { color: #ffc107; }
+        .badge { padding: 4px 8px; border-radius: 4px; font-size: 0.8em; font-weight: bold; }
+        .badge.success { background: #d4edda; color: #155724; }
+        .badge.error { background: #f8d7da; color: #721c24; }
+        .badge.warning { background: #fff3cd; color: #856404; }
+        .recommendations { background: #fff3cd; padding: 15px; border-radius: 4px; margin-top: 20px; }
+        .recommendation { margin-bottom: 10px; padding: 10px; border-left: 3px solid #ffc107; background: white; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Plugin System Comprehensive Test Report</h1>
+            <p>Generated on <span id="timestamp"></span></p>
+        </div>
+        
+        <div class="summary-cards" id="summary-cards">
+            <!-- Summary cards will be populated by JavaScript -->
+        </div>
+        
+        <div class="section">
+            <h2>Test Suites</h2>
+            <div id="test-suites">
+                <!-- Test suites will be populated by JavaScript -->
+            </div>
+        </div>
+        
+        <div class="section">
+            <h2>Coverage Report</h2>
+            <div id="coverage-report">
+                <!-- Coverage report will be populated by JavaScript -->
+            </div>
+        </div>
+        
+        <div class="section">
+            <h2>Performance Analysis</h2>
+            <div id="performance-analysis">
+                <!-- Performance analysis will be populated by JavaScript -->
+            </div>
+        </div>
+        
+        <div class="section">
+            <h2>Security Assessment</h2>
+            <div id="security-assessment">
+                <!-- Security assessment will be populated by JavaScript -->
+            </div>
+        </div>
+        
+        <div class="section">
+            <h2>Recommendations</h2>
+            <div id="recommendations">
+                <!-- Recommendations will be populated by JavaScript -->
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        const results = {{RESULTS_DATA}};
+        
+        // Populate timestamp
+        document.getElementById('timestamp').textContent = new Date(results.summary.timestamp).toLocaleString();
+        
+        // Generate summary cards
+        const summaryCards = document.getElementById('summary-cards');
+        summaryCards.innerHTML = \`
+            <div class="card \${results.summary.successRate >= 0.95 ? 'success' : results.summary.successRate >= 0.8 ? 'warning' : 'error'}">
+                <div class="metric">\${results.summary.totalTests}</div>
+                <div class="metric-label">Total Tests</div>
+            </div>
+            <div class="card success">
+                <div class="metric">\${results.summary.passedTests}</div>
+                <div class="metric-label">Passed</div>
+            </div>
+            <div class="card error">
+                <div class="metric">\${results.summary.failedTests}</div>
+                <div class="metric-label">Failed</div>
+            </div>
+            <div class="card">
+                <div class="metric">\${(results.summary.successRate * 100).toFixed(1)}%</div>
+                <div class="metric-label">Success Rate</div>
+            </div>
+        \`;
+        
+        // Populate other sections...
+        // (Additional JavaScript would go here to populate other sections)
+    </script>
+</body>
+</html>`;
+  }
+
+  async generateMarkdownSummary() {
+    const summary = this.aggregatedResults.summary;
+    const recommendations = this.aggregatedResults.recommendations;
+    
+    const markdown = `# Plugin System Test Report
+
+## Summary
+- **Total Tests**: ${summary.totalTests}
+- **Passed**: ${summary.passedTests}
+- **Failed**: ${summary.failedTests}
+- **Success Rate**: ${(summary.successRate * 100).toFixed(1)}%
+- **Execution Time**: ${Math.round(summary.executionTime / 1000)}s
+
+## Test Suites
+${Object.entries(this.aggregatedResults.suites).map(([name, suite]) => `
+### ${name}
+- Tests: ${suite.tests}
+- Passed: ${suite.passed}
+- Failed: ${suite.failed}
+- Success Rate: ${suite.tests > 0 ? ((suite.passed / suite.tests) * 100).toFixed(1) : 0}%
+`).join('')}
+
+## Coverage
+${this.aggregatedResults.coverage.overall ? `
+- **Lines**: ${this.aggregatedResults.coverage.overall.lines.percentage.toFixed(1)}%
+- **Functions**: ${this.aggregatedResults.coverage.overall.functions.percentage.toFixed(1)}%
+- **Branches**: ${this.aggregatedResults.coverage.overall.branches.percentage.toFixed(1)}%
+- **Statements**: ${this.aggregatedResults.coverage.overall.statements.percentage.toFixed(1)}%
+` : 'No coverage data available'}
+
+## Recommendations
+${recommendations.length > 0 ? recommendations.map(rec => `
+- **${rec.category}** (${rec.priority}): ${rec.message}
+  - Action: ${rec.action}
+`).join('') : 'No recommendations'}
+
+---
+*Report generated on ${new Date().toISOString()}*`;
+    
+    fs.writeFileSync('test-summary.md', markdown);
+  }
+}
+
+// Main execution
+async function main() {
+  const resultsPath = process.argv[2] || './test-results';
+  
+  if (!fs.existsSync(resultsPath)) {
+    console.error(`Results path does not exist: ${resultsPath}`);
+    process.exit(1);
+  }
+  
+  try {
+    const aggregator = new TestResultsAggregator(resultsPath);
+    await aggregator.aggregate();
+    
+    console.log('✅ Test results aggregation completed successfully');
+    console.log('📊 Reports generated:');
+    console.log('  - test-summary.json');
+    console.log('  - test-summary.html');
+    console.log('  - test-summary.md');
+    
+    // Exit with error code if tests failed
+    const results = aggregator.aggregatedResults;
+    const exitCode = results.summary.failedTests > 0 ? 1 : 0;
+    process.exit(exitCode);
+    
+  } catch (error) {
+    console.error('❌ Test results aggregation failed:', error);
+    process.exit(1);
+  }
+}
+
+if (require.main === module) {
+  main();
+}
+
+module.exports = TestResultsAggregator;

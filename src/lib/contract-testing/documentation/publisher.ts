@@ -1,0 +1,898 @@
+import { PactContract, OpenAPISpec, ContractTestResult } from '../types';
+import { OpenAPIGenerator } from '../openapi/generator';
+import { Logger } from 'winston';
+import { writeFileSync, mkdirSync, readFileSync, existsSync } from 'fs';
+import { join } from 'path';
+import yaml from 'js-yaml';
+
+export interface DocumentationConfig {
+  outputDir: string;
+  format: 'html' | 'markdown' | 'pdf';
+  includeExamples?: boolean;
+  includeTestResults?: boolean;
+  includeCompatibilityMatrix?: boolean;
+  includeVersionHistory?: boolean;
+  customTemplate?: string;
+  branding?: {
+    title?: string;
+    logo?: string;
+    theme?: 'light' | 'dark';
+    primaryColor?: string;
+  };
+  publishing?: {
+    enabled: boolean;
+    target: 'static' | 's3' | 'github-pages' | 'confluence';
+    config?: Record<string, any>;
+  };
+}
+
+export interface DocumentationSection {
+  id: string;
+  title: string;
+  content: string;
+  order: number;
+  subsections?: DocumentationSection[];
+}
+
+export interface GeneratedDocumentation {
+  format: string;
+  filePath: string;
+  size: number;
+  sections: DocumentationSection[];
+  generatedAt: Date;
+  publishUrl?: string;
+}
+
+export class ContractDocumentationPublisher {
+  private logger: Logger;
+  private openApiGenerator: OpenAPIGenerator;
+
+  constructor(logger: Logger) {
+    this.logger = logger;
+    this.openApiGenerator = new OpenAPIGenerator(logger);
+  }
+
+  /**
+   * Generate comprehensive contract documentation
+   */
+  async generateDocumentation(
+    contracts: PactContract[],
+    testResults?: ContractTestResult[],
+    config: DocumentationConfig = { outputDir: './docs', format: 'html' }
+  ): Promise<GeneratedDocumentation> {
+    this.logger.info('Generating contract documentation', {
+      contractCount: contracts.length,
+      format: config.format,
+      outputDir: config.outputDir
+    });
+
+    // Ensure output directory exists
+    mkdirSync(config.outputDir, { recursive: true });
+
+    // Generate documentation sections
+    const sections: DocumentationSection[] = [];
+
+    // Overview section
+    sections.push(await this.generateOverviewSection(contracts, config));
+
+    // Contract sections
+    for (const contract of contracts) {
+      sections.push(await this.generateContractSection(contract, testResults, config));
+    }
+
+    // API Reference section
+    sections.push(await this.generateAPIReferenceSection(contracts, config));
+
+    // Test Results section
+    if (config.includeTestResults && testResults) {
+      sections.push(await this.generateTestResultsSection(testResults, config));
+    }
+
+    // Compatibility Matrix section
+    if (config.includeCompatibilityMatrix) {
+      sections.push(await this.generateCompatibilitySection(contracts, config));
+    }
+
+    // Version History section
+    if (config.includeVersionHistory) {
+      sections.push(await this.generateVersionHistorySection(contracts, config));
+    }
+
+    // Generate final documentation file
+    const documentation = await this.renderDocumentation(sections, config);
+
+    // Publish if configured
+    let publishUrl: string | undefined;
+    if (config.publishing?.enabled) {
+      publishUrl = await this.publishDocumentation(documentation, config);
+    }
+
+    this.logger.info('Documentation generation completed', {
+      filePath: documentation.filePath,
+      size: documentation.size,
+      sections: sections.length,
+      publishUrl
+    });
+
+    return {
+      ...documentation,
+      sections,
+      publishUrl
+    };
+  }
+
+  /**
+   * Generate interactive API documentation
+   */
+  async generateInteractiveAPIDocs(
+    contracts: PactContract[],
+    config: DocumentationConfig
+  ): Promise<string> {
+    this.logger.info('Generating interactive API documentation');
+
+    // Convert contracts to OpenAPI specs
+    const openApiSpecs: OpenAPISpec[] = [];
+    for (const contract of contracts) {
+      const spec = this.openApiGenerator.convertPactToOpenAPI(contract);
+      openApiSpecs.push(spec);
+    }
+
+    // Generate Swagger UI HTML
+    const swaggerHtml = this.generateSwaggerUI(openApiSpecs, config);
+    const filePath = join(config.outputDir, 'api-docs.html');
+    
+    writeFileSync(filePath, swaggerHtml, 'utf8');
+
+    this.logger.info('Interactive API documentation generated', { filePath });
+    return filePath;
+  }
+
+  /**
+   * Generate contract comparison documentation
+   */
+  async generateContractComparison(
+    oldContracts: PactContract[],
+    newContracts: PactContract[],
+    config: DocumentationConfig
+  ): Promise<string> {
+    this.logger.info('Generating contract comparison documentation');
+
+    const sections: DocumentationSection[] = [];
+
+    // Summary section
+    sections.push({
+      id: 'comparison-summary',
+      title: 'Contract Comparison Summary',
+      content: this.generateComparisonSummary(oldContracts, newContracts),
+      order: 1
+    });
+
+    // Detailed comparison sections
+    const contractPairs = this.pairContracts(oldContracts, newContracts);
+    
+    contractPairs.forEach((pair, index) => {
+      sections.push({
+        id: `comparison-${index}`,
+        title: `${pair.consumer} -> ${pair.provider}`,
+        content: this.generateDetailedComparison(pair.oldContract, pair.newContract),
+        order: 2 + index
+      });
+    });
+
+    const documentation = await this.renderDocumentation(sections, {
+      ...config,
+      branding: {
+        ...config.branding,
+        title: 'Contract Comparison Report'
+      }
+    });
+
+    return documentation.filePath;
+  }
+
+  /**
+   * Generate changelog from contract versions
+   */
+  async generateContractChangelog(
+    contractHistory: { version: string; contracts: PactContract[]; date: Date }[],
+    config: DocumentationConfig
+  ): Promise<string> {
+    this.logger.info('Generating contract changelog');
+
+    const changelogContent = this.generateChangelogContent(contractHistory);
+    const filePath = join(config.outputDir, 'CHANGELOG.md');
+    
+    writeFileSync(filePath, changelogContent, 'utf8');
+
+    this.logger.info('Contract changelog generated', { filePath });
+    return filePath;
+  }
+
+  private async generateOverviewSection(
+    contracts: PactContract[],
+    config: DocumentationConfig
+  ): Promise<DocumentationSection> {
+    const consumers = new Set(contracts.map(c => c.consumer.name));
+    const providers = new Set(contracts.map(c => c.provider.name));
+    const totalInteractions = contracts.reduce((sum, c) => sum + c.interactions.length, 0);
+
+    const content = `
+# Contract Documentation Overview
+
+This documentation describes the API contracts between consumers and providers in the system.
+
+## Summary
+
+- **Total Contracts**: ${contracts.length}
+- **Consumers**: ${consumers.size}
+- **Providers**: ${providers.size}
+- **Total Interactions**: ${totalInteractions}
+
+## Consumers
+
+${Array.from(consumers).map(consumer => `- ${consumer}`).join('\n')}
+
+## Providers
+
+${Array.from(providers).map(provider => `- ${provider}`).join('\n')}
+
+## Generated
+
+- **Date**: ${new Date().toISOString()}
+- **Tool**: Contract Testing Framework
+`;
+
+    return {
+      id: 'overview',
+      title: 'Overview',
+      content: content.trim(),
+      order: 1
+    };
+  }
+
+  private async generateContractSection(
+    contract: PactContract,
+    testResults?: ContractTestResult[],
+    config?: DocumentationConfig
+  ): Promise<DocumentationSection> {
+    const contractResults = testResults?.filter(r => 
+      r.contractId === `${contract.consumer.name}-${contract.provider.name}`
+    );
+
+    let content = `
+# ${contract.consumer.name} -> ${contract.provider.name}
+
+**Consumer**: ${contract.consumer.name}  
+**Provider**: ${contract.provider.name}  
+**Version**: ${contract.provider.version || 'N/A'}  
+**Interactions**: ${contract.interactions.length}
+
+## Interactions
+
+${contract.interactions.map((interaction, index) => `
+### ${index + 1}. ${interaction.description}
+
+**Request**:
+- Method: \`${interaction.request.method}\`
+- Path: \`${interaction.request.path}\`
+${interaction.request.headers ? `- Headers: ${JSON.stringify(interaction.request.headers, null, 2)}` : ''}
+${interaction.request.query ? `- Query: ${JSON.stringify(interaction.request.query, null, 2)}` : ''}
+${interaction.request.body ? `- Body: \`\`\`json\n${JSON.stringify(interaction.request.body, null, 2)}\n\`\`\`` : ''}
+
+**Response**:
+- Status: \`${interaction.response.status}\`
+${interaction.response.headers ? `- Headers: ${JSON.stringify(interaction.response.headers, null, 2)}` : ''}
+${interaction.response.body ? `- Body: \`\`\`json\n${JSON.stringify(interaction.response.body, null, 2)}\n\`\`\`` : ''}
+
+${interaction.providerStates?.length ? `**Provider States**:\n${interaction.providerStates.map(state => `- ${state.name}${state.params ? ` (${JSON.stringify(state.params)})` : ''}`).join('\n')}` : ''}
+`).join('\n')}`;
+
+    // Add test results if available
+    if (contractResults && contractResults.length > 0) {
+      const latest = contractResults[contractResults.length - 1];
+      content += `
+
+## Test Results
+
+**Status**: ${latest.status === 'passed' ? '✅ Passing' : '❌ Failing'}  
+**Last Run**: ${latest.endTime.toISOString()}  
+**Duration**: ${latest.duration}ms  
+**Pass Rate**: ${latest.summary.passRate.toFixed(1)}%
+
+### Interaction Results
+
+${latest.interactions.map(interaction => `
+- **${interaction.description}**: ${interaction.status === 'passed' ? '✅' : '❌'} (${interaction.duration}ms)
+${interaction.error ? `  - Error: ${interaction.error}` : ''}
+`).join('')}`;
+    }
+
+    return {
+      id: `contract-${contract.consumer.name}-${contract.provider.name}`,
+      title: `${contract.consumer.name} -> ${contract.provider.name}`,
+      content: content.trim(),
+      order: 2
+    };
+  }
+
+  private async generateAPIReferenceSection(
+    contracts: PactContract[],
+    config: DocumentationConfig
+  ): Promise<DocumentationSection> {
+    // Group interactions by provider and method
+    const apiReference: Record<string, Record<string, any[]>> = {};
+
+    contracts.forEach(contract => {
+      const providerName = contract.provider.name;
+      if (!apiReference[providerName]) {
+        apiReference[providerName] = {};
+      }
+
+      contract.interactions.forEach(interaction => {
+        const key = `${interaction.request.method} ${interaction.request.path}`;
+        if (!apiReference[providerName][key]) {
+          apiReference[providerName][key] = [];
+        }
+        apiReference[providerName][key].push({
+          consumer: contract.consumer.name,
+          interaction
+        });
+      });
+    });
+
+    let content = '# API Reference\n\n';
+
+    Object.entries(apiReference).forEach(([providerName, endpoints]) => {
+      content += `## ${providerName}\n\n`;
+
+      Object.entries(endpoints).forEach(([endpoint, interactions]) => {
+        content += `### ${endpoint}\n\n`;
+        
+        interactions.forEach(({ consumer, interaction }) => {
+          content += `**Used by**: ${consumer}\n\n`;
+          content += `**Description**: ${interaction.description}\n\n`;
+          
+          if (interaction.request.body) {
+            content += `**Request Body Example**:\n\`\`\`json\n${JSON.stringify(interaction.request.body, null, 2)}\n\`\`\`\n\n`;
+          }
+          
+          if (interaction.response.body) {
+            content += `**Response Example**:\n\`\`\`json\n${JSON.stringify(interaction.response.body, null, 2)}\n\`\`\`\n\n`;
+          }
+        });
+      });
+    });
+
+    return {
+      id: 'api-reference',
+      title: 'API Reference',
+      content: content.trim(),
+      order: 3
+    };
+  }
+
+  private async generateTestResultsSection(
+    testResults: ContractTestResult[],
+    config: DocumentationConfig
+  ): Promise<DocumentationSection> {
+    const totalTests = testResults.length;
+    const passedTests = testResults.filter(r => r.status === 'passed').length;
+    const failedTests = testResults.filter(r => r.status === 'failed').length;
+    const overallPassRate = totalTests > 0 ? (passedTests / totalTests) * 100 : 0;
+
+    let content = `
+# Test Results
+
+## Summary
+
+- **Total Contracts Tested**: ${totalTests}
+- **Passed**: ${passedTests}
+- **Failed**: ${failedTests}
+- **Overall Pass Rate**: ${overallPassRate.toFixed(1)}%
+
+## Detailed Results
+
+${testResults.map(result => `
+### ${result.contractId}
+
+- **Status**: ${result.status === 'passed' ? '✅ Passed' : '❌ Failed'}
+- **Duration**: ${result.duration}ms
+- **Pass Rate**: ${result.summary.passRate.toFixed(1)}%
+- **Interactions**: ${result.summary.totalInteractions} total, ${result.summary.passedInteractions} passed, ${result.summary.failedInteractions} failed
+
+${result.errors.length > 0 ? `
+**Errors**:
+${result.errors.map(error => `- ${error.message}`).join('\n')}
+` : ''}
+
+${result.interactions.filter(i => i.status === 'failed').length > 0 ? `
+**Failed Interactions**:
+${result.interactions.filter(i => i.status === 'failed').map(i => `- ${i.description}: ${i.error}`).join('\n')}
+` : ''}
+`).join('\n')}`;
+
+    return {
+      id: 'test-results',
+      title: 'Test Results',
+      content: content.trim(),
+      order: 4
+    };
+  }
+
+  private async generateCompatibilitySection(
+    contracts: PactContract[],
+    config: DocumentationConfig
+  ): Promise<DocumentationSection> {
+    // This would integrate with the compatibility matrix
+    const content = `
+# Compatibility Matrix
+
+This section would show the compatibility matrix between different versions of consumers and providers.
+
+## Consumer-Provider Compatibility
+
+${contracts.map(contract => `
+- **${contract.consumer.name}** (${contract.consumer.version || 'latest'}) -> **${contract.provider.name}** (${contract.provider.version || 'latest'})
+`).join('')}
+
+*Note: Detailed compatibility matrix requires integration with the CompatibilityMatrix class.*
+`;
+
+    return {
+      id: 'compatibility',
+      title: 'Compatibility Matrix',
+      content: content.trim(),
+      order: 5
+    };
+  }
+
+  private async generateVersionHistorySection(
+    contracts: PactContract[],
+    config: DocumentationConfig
+  ): Promise<DocumentationSection> {
+    const content = `
+# Version History
+
+## Contract Versions
+
+${contracts.map(contract => `
+### ${contract.consumer.name} -> ${contract.provider.name}
+
+- **Consumer Version**: ${contract.consumer.version || 'N/A'}
+- **Provider Version**: ${contract.provider.version || 'N/A'}
+- **Pact Specification**: ${contract.metadata.pactSpecification.version}
+`).join('\n')}
+
+*Note: Detailed version history requires historical contract data.*
+`;
+
+    return {
+      id: 'version-history',
+      title: 'Version History',
+      content: content.trim(),
+      order: 6
+    };
+  }
+
+  private async renderDocumentation(
+    sections: DocumentationSection[],
+    config: DocumentationConfig
+  ): Promise<{ filePath: string; size: number; format: string }> {
+    // Sort sections by order
+    const sortedSections = sections.sort((a, b) => a.order - b.order);
+
+    let content: string;
+    let fileName: string;
+
+    switch (config.format) {
+      case 'markdown':
+        content = this.renderMarkdown(sortedSections, config);
+        fileName = 'contract-documentation.md';
+        break;
+      case 'html':
+        content = this.renderHTML(sortedSections, config);
+        fileName = 'contract-documentation.html';
+        break;
+      case 'pdf':
+        // PDF generation would require additional libraries
+        content = this.renderMarkdown(sortedSections, config);
+        fileName = 'contract-documentation.md';
+        break;
+      default:
+        throw new Error(`Unsupported documentation format: ${config.format}`);
+    }
+
+    const filePath = join(config.outputDir, fileName);
+    writeFileSync(filePath, content, 'utf8');
+
+    return {
+      filePath,
+      size: content.length,
+      format: config.format
+    };
+  }
+
+  private renderMarkdown(sections: DocumentationSection[], config: DocumentationConfig): string {
+    let content = '';
+
+    // Add title
+    if (config.branding?.title) {
+      content += `# ${config.branding.title}\n\n`;
+    }
+
+    // Add table of contents
+    content += '## Table of Contents\n\n';
+    sections.forEach(section => {
+      content += `- [${section.title}](#${section.id})\n`;
+    });
+    content += '\n';
+
+    // Add sections
+    sections.forEach(section => {
+      content += section.content + '\n\n';
+    });
+
+    return content;
+  }
+
+  private renderHTML(sections: DocumentationSection[], config: DocumentationConfig): string {
+    const title = config.branding?.title || 'Contract Documentation';
+    const theme = config.branding?.theme || 'light';
+    const primaryColor = config.branding?.primaryColor || '#007bff';
+
+    return `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>${title}</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            line-height: 1.6;
+            color: ${theme === 'dark' ? '#ffffff' : '#333333'};
+            background-color: ${theme === 'dark' ? '#1a1a1a' : '#ffffff'};
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        
+        h1, h2, h3 {
+            color: ${primaryColor};
+        }
+        
+        pre {
+            background: ${theme === 'dark' ? '#2d2d2d' : '#f5f5f5'};
+            padding: 15px;
+            border-radius: 5px;
+            overflow-x: auto;
+        }
+        
+        code {
+            background: ${theme === 'dark' ? '#2d2d2d' : '#f5f5f5'};
+            padding: 2px 5px;
+            border-radius: 3px;
+        }
+        
+        .nav {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: ${theme === 'dark' ? '#2d2d2d' : '#f8f9fa'};
+            padding: 15px;
+            border-radius: 5px;
+            min-width: 200px;
+        }
+        
+        .nav ul {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+        }
+        
+        .nav a {
+            color: ${primaryColor};
+            text-decoration: none;
+        }
+        
+        .nav a:hover {
+            text-decoration: underline;
+        }
+        
+        .section {
+            margin-bottom: 40px;
+        }
+        
+        .status-badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: bold;
+        }
+        
+        .status-passed {
+            background: #d4edda;
+            color: #155724;
+        }
+        
+        .status-failed {
+            background: #f8d7da;
+            color: #721c24;
+        }
+    </style>
+</head>
+<body>
+    <div class="nav">
+        <h4>Navigation</h4>
+        <ul>
+            ${sections.map(section => `<li><a href="#${section.id}">${section.title}</a></li>`).join('')}
+        </ul>
+    </div>
+    
+    <div class="content">
+        ${sections.map(section => `
+            <div class="section" id="${section.id}">
+                ${this.markdownToHTML(section.content)}
+            </div>
+        `).join('')}
+    </div>
+    
+    <footer style="margin-top: 50px; padding-top: 20px; border-top: 1px solid #ddd; text-align: center; color: #666;">
+        <p>Generated on ${new Date().toISOString()} by Contract Testing Framework</p>
+    </footer>
+</body>
+</html>`.trim();
+  }
+
+  private generateSwaggerUI(specs: OpenAPISpec[], config: DocumentationConfig): string {
+    // Generate multiple spec selector if multiple specs
+    const specUrls = specs.map((spec, index) => ({
+      name: spec.info.title,
+      url: `spec-${index}.json`
+    }));
+
+    return `
+<!DOCTYPE html>
+<html>
+<head>
+    <title>API Documentation</title>
+    <link rel="stylesheet" type="text/css" href="https://unpkg.com/swagger-ui-dist@4.15.5/swagger-ui.css" />
+</head>
+<body>
+    <div id="swagger-ui"></div>
+    
+    <script src="https://unpkg.com/swagger-ui-dist@4.15.5/swagger-ui-bundle.js"></script>
+    <script>
+        SwaggerUIBundle({
+            url: '${specs[0] ? 'spec-0.json' : ''}',
+            urls: ${JSON.stringify(specUrls)},
+            dom_id: '#swagger-ui',
+            presets: [
+                SwaggerUIBundle.presets.apis,
+                SwaggerUIBundle.presets.standalone
+            ],
+            layout: "StandaloneLayout"
+        });
+    </script>
+</body>
+</html>`.trim();
+  }
+
+  private async publishDocumentation(
+    documentation: { filePath: string; format: string },
+    config: DocumentationConfig
+  ): Promise<string | undefined> {
+    if (!config.publishing?.enabled) {
+      return undefined;
+    }
+
+    switch (config.publishing.target) {
+      case 'static':
+        return this.publishToStaticSite(documentation, config);
+      case 'github-pages':
+        return this.publishToGitHubPages(documentation, config);
+      case 's3':
+        return this.publishToS3(documentation, config);
+      case 'confluence':
+        return this.publishToConfluence(documentation, config);
+      default:
+        this.logger.warn('Unknown publishing target', { target: config.publishing.target });
+        return undefined;
+    }
+  }
+
+  private async publishToStaticSite(
+    documentation: { filePath: string },
+    config: DocumentationConfig
+  ): Promise<string> {
+    const staticDir = config.publishing?.config?.staticDir || './public/docs';
+    mkdirSync(staticDir, { recursive: true });
+
+    const fileName = 'index.html';
+    const targetPath = join(staticDir, fileName);
+    
+    const content = readFileSync(documentation.filePath, 'utf8');
+    writeFileSync(targetPath, content);
+
+    const baseUrl = config.publishing?.config?.baseUrl || 'http://localhost:3000';
+    return `${baseUrl}/docs/${fileName}`;
+  }
+
+  private async publishToGitHubPages(
+    documentation: { filePath: string },
+    config: DocumentationConfig
+  ): Promise<string> {
+    // This would integrate with GitHub API to publish to Pages
+    this.logger.info('GitHub Pages publishing not implemented');
+    return 'https://your-org.github.io/contract-docs/';
+  }
+
+  private async publishToS3(
+    documentation: { filePath: string },
+    config: DocumentationConfig
+  ): Promise<string> {
+    // This would integrate with AWS SDK to publish to S3
+    this.logger.info('S3 publishing not implemented');
+    return 'https://s3.amazonaws.com/your-bucket/contract-docs/';
+  }
+
+  private async publishToConfluence(
+    documentation: { filePath: string },
+    config: DocumentationConfig
+  ): Promise<string> {
+    // This would integrate with Confluence API
+    this.logger.info('Confluence publishing not implemented');
+    return 'https://your-org.atlassian.net/wiki/spaces/DOCS/pages/123456/Contract+Documentation';
+  }
+
+  private markdownToHTML(markdown: string): string {
+    // Simple markdown to HTML conversion
+    // In production, use a proper markdown parser like marked.js
+    return markdown
+      .replace(/^# (.*$)/gim, '<h1>$1</h1>')
+      .replace(/^## (.*$)/gim, '<h2>$1</h2>')
+      .replace(/^### (.*$)/gim, '<h3>$1</h3>')
+      .replace(/\*\*(.*)\*\*/gim, '<strong>$1</strong>')
+      .replace(/\*(.*)\*/gim, '<em>$1</em>')
+      .replace(/`([^`]+)`/gim, '<code>$1</code>')
+      .replace(/```json\n([\s\S]*?)\n```/gim, '<pre><code class="language-json">$1</code></pre>')
+      .replace(/```\n([\s\S]*?)\n```/gim, '<pre><code>$1</code></pre>')
+      .replace(/\n/gim, '<br>');
+  }
+
+  private generateComparisonSummary(oldContracts: PactContract[], newContracts: PactContract[]): string {
+    const oldCount = oldContracts.length;
+    const newCount = newContracts.length;
+    const addedContracts = newContracts.filter(nc => 
+      !oldContracts.some(oc => oc.consumer.name === nc.consumer.name && oc.provider.name === nc.provider.name)
+    );
+    const removedContracts = oldContracts.filter(oc => 
+      !newContracts.some(nc => nc.consumer.name === oc.consumer.name && nc.provider.name === oc.provider.name)
+    );
+
+    return `
+## Summary of Changes
+
+- **Previous Version**: ${oldCount} contracts
+- **Current Version**: ${newCount} contracts
+- **Added**: ${addedContracts.length} contracts
+- **Removed**: ${removedContracts.length} contracts
+- **Modified**: ${newCount - addedContracts.length} contracts
+
+### Added Contracts
+${addedContracts.map(c => `- ${c.consumer.name} -> ${c.provider.name}`).join('\n')}
+
+### Removed Contracts
+${removedContracts.map(c => `- ${c.consumer.name} -> ${c.provider.name}`).join('\n')}
+`.trim();
+  }
+
+  private generateDetailedComparison(oldContract?: PactContract, newContract?: PactContract): string {
+    if (!oldContract && !newContract) return '';
+    if (!oldContract) return `**New Contract**: ${newContract!.consumer.name} -> ${newContract!.provider.name}`;
+    if (!newContract) return `**Removed Contract**: ${oldContract.consumer.name} -> ${oldContract.provider.name}`;
+
+    // Compare interactions
+    const oldInteractions = oldContract.interactions.length;
+    const newInteractions = newContract.interactions.length;
+
+    return `
+**Contract**: ${newContract.consumer.name} -> ${newContract.provider.name}
+
+- **Interactions**: ${oldInteractions} -> ${newInteractions} (${newInteractions - oldInteractions > 0 ? '+' : ''}${newInteractions - oldInteractions})
+- **Consumer Version**: ${oldContract.consumer.version || 'N/A'} -> ${newContract.consumer.version || 'N/A'}
+- **Provider Version**: ${oldContract.provider.version || 'N/A'} -> ${newContract.provider.version || 'N/A'}
+
+### Interaction Changes
+${this.compareInteractions(oldContract.interactions, newContract.interactions)}
+`.trim();
+  }
+
+  private compareInteractions(oldInteractions: any[], newInteractions: any[]): string {
+    const changes: string[] = [];
+
+    const oldMap = new Map(oldInteractions.map(i => [`${i.request.method} ${i.request.path}`, i]));
+    const newMap = new Map(newInteractions.map(i => [`${i.request.method} ${i.request.path}`, i]));
+
+    // Find added interactions
+    newMap.forEach((interaction, key) => {
+      if (!oldMap.has(key)) {
+        changes.push(`+ **Added**: ${interaction.description}`);
+      }
+    });
+
+    // Find removed interactions
+    oldMap.forEach((interaction, key) => {
+      if (!newMap.has(key)) {
+        changes.push(`- **Removed**: ${interaction.description}`);
+      }
+    });
+
+    // Find modified interactions (simplified)
+    newMap.forEach((newInteraction, key) => {
+      const oldInteraction = oldMap.get(key);
+      if (oldInteraction && JSON.stringify(oldInteraction) !== JSON.stringify(newInteraction)) {
+        changes.push(`~ **Modified**: ${newInteraction.description}`);
+      }
+    });
+
+    return changes.length > 0 ? changes.join('\n') : 'No changes';
+  }
+
+  private generateChangelogContent(
+    contractHistory: { version: string; contracts: PactContract[]; date: Date }[]
+  ): string {
+    const changelog: string[] = [];
+
+    changelog.push('# Contract Changelog\n');
+    changelog.push('All notable changes to the API contracts will be documented in this file.\n');
+
+    contractHistory.forEach((entry, index) => {
+      changelog.push(`## [${entry.version}] - ${entry.date.toISOString().split('T')[0]}\n`);
+
+      if (index > 0) {
+        const previousEntry = contractHistory[index - 1];
+        const comparison = this.generateComparisonSummary(previousEntry.contracts, entry.contracts);
+        changelog.push(comparison + '\n');
+      } else {
+        changelog.push(`Initial version with ${entry.contracts.length} contracts.\n`);
+      }
+    });
+
+    return changelog.join('\n');
+  }
+
+  private pairContracts(
+    oldContracts: PactContract[],
+    newContracts: PactContract[]
+  ): { consumer: string; provider: string; oldContract?: PactContract; newContract?: PactContract }[] {
+    const pairs = new Map<string, any>();
+
+    oldContracts.forEach(contract => {
+      const key = `${contract.consumer.name}-${contract.provider.name}`;
+      pairs.set(key, { 
+        consumer: contract.consumer.name,
+        provider: contract.provider.name,
+        oldContract: contract 
+      });
+    });
+
+    newContracts.forEach(contract => {
+      const key = `${contract.consumer.name}-${contract.provider.name}`;
+      const existing = pairs.get(key);
+      if (existing) {
+        existing.newContract = contract;
+      } else {
+        pairs.set(key, {
+          consumer: contract.consumer.name,
+          provider: contract.provider.name,
+          newContract: contract
+        });
+      }
+    });
+
+    return Array.from(pairs.values());
+  }
+}

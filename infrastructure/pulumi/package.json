@@ -1,0 +1,50 @@
+{
+  "name": "@saas-idp/infrastructure",
+  "version": "1.0.0",
+  "description": "Pulumi Infrastructure as Code for SaaS IDP Platform",
+  "main": "index.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "jest",
+    "test:policies": "jest --testPathPattern=policies",
+    "preview": "pulumi preview",
+    "up": "pulumi up",
+    "destroy": "pulumi destroy",
+    "stack:init": "pulumi stack init",
+    "stack:select": "pulumi stack select",
+    "stack:list": "pulumi stack ls",
+    "cost:estimate": "infracost breakdown --path .",
+    "drift:detect": "ts-node scripts/drift-detection.ts",
+    "compliance:check": "ts-node scripts/compliance-check.ts",
+    "visualize": "pulumi stack graph --file infrastructure.dot && dot -Tpng infrastructure.dot -o infrastructure.png"
+  },
+  "dependencies": {
+    "@pulumi/pulumi": "^3.94.0",
+    "@pulumi/aws": "^6.13.0",
+    "@pulumi/gcp": "^7.3.0",
+    "@pulumi/azure-native": "^2.17.0",
+    "@pulumi/kubernetes": "^4.5.0",
+    "@pulumi/docker": "^4.4.0",
+    "@pulumi/cloudflare": "^5.15.0",
+    "@pulumi/postgresql": "^3.10.0",
+    "@pulumi/random": "^4.14.0",
+    "@pulumi/tls": "^5.0.0",
+    "@pulumi/vault": "^6.0.0",
+    "@pulumi/github": "^5.22.0",
+    "@pulumi/policy": "^1.5.0",
+    "@pulumi/awsx": "^2.3.0",
+    "infracost": "^0.10.30"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "@types/jest": "^29.5.8",
+    "jest": "^29.7.0",
+    "ts-jest": "^29.1.1",
+    "ts-node": "^10.9.1",
+    "typescript": "^5.2.2",
+    "prettier": "^3.1.0",
+    "eslint": "^8.54.0",
+    "@typescript-eslint/eslint-plugin": "^6.12.0",
+    "@typescript-eslint/parser": "^6.12.0"
+  }
+}

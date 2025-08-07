@@ -1,0 +1,72 @@
+config:
+  cloud:provider: aws
+  environment: production
+  region: us-east-1
+  multiRegion: true
+  enableMonitoring: true
+  enableBackup: true
+  enableDR: true
+  
+  # Production-specific configurations
+  saas-idp-infrastructure:instanceType: t3.xlarge
+  saas-idp-infrastructure:minInstances: 3
+  saas-idp-infrastructure:maxInstances: 20
+  saas-idp-infrastructure:databaseSize: db.r6g.xlarge
+  saas-idp-infrastructure:databaseMultiAZ: true
+  saas-idp-infrastructure:databaseReadReplicas: 2
+  saas-idp-infrastructure:cacheSize: cache.r6g.large
+  saas-idp-infrastructure:cacheMultiAZ: true
+  saas-idp-infrastructure:enableAutoScaling: true
+  saas-idp-infrastructure:enableSSL: true
+  saas-idp-infrastructure:logRetentionDays: 90
+  saas-idp-infrastructure:backupRetentionDays: 30
+  
+  # High availability settings
+  saas-idp-infrastructure:availabilityZones: 3
+  saas-idp-infrastructure:enableCrossRegionReplication: true
+  saas-idp-infrastructure:drRegion: us-west-2
+  
+  # Production endpoints
+  saas-idp-infrastructure:apiDomain: api.saas-idp.com
+  saas-idp-infrastructure:portalDomain: portal.saas-idp.com
+  saas-idp-infrastructure:backstageDomain: backstage.saas-idp.com
+  
+  # Security hardening
+  saas-idp-infrastructure:enableWAF: true
+  saas-idp-infrastructure:enableDDoSProtection: true
+  saas-idp-infrastructure:enableVulnerabilityScanning: true
+  saas-idp-infrastructure:enableComplianceScanning: true
+  saas-idp-infrastructure:enablePenetrationTesting: true
+  saas-idp-infrastructure:enableEncryptionAtRest: true
+  saas-idp-infrastructure:enableEncryptionInTransit: true
+  
+  # Performance optimization
+  saas-idp-infrastructure:enableCDN: true
+  saas-idp-infrastructure:cdnPriceClass: PriceClass_All
+  saas-idp-infrastructure:enableGlobalAccelerator: true
+  saas-idp-infrastructure:enableElasticache: true
+  
+  # Monitoring and alerting
+  saas-idp-infrastructure:enableDetailedMonitoring: true
+  saas-idp-infrastructure:enableCustomMetrics: true
+  saas-idp-infrastructure:enableAnomalyDetection: true
+  saas-idp-infrastructure:alertingThresholds:
+    cpuUtilization: 75
+    memoryUtilization: 85
+    diskUtilization: 80
+    errorRate: 1
+    latencyP99: 1000
+  
+  # Compliance
+  saas-idp-infrastructure:complianceStandards:
+    - SOC2
+    - GDPR
+    - HIPAA
+    - ISO27001
+  
+  # Feature flags
+  saas-idp-infrastructure:enableDebugMode: false
+  saas-idp-infrastructure:enableProfiler: false
+  saas-idp-infrastructure:enableTracing: true
+  saas-idp-infrastructure:enableCanaryDeployments: true
+  saas-idp-infrastructure:enableBlueGreenDeployments: true

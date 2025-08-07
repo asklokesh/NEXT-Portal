@@ -1,0 +1,21 @@
+app:
+  title: Backstage
+  baseUrl: http://localhost:3000
+backend:
+  baseUrl: http://localhost:7007
+integrations:
+  github:
+    - host: github.com
+      apiBaseUrl: https://api.github.com
+catalog:
+  locations: []
+kubernetes:
+  serviceLocatorMethod:
+    type: multiTenant
+  clusterLocatorMethods:
+    - type: config
+      clusters:
+        - url: https://kubernetes.default.svc
+          name: default
+          authProvider: serviceAccount
+          skipTLSVerify: false

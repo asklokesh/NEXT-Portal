@@ -1,0 +1,39 @@
+config:
+  cloud:provider: aws
+  environment: staging
+  region: us-east-1
+  multiRegion: false
+  enableMonitoring: true
+  enableBackup: true
+  enableDR: false
+  
+  # Staging-specific configurations
+  saas-idp-infrastructure:instanceType: t3.large
+  saas-idp-infrastructure:minInstances: 2
+  saas-idp-infrastructure:maxInstances: 5
+  saas-idp-infrastructure:databaseSize: db.t3.large
+  saas-idp-infrastructure:cacheSize: cache.t3.small
+  saas-idp-infrastructure:enableAutoScaling: true
+  saas-idp-infrastructure:enableSSL: true
+  saas-idp-infrastructure:logRetentionDays: 14
+  saas-idp-infrastructure:backupRetentionDays: 14
+  
+  # Performance testing capabilities
+  saas-idp-infrastructure:enableLoadTesting: true
+  saas-idp-infrastructure:enableSyntheticMonitoring: true
+  
+  # Staging endpoints
+  saas-idp-infrastructure:apiDomain: api-staging.saas-idp.com
+  saas-idp-infrastructure:portalDomain: portal-staging.saas-idp.com
+  saas-idp-infrastructure:backstageDomain: backstage-staging.saas-idp.com
+  
+  # Security hardening
+  saas-idp-infrastructure:enableWAF: true
+  saas-idp-infrastructure:enableDDoSProtection: false
+  saas-idp-infrastructure:enableVulnerabilityScanning: true
+  
+  # Feature flags
+  saas-idp-infrastructure:enableDebugMode: false
+  saas-idp-infrastructure:enableProfiler: true
+  saas-idp-infrastructure:enableTracing: true
+  saas-idp-infrastructure:enableCanaryDeployments: true

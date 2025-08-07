@@ -1,0 +1,907 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: governance-services
+  namespace: governance-system
+  labels:
+    app: governance-services
+    component: governance
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: governance-services-reader
+  labels:
+    app: governance-services
+    component: governance
+rules:
+- apiGroups: [""]
+  resources: ["services", "endpoints", "pods", "configmaps", "secrets"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["apps"]
+  resources: ["deployments", "replicasets", "statefulsets"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["extensions", "networking.k8s.io"]
+  resources: ["ingresses", "networkpolicies"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["policy"]
+  resources: ["poddisruptionbudgets"]
+  verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: governance-services-reader
+  labels:
+    app: governance-services
+    component: governance
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: governance-services-reader
+subjects:
+- kind: ServiceAccount
+  name: governance-services
+  namespace: governance-system
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: governance-config
+  namespace: governance-system
+data:
+  config.yaml: |
+    server:
+      port: 8080
+      host: 0.0.0.0
+      cors:
+        enabled: true
+        origins: ["*"]
+    
+    database:
+      host: postgres
+      port: 5432
+      database: governance
+      ssl: false
+      pool:
+        min: 5
+        max: 20
+        idle_timeout: 30000
+    
+    redis:
+      host: redis
+      port: 6379
+      db: 0
+      pool:
+        min: 5
+        max: 20
+    
+    elasticsearch:
+      host: elasticsearch
+      port: 9200
+      index_prefix: governance
+      
+    observability:
+      metrics:
+        enabled: true
+        port: 9090
+        path: /metrics
+      tracing:
+        enabled: true
+        jaeger:
+          endpoint: http://jaeger-collector:14268/api/traces
+      logging:
+        level: info
+        format: json
+    
+    policy_engine:
+      opa_url: http://opa:8181
+      bundle_refresh_interval: 30s
+      decision_logs: true
+    
+    compliance:
+      frameworks:
+        - gdpr
+        - hipaa
+        - soc2
+        - pci-dss
+        - iso27001
+        - nist
+        - cis
+      assessment_schedule: "0 2 * * 1" # Weekly at 2 AM Monday
+      report_retention_days: 2555 # 7 years
+    
+    security:
+      vulnerability_scanners:
+        trivy:
+          enabled: true
+          endpoint: http://trivy-server:4954
+        snyk:
+          enabled: false
+        sonarqube:
+          enabled: false
+      secret_scanning:
+        enabled: true
+      container_policies:
+        enforce_non_root: true
+        enforce_read_only_fs: true
+        block_privileged: true
+    
+    quality_gates:
+      default_timeout: 1800 # 30 minutes
+      retry_policy:
+        max_retries: 3
+        backoff_multiplier: 1.5
+      stages:
+        - pre-commit
+        - pre-merge
+        - pre-deployment
+        - post-deployment
+    
+    monitoring:
+      collection_interval: 300 # 5 minutes
+      retention_days: 90
+      alerting:
+        enabled: true
+        cooldown_seconds: 3600
+      notifications:
+        email:
+          enabled: true
+        slack:
+          enabled: false
+        webhook:
+          enabled: true
+    
+    audit:
+      log_all_requests: true
+      sensitive_fields:
+        - password
+        - token
+        - secret
+        - key
+      retention_days: 2555 # 7 years for compliance
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: governance-policy-engine
+  namespace: governance-system
+  labels:
+    app: governance-policy-engine
+    component: policy-engine
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: governance-policy-engine
+  template:
+    metadata:
+      labels:
+        app: governance-policy-engine
+        component: policy-engine
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: governance-services
+      containers:
+      - name: policy-engine
+        image: governance/policy-engine:latest
+        ports:
+        - containerPort: 8080
+          name: http
+          protocol: TCP
+        - containerPort: 9090
+          name: metrics
+          protocol: TCP
+        env:
+        - name: NODE_ENV
+          value: "production"
+        - name: CONFIG_PATH
+          value: "/config/config.yaml"
+        - name: POSTGRES_USER
+          valueFrom:
+            secretKeyRef:
+              name: postgres-credentials
+              key: username
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: postgres-credentials
+              key: password
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: redis-credentials
+              key: password
+        volumeMounts:
+        - name: governance-config
+          mountPath: /config
+          readOnly: true
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 6
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+        resources:
+          requests:
+            cpu: 200m
+            memory: 512Mi
+          limits:
+            cpu: 1000m
+            memory: 2Gi
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          runAsUser: 1000
+          capabilities:
+            drop:
+            - ALL
+      volumes:
+      - name: governance-config
+        configMap:
+          name: governance-config
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - governance-policy-engine
+              topologyKey: kubernetes.io/hostname
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: governance-policy-engine
+  namespace: governance-system
+  labels:
+    app: governance-policy-engine
+    component: policy-engine
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "9090"
+    prometheus.io/path: "/metrics"
+spec:
+  selector:
+    app: governance-policy-engine
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+    protocol: TCP
+  - name: metrics
+    port: 9090
+    targetPort: 9090
+    protocol: TCP
+  type: ClusterIP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: governance-compliance
+  namespace: governance-system
+  labels:
+    app: governance-compliance
+    component: compliance
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: governance-compliance
+  template:
+    metadata:
+      labels:
+        app: governance-compliance
+        component: compliance
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: governance-services
+      containers:
+      - name: compliance
+        image: governance/compliance:latest
+        ports:
+        - containerPort: 8080
+          name: http
+          protocol: TCP
+        - containerPort: 9090
+          name: metrics
+          protocol: TCP
+        env:
+        - name: NODE_ENV
+          value: "production"
+        - name: CONFIG_PATH
+          value: "/config/config.yaml"
+        - name: POSTGRES_USER
+          valueFrom:
+            secretKeyRef:
+              name: postgres-credentials
+              key: username
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: postgres-credentials
+              key: password
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: redis-credentials
+              key: password
+        volumeMounts:
+        - name: governance-config
+          mountPath: /config
+          readOnly: true
+        - name: compliance-reports
+          mountPath: /reports
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 6
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+        resources:
+          requests:
+            cpu: 200m
+            memory: 512Mi
+          limits:
+            cpu: 1000m
+            memory: 2Gi
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          runAsUser: 1000
+          capabilities:
+            drop:
+            - ALL
+      volumes:
+      - name: governance-config
+        configMap:
+          name: governance-config
+      - name: compliance-reports
+        emptyDir: {}
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - governance-compliance
+              topologyKey: kubernetes.io/hostname
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: governance-compliance
+  namespace: governance-system
+  labels:
+    app: governance-compliance
+    component: compliance
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "9090"
+    prometheus.io/path: "/metrics"
+spec:
+  selector:
+    app: governance-compliance
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+    protocol: TCP
+  - name: metrics
+    port: 9090
+    targetPort: 9090
+    protocol: TCP
+  type: ClusterIP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: governance-security
+  namespace: governance-system
+  labels:
+    app: governance-security
+    component: security
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: governance-security
+  template:
+    metadata:
+      labels:
+        app: governance-security
+        component: security
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: governance-services
+      containers:
+      - name: security
+        image: governance/security:latest
+        ports:
+        - containerPort: 8080
+          name: http
+          protocol: TCP
+        - containerPort: 9090
+          name: metrics
+          protocol: TCP
+        env:
+        - name: NODE_ENV
+          value: "production"
+        - name: CONFIG_PATH
+          value: "/config/config.yaml"
+        - name: POSTGRES_USER
+          valueFrom:
+            secretKeyRef:
+              name: postgres-credentials
+              key: username
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: postgres-credentials
+              key: password
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: redis-credentials
+              key: password
+        - name: SNYK_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: security-scanner-credentials
+              key: snyk-token
+              optional: true
+        volumeMounts:
+        - name: governance-config
+          mountPath: /config
+          readOnly: true
+        - name: security-reports
+          mountPath: /reports
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 6
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+        resources:
+          requests:
+            cpu: 200m
+            memory: 512Mi
+          limits:
+            cpu: 1500m
+            memory: 3Gi
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          runAsUser: 1000
+          capabilities:
+            drop:
+            - ALL
+      volumes:
+      - name: governance-config
+        configMap:
+          name: governance-config
+      - name: security-reports
+        emptyDir: {}
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - governance-security
+              topologyKey: kubernetes.io/hostname
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: governance-security
+  namespace: governance-system
+  labels:
+    app: governance-security
+    component: security
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "9090"
+    prometheus.io/path: "/metrics"
+spec:
+  selector:
+    app: governance-security
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+    protocol: TCP
+  - name: metrics
+    port: 9090
+    targetPort: 9090
+    protocol: TCP
+  type: ClusterIP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: governance-quality-gates
+  namespace: governance-system
+  labels:
+    app: governance-quality-gates
+    component: quality-gates
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: governance-quality-gates
+  template:
+    metadata:
+      labels:
+        app: governance-quality-gates
+        component: quality-gates
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: governance-services
+      containers:
+      - name: quality-gates
+        image: governance/quality-gates:latest
+        ports:
+        - containerPort: 8080
+          name: http
+          protocol: TCP
+        - containerPort: 9090
+          name: metrics
+          protocol: TCP
+        env:
+        - name: NODE_ENV
+          value: "production"
+        - name: CONFIG_PATH
+          value: "/config/config.yaml"
+        - name: POSTGRES_USER
+          valueFrom:
+            secretKeyRef:
+              name: postgres-credentials
+              key: username
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: postgres-credentials
+              key: password
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: redis-credentials
+              key: password
+        volumeMounts:
+        - name: governance-config
+          mountPath: /config
+          readOnly: true
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 6
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+        resources:
+          requests:
+            cpu: 200m
+            memory: 512Mi
+          limits:
+            cpu: 1000m
+            memory: 2Gi
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          runAsUser: 1000
+          capabilities:
+            drop:
+            - ALL
+      volumes:
+      - name: governance-config
+        configMap:
+          name: governance-config
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - governance-quality-gates
+              topologyKey: kubernetes.io/hostname
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: governance-quality-gates
+  namespace: governance-system
+  labels:
+    app: governance-quality-gates
+    component: quality-gates
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "9090"
+    prometheus.io/path: "/metrics"
+spec:
+  selector:
+    app: governance-quality-gates
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+    protocol: TCP
+  - name: metrics
+    port: 9090
+    targetPort: 9090
+    protocol: TCP
+  type: ClusterIP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: governance-monitoring
+  namespace: governance-system
+  labels:
+    app: governance-monitoring
+    component: monitoring
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: governance-monitoring
+  template:
+    metadata:
+      labels:
+        app: governance-monitoring
+        component: monitoring
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: governance-services
+      containers:
+      - name: monitoring
+        image: governance/monitoring:latest
+        ports:
+        - containerPort: 8080
+          name: http
+          protocol: TCP
+        - containerPort: 9090
+          name: metrics
+          protocol: TCP
+        env:
+        - name: NODE_ENV
+          value: "production"
+        - name: CONFIG_PATH
+          value: "/config/config.yaml"
+        - name: POSTGRES_USER
+          valueFrom:
+            secretKeyRef:
+              name: postgres-credentials
+              key: username
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: postgres-credentials
+              key: password
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: redis-credentials
+              key: password
+        - name: SMTP_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: notification-credentials
+              key: smtp-password
+              optional: true
+        - name: SLACK_WEBHOOK_URL
+          valueFrom:
+            secretKeyRef:
+              name: notification-credentials
+              key: slack-webhook
+              optional: true
+        volumeMounts:
+        - name: governance-config
+          mountPath: /config
+          readOnly: true
+        - name: reports
+          mountPath: /reports
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 6
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+        resources:
+          requests:
+            cpu: 200m
+            memory: 512Mi
+          limits:
+            cpu: 1000m
+            memory: 2Gi
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          runAsUser: 1000
+          capabilities:
+            drop:
+            - ALL
+      volumes:
+      - name: governance-config
+        configMap:
+          name: governance-config
+      - name: reports
+        emptyDir: {}
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - governance-monitoring
+              topologyKey: kubernetes.io/hostname
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: governance-monitoring
+  namespace: governance-system
+  labels:
+    app: governance-monitoring
+    component: monitoring
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "9090"
+    prometheus.io/path: "/metrics"
+spec:
+  selector:
+    app: governance-monitoring
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+    protocol: TCP
+  - name: metrics
+    port: 9090
+    targetPort: 9090
+    protocol: TCP
+  type: ClusterIP
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: governance-policy-engine-pdb
+  namespace: governance-system
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: governance-policy-engine
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: governance-compliance-pdb
+  namespace: governance-system
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: governance-compliance
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: governance-security-pdb
+  namespace: governance-system
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: governance-security
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: governance-quality-gates-pdb
+  namespace: governance-system
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: governance-quality-gates
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: governance-monitoring-pdb
+  namespace: governance-system
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: governance-monitoring

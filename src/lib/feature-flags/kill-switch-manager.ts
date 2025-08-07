@@ -1,0 +1,452 @@
+/**
+ * Kill Switch Manager
+ * Advanced kill switch and circuit breaker implementation
+ */
+
+import { 
+  FeatureFlag, 
+  KillSwitchConfig, 
+  KillSwitchTrigger,
+  RecoveryCondition,
+  FlagEvaluation,
+  UserContext
+} from './types';
+
+interface CircuitBreakerState {
+  state: 'closed' | 'open' | 'half-open';
+  failureCount: number;
+  successCount: number;
+  lastFailureTime: number;
+  nextAttemptTime: number;
+}
+
+export class KillSwitchManager {
+  private circuitBreakers = new Map<string, CircuitBreakerState>();
+  private monitoringIntervals = new Map<string, NodeJS.Timeout>();
+  private killSwitchStates = new Map<string, boolean>();
+  private recoveryIntervals = new Map<string, NodeJS.Timeout>();
+
+  private readonly DEFAULT_TIMEOUT = 60000; // 1 minute
+  private readonly DEFAULT_FAILURE_THRESHOLD = 5;
+  private readonly DEFAULT_SUCCESS_THRESHOLD = 3;
+
+  /**
+   * Initialize kill switch monitoring for a flag
+   */
+  async initializeKillSwitch(
+    flagKey: string,
+    config: KillSwitchConfig
+  ): Promise<void> {
+    // Initialize circuit breaker state
+    this.circuitBreakers.set(flagKey, {
+      state: 'closed',
+      failureCount: 0,
+      successCount: 0,
+      lastFailureTime: 0,
+      nextAttemptTime: 0
+    });
+
+    // Set up monitoring for each trigger
+    for (const trigger of config.triggers) {
+      if (trigger.enabled) {
+        await this.setupTriggerMonitoring(flagKey, trigger);
+      }
+    }
+
+    console.log(`Kill switch initialized for ${flagKey} with ${config.triggers.length} triggers`);
+  }
+
+  /**
+   * Setup monitoring for a specific trigger
+   */
+  private async setupTriggerMonitoring(
+    flagKey: string,
+    trigger: KillSwitchTrigger
+  ): Promise<void> {
+    const monitoringKey = `${flagKey}:${trigger.id}`;
+    
+    // Clear existing interval if any
+    const existingInterval = this.monitoringIntervals.get(monitoringKey);
+    if (existingInterval) {
+      clearInterval(existingInterval);
+    }
+
+    // Set up periodic monitoring
+    const interval = setInterval(async () => {
+      try {
+        const shouldTrigger = await this.checkTriggerCondition(flagKey, trigger);
+        
+        if (shouldTrigger) {
+          await this.activateKillSwitch(flagKey, `Trigger: ${trigger.name}`);
+        }
+      } catch (error) {
+        console.error(`Error monitoring trigger ${trigger.id} for ${flagKey}:`, error);
+      }
+    }, trigger.window * 60 * 1000); // Convert minutes to milliseconds
+
+    this.monitoringIntervals.set(monitoringKey, interval);
+  }
+
+  /**
+   * Check if a trigger condition is met
+   */
+  private async checkTriggerCondition(
+    flagKey: string,
+    trigger: KillSwitchTrigger
+  ): Promise<boolean> {
+    try {
+      // Fetch metrics for the specified window
+      const metrics = await this.fetchMetrics(flagKey, trigger.window);
+      const metricValue = metrics[trigger.metric];
+
+      if (metricValue === undefined) {
+        console.warn(`Metric ${trigger.metric} not found for flag ${flagKey}`);
+        return false;
+      }
+
+      // Check threshold condition
+      switch (trigger.operator) {
+        case 'gt': return metricValue > trigger.threshold;
+        case 'lt': return metricValue < trigger.threshold;
+        case 'gte': return metricValue >= trigger.threshold;
+        case 'lte': return metricValue <= trigger.threshold;
+        default: return false;
+      }
+    } catch (error) {
+      console.error(`Error checking trigger condition for ${flagKey}:`, error);
+      return false;
+    }
+  }
+
+  /**
+   * Activate kill switch for a flag
+   */
+  async activateKillSwitch(
+    flagKey: string,
+    reason: string,
+    userId: string = 'system'
+  ): Promise<void> {
+    console.warn(`🚨 KILL SWITCH ACTIVATED for ${flagKey}: ${reason}`);
+
+    // Set kill switch state
+    this.killSwitchStates.set(flagKey, true);
+
+    // Update circuit breaker to open state
+    const circuitBreaker = this.circuitBreakers.get(flagKey);
+    if (circuitBreaker) {
+      circuitBreaker.state = 'open';
+      circuitBreaker.lastFailureTime = Date.now();
+      circuitBreaker.nextAttemptTime = Date.now() + this.DEFAULT_TIMEOUT;
+    }
+
+    // Send notifications
+    await this.sendKillSwitchNotification(flagKey, 'activated', reason);
+
+    // Log audit entry
+    await this.logKillSwitchAction(flagKey, 'KILL_SWITCH_ACTIVATED', userId, reason);
+
+    // Start recovery monitoring if auto-recover is enabled
+    // This would be determined by flag configuration
+    await this.startRecoveryMonitoring(flagKey);
+  }
+
+  /**
+   * Deactivate kill switch for a flag
+   */
+  async deactivateKillSwitch(
+    flagKey: string,
+    reason: string,
+    userId: string = 'system'
+  ): Promise<void> {
+    console.log(`✅ Kill switch deactivated for ${flagKey}: ${reason}`);
+
+    // Clear kill switch state
+    this.killSwitchStates.set(flagKey, false);
+
+    // Update circuit breaker to closed state
+    const circuitBreaker = this.circuitBreakers.get(flagKey);
+    if (circuitBreaker) {
+      circuitBreaker.state = 'closed';
+      circuitBreaker.failureCount = 0;
+      circuitBreaker.successCount = 0;
+    }
+
+    // Stop recovery monitoring
+    const recoveryInterval = this.recoveryIntervals.get(flagKey);
+    if (recoveryInterval) {
+      clearInterval(recoveryInterval);
+      this.recoveryIntervals.delete(flagKey);
+    }
+
+    // Send notifications
+    await this.sendKillSwitchNotification(flagKey, 'deactivated', reason);
+
+    // Log audit entry
+    await this.logKillSwitchAction(flagKey, 'KILL_SWITCH_DEACTIVATED', userId, reason);
+  }
+
+  /**
+   * Check if kill switch is active for a flag
+   */
+  isKillSwitchActive(flagKey: string): boolean {
+    return this.killSwitchStates.get(flagKey) === true;
+  }
+
+  /**
+   * Evaluate flag with circuit breaker pattern
+   */
+  evaluateWithCircuitBreaker(
+    flag: FeatureFlag,
+    context: UserContext,
+    evaluationFunction: () => Promise<FlagEvaluation>
+  ): Promise<FlagEvaluation> {
+    const circuitBreaker = this.circuitBreakers.get(flag.key);
+    
+    if (!circuitBreaker) {
+      // No circuit breaker configured, evaluate normally
+      return evaluationFunction();
+    }
+
+    return this.executeWithCircuitBreaker(
+      flag.key,
+      circuitBreaker,
+      evaluationFunction
+    );
+  }
+
+  /**
+   * Execute function with circuit breaker protection
+   */
+  private async executeWithCircuitBreaker<T>(
+    flagKey: string,
+    circuitBreaker: CircuitBreakerState,
+    fn: () => Promise<T>
+  ): Promise<T> {
+    switch (circuitBreaker.state) {
+      case 'closed':
+        return this.executeInClosedState(flagKey, circuitBreaker, fn);
+      
+      case 'open':
+        return this.executeInOpenState(flagKey, circuitBreaker, fn);
+      
+      case 'half-open':
+        return this.executeInHalfOpenState(flagKey, circuitBreaker, fn);
+      
+      default:
+        throw new Error(`Unknown circuit breaker state: ${circuitBreaker.state}`);
+    }
+  }
+
+  private async executeInClosedState<T>(
+    flagKey: string,
+    circuitBreaker: CircuitBreakerState,
+    fn: () => Promise<T>
+  ): Promise<T> {
+    try {
+      const result = await fn();
+      
+      // Reset failure count on success
+      circuitBreaker.failureCount = 0;
+      
+      return result;
+    } catch (error) {
+      circuitBreaker.failureCount++;
+      circuitBreaker.lastFailureTime = Date.now();
+
+      // Open circuit if failure threshold reached
+      if (circuitBreaker.failureCount >= this.DEFAULT_FAILURE_THRESHOLD) {
+        circuitBreaker.state = 'open';
+        circuitBreaker.nextAttemptTime = Date.now() + this.DEFAULT_TIMEOUT;
+        
+        console.warn(`Circuit breaker opened for ${flagKey} after ${circuitBreaker.failureCount} failures`);
+      }
+
+      throw error;
+    }
+  }
+
+  private async executeInOpenState<T>(
+    flagKey: string,
+    circuitBreaker: CircuitBreakerState,
+    fn: () => Promise<T>
+  ): Promise<T> {
+    // Check if timeout period has passed
+    if (Date.now() >= circuitBreaker.nextAttemptTime) {
+      circuitBreaker.state = 'half-open';
+      circuitBreaker.successCount = 0;
+      
+      console.log(`Circuit breaker transitioning to half-open for ${flagKey}`);
+      
+      return this.executeInHalfOpenState(flagKey, circuitBreaker, fn);
+    }
+
+    // Circuit is still open, throw error immediately
+    throw new Error(`Circuit breaker is open for ${flagKey}`);
+  }
+
+  private async executeInHalfOpenState<T>(
+    flagKey: string,
+    circuitBreaker: CircuitBreakerState,
+    fn: () => Promise<T>
+  ): Promise<T> {
+    try {
+      const result = await fn();
+      
+      circuitBreaker.successCount++;
+      
+      // Close circuit if success threshold reached
+      if (circuitBreaker.successCount >= this.DEFAULT_SUCCESS_THRESHOLD) {
+        circuitBreaker.state = 'closed';
+        circuitBreaker.failureCount = 0;
+        
+        console.log(`Circuit breaker closed for ${flagKey} after ${circuitBreaker.successCount} successes`);
+      }
+      
+      return result;
+    } catch (error) {
+      // Go back to open state on failure
+      circuitBreaker.state = 'open';
+      circuitBreaker.failureCount++;
+      circuitBreaker.lastFailureTime = Date.now();
+      circuitBreaker.nextAttemptTime = Date.now() + this.DEFAULT_TIMEOUT;
+      
+      console.warn(`Circuit breaker reopened for ${flagKey} due to failure in half-open state`);
+      
+      throw error;
+    }
+  }
+
+  /**
+   * Start recovery monitoring
+   */
+  private async startRecoveryMonitoring(flagKey: string): Promise<void> {
+    // Clear existing recovery interval
+    const existingInterval = this.recoveryIntervals.get(flagKey);
+    if (existingInterval) {
+      clearInterval(existingInterval);
+    }
+
+    // Set up recovery monitoring every 5 minutes
+    const interval = setInterval(async () => {
+      try {
+        const canRecover = await this.checkRecoveryConditions(flagKey);
+        
+        if (canRecover) {
+          await this.deactivateKillSwitch(
+            flagKey, 
+            'Auto-recovery: conditions met',
+            'auto-recovery'
+          );
+        }
+      } catch (error) {
+        console.error(`Error checking recovery conditions for ${flagKey}:`, error);
+      }
+    }, 5 * 60 * 1000); // 5 minutes
+
+    this.recoveryIntervals.set(flagKey, interval);
+  }
+
+  /**
+   * Check if recovery conditions are met
+   */
+  private async checkRecoveryConditions(flagKey: string): Promise<boolean> {
+    // Mock recovery condition check - in production, this would check actual metrics
+    const metrics = await this.fetchMetrics(flagKey, 5);
+    
+    // Example: recover if error rate is below 1% for 5 minutes
+    return metrics.errorRate < 1.0;
+  }
+
+  /**
+   * Get kill switch status for a flag
+   */
+  getKillSwitchStatus(flagKey: string): {
+    isActive: boolean;
+    circuitBreakerState: string;
+    lastFailureTime?: number;
+    failureCount: number;
+  } {
+    const isActive = this.isKillSwitchActive(flagKey);
+    const circuitBreaker = this.circuitBreakers.get(flagKey);
+
+    return {
+      isActive,
+      circuitBreakerState: circuitBreaker?.state || 'unknown',
+      lastFailureTime: circuitBreaker?.lastFailureTime,
+      failureCount: circuitBreaker?.failureCount || 0
+    };
+  }
+
+  /**
+   * Manually test kill switch trigger
+   */
+  async testKillSwitchTrigger(
+    flagKey: string,
+    triggerType: string,
+    simulatedValue: number
+  ): Promise<{
+    wouldTrigger: boolean;
+    reason: string;
+  }> {
+    // This would simulate trigger conditions for testing
+    return {
+      wouldTrigger: simulatedValue > 5, // Example threshold
+      reason: simulatedValue > 5 
+        ? `Simulated ${triggerType} value (${simulatedValue}) exceeds threshold (5)`
+        : `Simulated ${triggerType} value (${simulatedValue}) within acceptable range`
+    };
+  }
+
+  // Private utility methods
+
+  private async fetchMetrics(flagKey: string, windowMinutes: number): Promise<any> {
+    // Mock metrics fetch - in production, this would query monitoring system
+    return {
+      errorRate: Math.random() * 10, // 0-10% error rate
+      latency: Math.random() * 1000 + 100, // 100-1100ms
+      throughput: Math.random() * 1000 + 500, // 500-1500 req/min
+      userComplaints: Math.floor(Math.random() * 5) // 0-4 complaints
+    };
+  }
+
+  private async sendKillSwitchNotification(
+    flagKey: string,
+    action: 'activated' | 'deactivated',
+    reason: string
+  ): Promise<void> {
+    // Mock notification - in production, this would send to Slack, PagerDuty, etc.
+    const message = `🚨 Kill switch ${action} for flag "${flagKey}": ${reason}`;
+    console.log(`NOTIFICATION: ${message}`);
+  }
+
+  private async logKillSwitchAction(
+    flagKey: string,
+    action: 'KILL_SWITCH_ACTIVATED' | 'KILL_SWITCH_DEACTIVATED',
+    userId: string,
+    reason: string
+  ): Promise<void> {
+    // Mock audit logging - in production, this would use the audit logger
+    console.log(`AUDIT: ${action} - Flag: ${flagKey}, User: ${userId}, Reason: ${reason}`);
+  }
+
+  /**
+   * Cleanup resources
+   */
+  cleanup(): void {
+    // Clear all monitoring intervals
+    for (const [key, interval] of this.monitoringIntervals.entries()) {
+      clearInterval(interval);
+      this.monitoringIntervals.delete(key);
+    }
+
+    // Clear all recovery intervals
+    for (const [key, interval] of this.recoveryIntervals.entries()) {
+      clearInterval(interval);
+      this.recoveryIntervals.delete(key);
+    }
+
+    // Clear all states
+    this.circuitBreakers.clear();
+    this.killSwitchStates.clear();
+  }
+}

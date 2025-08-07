@@ -1,0 +1,208 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-service
+  namespace: developer-portal
+  labels:
+    app: postgres
+    tier: database
+spec:
+  ports:
+    - port: 5432
+      targetPort: 5432
+      protocol: TCP
+  selector:
+    app: postgres
+    tier: database
+  type: ClusterIP
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-pvc
+  namespace: developer-portal
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 50Gi
+  storageClassName: fast-ssd
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  namespace: developer-portal
+spec:
+  serviceName: postgres-service
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+      tier: database
+  template:
+    metadata:
+      labels:
+        app: postgres
+        tier: database
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:15-alpine
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 5432
+              name: postgres
+          env:
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: portal-secrets
+                  key: POSTGRES_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: portal-secrets
+                  key: POSTGRES_PASSWORD
+            - name: POSTGRES_DB
+              valueFrom:
+                secretKeyRef:
+                  name: portal-secrets
+                  key: POSTGRES_DB
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          volumeMounts:
+            - name: postgres-storage
+              mountPath: /var/lib/postgresql/data
+            - name: postgres-config
+              mountPath: /etc/postgresql/postgresql.conf
+              subPath: postgresql.conf
+            - name: postgres-init
+              mountPath: /docker-entrypoint-initdb.d
+          resources:
+            requests:
+              memory: "2Gi"
+              cpu: "1"
+            limits:
+              memory: "4Gi"
+              cpu: "2"
+          livenessProbe:
+            exec:
+              command:
+                - pg_isready
+                - -U
+                - $(POSTGRES_USER)
+                - -d
+                - $(POSTGRES_DB)
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            exec:
+              command:
+                - pg_isready
+                - -U
+                - $(POSTGRES_USER)
+                - -d
+                - $(POSTGRES_DB)
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+      volumes:
+        - name: postgres-storage
+          persistentVolumeClaim:
+            claimName: postgres-pvc
+        - name: postgres-config
+          configMap:
+            name: postgres-config
+        - name: postgres-init
+          configMap:
+            name: postgres-init-scripts
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-config
+  namespace: developer-portal
+data:
+  postgresql.conf: |
+    # PostgreSQL configuration for production
+    listen_addresses = '*'
+    max_connections = 200
+    shared_buffers = 1GB
+    effective_cache_size = 3GB
+    maintenance_work_mem = 256MB
+    checkpoint_completion_target = 0.9
+    wal_buffers = 16MB
+    default_statistics_target = 100
+    random_page_cost = 1.1
+    effective_io_concurrency = 200
+    work_mem = 5242kB
+    min_wal_size = 1GB
+    max_wal_size = 4GB
+    max_worker_processes = 4
+    max_parallel_workers_per_gather = 2
+    max_parallel_workers = 4
+    max_parallel_maintenance_workers = 2
+    
+    # Logging
+    logging_collector = on
+    log_directory = 'log'
+    log_filename = 'postgresql-%Y-%m-%d_%H%M%S.log'
+    log_rotation_age = 1d
+    log_rotation_size = 100MB
+    log_line_prefix = '%t [%p]: [%l-1] user=%u,db=%d,app=%a,client=%h '
+    log_checkpoints = on
+    log_connections = on
+    log_disconnections = on
+    log_duration = off
+    log_error_verbosity = default
+    log_hostname = on
+    log_lock_waits = on
+    log_statement = 'all'
+    log_timezone = 'UTC'
+    
+    # SSL
+    ssl = on
+    ssl_cert_file = '/etc/ssl/certs/server.crt'
+    ssl_key_file = '/etc/ssl/private/server.key'
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-init-scripts
+  namespace: developer-portal
+data:
+  01-init-db.sql: |
+    -- Create necessary extensions
+    CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+    CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+    CREATE EXTENSION IF NOT EXISTS "pg_stat_statements";
+    
+    -- Create read-only user for monitoring
+    CREATE USER monitoring WITH PASSWORD 'CHANGE_ME_MONITORING_PASSWORD';
+    GRANT CONNECT ON DATABASE developer_portal TO monitoring;
+    GRANT USAGE ON SCHEMA public TO monitoring;
+    GRANT SELECT ON ALL TABLES IN SCHEMA public TO monitoring;
+    ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO monitoring;
+    
+    -- Create backup user
+    CREATE USER backup_user WITH PASSWORD 'CHANGE_ME_BACKUP_PASSWORD';
+    GRANT CONNECT ON DATABASE developer_portal TO backup_user;
+    GRANT USAGE ON SCHEMA public TO backup_user;
+    GRANT SELECT ON ALL TABLES IN SCHEMA public TO backup_user;
+    GRANT SELECT ON ALL SEQUENCES IN SCHEMA public TO backup_user;
+    
+    -- Performance optimization indexes
+    CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_entities_kind ON entities(kind);
+    CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_entities_namespace ON entities(namespace);
+    CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_entities_metadata ON entities USING GIN(metadata);
+    CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_relations_source ON relations(source_entity_ref);
+    CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_relations_target ON relations(target_entity_ref);
+    
+  02-performance-tuning.sql: |
+    -- Analyze tables for query optimization
+    ANALYZE;

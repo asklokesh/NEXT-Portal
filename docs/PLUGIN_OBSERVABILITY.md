@@ -1,0 +1,343 @@
+# Plugin Observability System
+
+A comprehensive distributed tracing, metrics collection, and monitoring system for SaaS IDP plugins built with OpenTelemetry standards.
+
+## Features
+
+### 🔍 Distributed Tracing
+- **OpenTelemetry Integration**: Full OTEL instrumentation with automatic trace generation
+- **Jaeger Backend**: Distributed trace collection and visualization
+- **Trace Context Propagation**: Automatic trace context passing between services
+- **Service Mesh Support**: Integration with Istio, Linkerd, and Consul Connect
+
+### 📊 Metrics Collection
+- **Prometheus Integration**: Standard metrics collection and storage
+- **Custom Plugin Metrics**: Plugin-specific performance and business metrics
+- **Real-time Monitoring**: Live metrics dashboards and alerting
+- **SLO/SLA Tracking**: Service Level Objective monitoring with error budgets
+
+### 📝 Log Aggregation
+- **Loki Integration**: Centralized log collection and storage
+- **Structured Logging**: JSON-formatted logs with trace correlation
+- **Log-to-Trace Correlation**: Direct links from logs to distributed traces
+- **Multi-level Filtering**: Advanced log filtering and search capabilities
+
+### 🚨 Alerting & SLO Management
+- **Intelligent Alerting**: Context-aware alerts based on metrics and traces
+- **SLO Monitoring**: Availability, latency, and error rate SLO tracking
+- **Error Budget Management**: Automatic error budget calculation and alerts
+- **Multi-severity Alerts**: Critical, warning, and info-level alerts
+
+### 🗺️ Service Map Visualization
+- **Dependency Mapping**: Automatic service dependency discovery
+- **Health Visualization**: Real-time service health indicators
+- **Performance Metrics**: Request rates, error rates, and latencies
+- **Interactive Navigation**: Click-through to detailed metrics and traces
+
+## Architecture
+
+```
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   Plugin API    │    │  OTEL Collector │    │     Jaeger      │
+│   (Next.js)     │───▶│   (Traces)      │───▶│   (Storage)     │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
+         │                       │                       │
+         │                       ▼                       │
+         │              ┌─────────────────┐              │
+         │              │   Prometheus    │              │
+         ▼              │   (Metrics)     │              │
+┌─────────────────┐     └─────────────────┘              │
+│      Loki       │              │                       │
+│     (Logs)      │              ▼                       │
+└─────────────────┘     ┌─────────────────┐              │
+         │               │    Grafana      │              │
+         └──────────────▶│ (Visualization) │◀─────────────┘
+                         └─────────────────┘
+```
+
+## Quick Start
+
+### 1. Start the Observability Stack
+
+```bash
+# Start all observability services
+docker-compose -f docker-compose.observability.yml up -d
+
+# Verify services are running
+docker-compose -f docker-compose.observability.yml ps
+```
+
+### 2. Access the Dashboards
+
+- **Grafana**: http://localhost:3001 (admin/admin)
+- **Jaeger UI**: http://localhost:16686
+- **Prometheus**: http://localhost:9090
+
+### 3. View Plugin Observability
+
+Navigate to `/plugins/observability` in your SaaS IDP application to access the Plugin Observability Dashboard.
+
+## Configuration
+
+### Environment Variables
+
+```bash
+# OpenTelemetry Configuration
+OTEL_SERVICE_NAME=plugin-observability-service
+OTEL_SERVICE_VERSION=1.0.0
+OTEL_SERVICE_NAMESPACE=saas-idp
+JAEGER_ENDPOINT=http://localhost:14268/api/traces
+PROMETHEUS_PORT=9090
+METRICS_EXPORT_INTERVAL=5000
+
+# Service Mesh Detection
+ISTIO_PROXY_VERSION=1.20.0
+LINKERD2_PROXY_VERSION=edge-24.1.1
+CONSUL_CONNECT_ENABLED=true
+```
+
+### Prometheus Configuration
+
+The system automatically scrapes metrics from:
+- Plugin APIs (`/api/plugin-observability`)
+- OpenTelemetry Collector
+- Node Exporter (system metrics)
+- cAdvisor (container metrics)
+- Application-specific endpoints
+
+### Custom Metrics
+
+Add custom metrics to your plugins:
+
+```typescript
+import { getMeter, createStandardMetrics } from '@/lib/observability/telemetry';
+
+const meter = getMeter('my-plugin', '1.0.0');
+const metrics = createStandardMetrics(meter);
+
+// Record custom metrics
+metrics.requestCounter.add(1, { operation: 'user-login' });
+metrics.responseTimeHistogram.record(150, { endpoint: '/api/auth' });
+```
+
+## API Reference
+
+### Plugin Observability API
+
+#### Get Plugin Data
+```http
+GET /api/plugin-observability?pluginId=catalog-plugin&timeRange=1h
+```
+
+#### Get Traces
+```http
+GET /api/plugin-observability?action=traces&pluginId=catalog-plugin
+```
+
+#### Get Metrics
+```http
+GET /api/plugin-observability?action=metrics&pluginId=catalog-plugin
+```
+
+#### Get Logs
+```http
+GET /api/plugin-observability?action=logs&pluginId=catalog-plugin
+```
+
+#### Get SLO Status
+```http
+GET /api/plugin-observability?action=slo&pluginId=catalog-plugin
+```
+
+#### Get Service Dependencies
+```http
+GET /api/plugin-observability?action=dependencies&pluginId=catalog-plugin
+```
+
+### Configuration Endpoints
+
+#### Configure Tracing
+```http
+POST /api/plugin-observability
+Content-Type: application/json
+
+{
+  "action": "configure-tracing",
+  "config": {
+    "enabled": true,
+    "samplingRate": 0.1,
+    "jaegerEndpoint": "http://localhost:14268/api/traces"
+  }
+}
+```
+
+#### Create Alert
+```http
+POST /api/plugin-observability
+Content-Type: application/json
+
+{
+  "action": "create-alert",
+  "config": {
+    "pluginId": "catalog-plugin",
+    "type": "latency",
+    "threshold": 100,
+    "severity": "warning"
+  }
+}
+```
+
+## Dashboard Features
+
+### Overview Tab
+- **SLO Status Cards**: Real-time availability, latency, and error rate SLOs
+- **Metrics Charts**: Response time, request rate, error rate, and resource usage
+- **Health Indicators**: Plugin health status with trend indicators
+
+### Distributed Traces Tab
+- **Trace List**: Searchable list of recent traces with status and duration
+- **Trace Visualization**: Hierarchical span view with timing and status
+- **Trace Details**: Full trace context with tags and logs
+
+### Metrics Tab
+- **Time Series Charts**: Interactive charts for all plugin metrics
+- **Custom Dashboards**: Configurable metric dashboards
+- **Comparative Analysis**: Side-by-side plugin performance comparison
+
+### Logs Tab
+- **Log Explorer**: Advanced log search and filtering
+- **Trace Correlation**: Direct links from logs to related traces
+- **Real-time Streaming**: Live log tailing with automatic updates
+
+### Alerts Tab
+- **Alert Management**: View and manage active alerts
+- **Alert History**: Historical alert data and resolution tracking
+- **Notification Configuration**: Configure alert channels and recipients
+
+### SLO/SLA Tab
+- **SLO Dashboard**: Comprehensive SLO tracking and error budget monitoring
+- **Historical Trends**: Long-term SLO performance analysis
+- **Budget Alerts**: Automatic alerts when error budgets are consumed
+
+### Service Map Tab
+- **Interactive Service Map**: Visual representation of service dependencies
+- **Health Indicators**: Real-time health status for all services
+- **Performance Metrics**: Request rates and error rates between services
+
+### Dependencies Tab
+- **Dependency Health**: Status of external service dependencies
+- **Performance Monitoring**: Latency and error rates for each dependency
+- **Connection Testing**: Automated dependency health checks
+
+## Best Practices
+
+### Instrumentation
+1. **Automatic Instrumentation**: Use OpenTelemetry auto-instrumentation for common libraries
+2. **Manual Spans**: Add custom spans for business-critical operations
+3. **Attribute Naming**: Follow OpenTelemetry semantic conventions for attributes
+4. **Error Handling**: Always record exceptions in spans
+
+### Metrics
+1. **Standard Metrics**: Use the standard metrics (request count, response time, error rate)
+2. **Business Metrics**: Add plugin-specific business metrics
+3. **Label Cardinality**: Keep metric label cardinality low to avoid performance issues
+4. **Aggregation**: Use appropriate metric types (counter, gauge, histogram)
+
+### Logging
+1. **Structured Logging**: Always use JSON-formatted structured logs
+2. **Trace Correlation**: Include trace_id and span_id in all log entries
+3. **Log Levels**: Use appropriate log levels (DEBUG, INFO, WARN, ERROR)
+4. **Sensitive Data**: Never log sensitive information
+
+### Alerting
+1. **SLO-based Alerts**: Base alerts on SLO breaches rather than arbitrary thresholds
+2. **Alert Fatigue**: Minimize false positives to prevent alert fatigue
+3. **Runbooks**: Include runbook links in alert descriptions
+4. **Escalation**: Set up proper alert escalation chains
+
+## Troubleshooting
+
+### Common Issues
+
+#### No Traces Appearing
+1. Check OpenTelemetry SDK initialization
+2. Verify Jaeger endpoint configuration
+3. Check network connectivity to Jaeger collector
+
+#### Missing Metrics
+1. Verify Prometheus scrape configuration
+2. Check metrics endpoint accessibility
+3. Validate metric naming and labels
+
+#### High Memory Usage
+1. Adjust OpenTelemetry batch processor settings
+2. Configure appropriate sampling rates
+3. Monitor metric label cardinality
+
+#### Slow Dashboard Loading
+1. Optimize Grafana query performance
+2. Reduce time range for complex queries
+3. Use recording rules for expensive queries
+
+### Performance Optimization
+
+1. **Sampling**: Configure appropriate trace sampling rates (default: 10%)
+2. **Batching**: Use batch processors for traces and metrics
+3. **Memory Limits**: Set appropriate memory limits for collectors
+4. **Resource Attributes**: Minimize resource attribute cardinality
+
+## Development
+
+### Adding New Metrics
+
+```typescript
+// In your plugin code
+import { getMeter } from '@/lib/observability/telemetry';
+
+const meter = getMeter('my-plugin');
+const customMetric = meter.createCounter('my_plugin_operations_total', {
+  description: 'Total number of plugin operations',
+});
+
+// Record metrics
+customMetric.add(1, { operation: 'create', status: 'success' });
+```
+
+### Custom Trace Spans
+
+```typescript
+import { getTracer, createSpan } from '@/lib/observability/telemetry';
+
+const tracer = getTracer('my-plugin');
+
+async function myOperation() {
+  const span = createSpan(tracer, 'my-operation', {
+    attributes: { 'operation.type': 'business-logic' }
+  });
+  
+  try {
+    // Your operation logic here
+    span.setStatus({ code: SpanStatusCode.OK });
+  } catch (error) {
+    span.recordException(error);
+    span.setStatus({ code: SpanStatusCode.ERROR, message: error.message });
+    throw error;
+  } finally {
+    span.end();
+  }
+}
+```
+
+## Contributing
+
+1. Follow OpenTelemetry semantic conventions
+2. Add comprehensive tests for new observability features
+3. Update documentation for new metrics or traces
+4. Ensure compatibility with existing observability stack
+
+## Resources
+
+- [OpenTelemetry Documentation](https://opentelemetry.io/docs/)
+- [Prometheus Best Practices](https://prometheus.io/docs/practices/)
+- [Jaeger Documentation](https://www.jaegertracing.io/docs/)
+- [Grafana Dashboard Best Practices](https://grafana.com/docs/grafana/latest/best-practices/)

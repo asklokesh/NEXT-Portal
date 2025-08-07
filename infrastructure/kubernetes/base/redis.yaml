@@ -1,0 +1,282 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-service
+  namespace: developer-portal
+  labels:
+    app: redis
+    tier: cache
+spec:
+  ports:
+    - port: 6379
+      targetPort: 6379
+      protocol: TCP
+      name: redis
+  selector:
+    app: redis
+    tier: cache
+  type: ClusterIP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-sentinel
+  namespace: developer-portal
+  labels:
+    app: redis-sentinel
+spec:
+  ports:
+    - port: 26379
+      targetPort: 26379
+      protocol: TCP
+      name: sentinel
+  selector:
+    app: redis-sentinel
+  type: ClusterIP
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: redis-config
+  namespace: developer-portal
+data:
+  redis.conf: |
+    # Redis configuration for production
+    bind 0.0.0.0
+    protected-mode yes
+    port 6379
+    tcp-backlog 511
+    timeout 0
+    tcp-keepalive 300
+    daemonize no
+    supervised no
+    pidfile /var/run/redis_6379.pid
+    loglevel notice
+    logfile ""
+    databases 16
+    always-show-logo no
+    
+    # Snapshotting
+    save 900 1
+    save 300 10
+    save 60 10000
+    stop-writes-on-bgsave-error yes
+    rdbcompression yes
+    rdbchecksum yes
+    dbfilename dump.rdb
+    dir /data
+    
+    # Replication
+    replica-serve-stale-data yes
+    replica-read-only yes
+    repl-diskless-sync no
+    repl-diskless-sync-delay 5
+    repl-diskless-load disabled
+    repl-disable-tcp-nodelay no
+    replica-priority 100
+    
+    # Security
+    requirepass CHANGE_ME_REDIS_PASSWORD
+    
+    # Limits
+    maxclients 10000
+    maxmemory 2gb
+    maxmemory-policy allkeys-lru
+    
+    # Append only mode
+    appendonly yes
+    appendfilename "appendonly.aof"
+    appendfsync everysec
+    no-appendfsync-on-rewrite no
+    auto-aof-rewrite-percentage 100
+    auto-aof-rewrite-min-size 64mb
+    aof-load-truncated yes
+    aof-use-rdb-preamble yes
+    
+    # Lua scripting
+    lua-time-limit 5000
+    
+    # Cluster
+    cluster-enabled no
+    
+    # Slowlog
+    slowlog-log-slower-than 10000
+    slowlog-max-len 128
+    
+    # Latency monitor
+    latency-monitor-threshold 0
+    
+    # Event notification
+    notify-keyspace-events ""
+    
+    # Advanced config
+    hash-max-ziplist-entries 512
+    hash-max-ziplist-value 64
+    list-max-ziplist-size -2
+    list-compress-depth 0
+    set-max-intset-entries 512
+    zset-max-ziplist-entries 128
+    zset-max-ziplist-value 64
+    hll-sparse-max-bytes 3000
+    stream-node-max-bytes 4096
+    stream-node-max-entries 100
+    activerehashing yes
+    client-output-buffer-limit normal 0 0 0
+    client-output-buffer-limit replica 256mb 64mb 60
+    client-output-buffer-limit pubsub 32mb 8mb 60
+    hz 10
+    dynamic-hz yes
+    aof-rewrite-incremental-fsync yes
+    rdb-save-incremental-fsync yes
+    
+  sentinel.conf: |
+    # Redis Sentinel configuration
+    port 26379
+    bind 0.0.0.0
+    daemonize no
+    pidfile /var/run/redis-sentinel.pid
+    logfile ""
+    dir /tmp
+    sentinel monitor mymaster redis-service 6379 2
+    sentinel auth-pass mymaster CHANGE_ME_REDIS_PASSWORD
+    sentinel down-after-milliseconds mymaster 5000
+    sentinel parallel-syncs mymaster 1
+    sentinel failover-timeout mymaster 10000
+    sentinel deny-scripts-reconfig yes
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redis
+  namespace: developer-portal
+spec:
+  serviceName: redis-service
+  replicas: 3
+  selector:
+    matchLabels:
+      app: redis
+      tier: cache
+  template:
+    metadata:
+      labels:
+        app: redis
+        tier: cache
+    spec:
+      initContainers:
+        - name: config
+          image: redis:7-alpine
+          command: [ "sh", "-c" ]
+          args:
+            - |
+              cp /tmp/redis.conf /etc/redis/redis.conf
+              echo "masterauth $REDIS_PASSWORD" >> /etc/redis/redis.conf
+              echo "requirepass $REDIS_PASSWORD" >> /etc/redis/redis.conf
+          env:
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: portal-secrets
+                  key: REDIS_PASSWORD
+          volumeMounts:
+            - name: redis-config
+              mountPath: /tmp/redis.conf
+              subPath: redis.conf
+            - name: config
+              mountPath: /etc/redis
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          command: ["redis-server", "/etc/redis/redis.conf"]
+          ports:
+            - containerPort: 6379
+              name: redis
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: config
+              mountPath: /etc/redis
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "250m"
+            limits:
+              memory: "2Gi"
+              cpu: "1"
+          livenessProbe:
+            tcpSocket:
+              port: 6379
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - "redis-cli -h localhost -a $REDIS_PASSWORD ping"
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          env:
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: portal-secrets
+                  key: REDIS_PASSWORD
+      volumes:
+        - name: redis-config
+          configMap:
+            name: redis-config
+        - name: config
+          emptyDir: {}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: fast-ssd
+        resources:
+          requests:
+            storage: 10Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis-sentinel
+  namespace: developer-portal
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: redis-sentinel
+  template:
+    metadata:
+      labels:
+        app: redis-sentinel
+    spec:
+      containers:
+        - name: sentinel
+          image: redis:7-alpine
+          command: ["redis-sentinel", "/etc/redis-sentinel/sentinel.conf"]
+          ports:
+            - containerPort: 26379
+              name: sentinel
+          volumeMounts:
+            - name: sentinel-config
+              mountPath: /etc/redis-sentinel
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "256Mi"
+              cpu: "200m"
+      volumes:
+        - name: sentinel-config
+          configMap:
+            name: redis-config
+            items:
+              - key: sentinel.conf
+                path: sentinel.conf

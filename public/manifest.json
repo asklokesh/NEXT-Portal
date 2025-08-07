@@ -1,0 +1,71 @@
+{
+ "name": "NEXT Portal - Modern Internal Developer Platform",
+ "short_name": "NEXT Portal",
+ "description": "Enterprise-grade Internal Developer Portal for modern development teams. Streamline workflows, manage services, and accelerate delivery.",
+ "theme_color": "#0f172a",
+ "background_color": "#ffffff",
+ "display": "standalone",
+ "orientation": "portrait",
+ "scope": "/",
+ "start_url": "/",
+ "id": "next-portal",
+ "categories": ["developer", "productivity", "business"],
+ "icons": [
+ {
+ "src": "/icons/icon.svg",
+ "sizes": "any",
+ "type": "image/svg+xml",
+ "purpose": "any maskable"
+ },
+ {
+ "src": "/favicon.svg",
+ "sizes": "any",
+ "type": "image/svg+xml",
+ "purpose": "any maskable"
+ }
+ ],
+ "screenshots": [
+ {
+ "src": "/screenshots/dashboard.png",
+ "type": "image/png",
+ "sizes": "1280x720",
+ "label": "Dashboard View"
+ },
+ {
+ "src": "/screenshots/catalog.png",
+ "type": "image/png",
+ "sizes": "1280x720",
+ "label": "Service Catalog"
+ },
+ {
+ "src": "/screenshots/templates.png",
+ "type": "image/png",
+ "sizes": "1280x720",
+ "label": "Template Marketplace"
+ }
+ ],
+ "shortcuts": [
+ {
+ "name": "Dashboard",
+ "url": "/dashboard",
+ "description": "View your dashboard"
+ },
+ {
+ "name": "Service Catalog",
+ "url": "/catalog",
+ "description": "Browse services"
+ },
+ {
+ "name": "Templates",
+ "url": "/templates",
+ "description": "Browse templates"
+ },
+ {
+ "name": "Create Service",
+ "url": "/create",
+ "description": "Create a new service"
+ }
+ ],
+ "prefer_related_applications": false,
+ "related_applications": []
+}

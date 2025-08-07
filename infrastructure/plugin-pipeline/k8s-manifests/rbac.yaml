@@ -1,0 +1,211 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: plugin-pipeline-orchestrator
+  namespace: plugin-pipeline
+  labels:
+    app.kubernetes.io/name: plugin-pipeline-orchestrator
+    app.kubernetes.io/component: orchestrator
+    app.kubernetes.io/part-of: plugin-pipeline
+  annotations:
+    plugin-pipeline/description: "Service account for plugin pipeline orchestrator"
+automountServiceAccountToken: true
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: plugin-pipeline-orchestrator
+  labels:
+    app.kubernetes.io/name: plugin-pipeline-orchestrator
+    app.kubernetes.io/component: orchestrator
+    app.kubernetes.io/part-of: plugin-pipeline
+  annotations:
+    plugin-pipeline/description: "Cluster role for plugin pipeline orchestrator"
+rules:
+  # Namespace management
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  
+  # Pod management
+  - apiGroups: [""]
+    resources: ["pods", "pods/status", "pods/log"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  
+  # Service management  
+  - apiGroups: [""]
+    resources: ["services", "endpoints"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  
+  # ConfigMap and Secret management
+  - apiGroups: [""]
+    resources: ["configmaps", "secrets"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  
+  # ServiceAccount management
+  - apiGroups: [""]
+    resources: ["serviceaccounts"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  
+  # PersistentVolume management
+  - apiGroups: [""]
+    resources: ["persistentvolumes", "persistentvolumeclaims"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  
+  # Deployment management
+  - apiGroups: ["apps"]
+    resources: ["deployments", "deployments/status", "deployments/scale"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  
+  # ReplicaSet management
+  - apiGroups: ["apps"]
+    resources: ["replicasets", "replicasets/status"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  
+  # StatefulSet management
+  - apiGroups: ["apps"]
+    resources: ["statefulsets", "statefulsets/status"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  
+  # Ingress management
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses", "ingresses/status"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  
+  # NetworkPolicy management
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["networkpolicies"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  
+  # HorizontalPodAutoscaler management
+  - apiGroups: ["autoscaling"]
+    resources: ["horizontalpodautoscalers"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  
+  # ResourceQuota and LimitRange management
+  - apiGroups: [""]
+    resources: ["resourcequotas", "limitranges"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  
+  # Role and RoleBinding management
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["roles", "rolebindings", "clusterroles", "clusterrolebindings"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  
+  # Custom Resource management for service mesh
+  - apiGroups: ["networking.istio.io"]
+    resources: ["*"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  
+  - apiGroups: ["security.istio.io"]
+    resources: ["*"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  
+  # Linkerd support
+  - apiGroups: ["split.smi-spec.io"]
+    resources: ["*"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  
+  - apiGroups: ["linkerd.io"]
+    resources: ["*"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  
+  # Monitoring resources
+  - apiGroups: ["monitoring.coreos.com"]
+    resources: ["servicemonitors", "prometheusrules", "podmonitors"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  
+  # Metrics access
+  - apiGroups: ["metrics.k8s.io"]
+    resources: ["pods", "nodes"]
+    verbs: ["get", "list"]
+  
+  # Events
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+  
+  # Plugin Custom Resources
+  - apiGroups: ["plugins.backstage.io"]
+    resources: ["*"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: plugin-pipeline-orchestrator
+  labels:
+    app.kubernetes.io/name: plugin-pipeline-orchestrator
+    app.kubernetes.io/component: orchestrator
+    app.kubernetes.io/part-of: plugin-pipeline
+  annotations:
+    plugin-pipeline/description: "Cluster role binding for plugin pipeline orchestrator"
+subjects:
+  - kind: ServiceAccount
+    name: plugin-pipeline-orchestrator
+    namespace: plugin-pipeline
+roleRef:
+  kind: ClusterRole
+  name: plugin-pipeline-orchestrator
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: plugin-runner
+  namespace: plugins
+  labels:
+    app.kubernetes.io/name: plugin-runner
+    app.kubernetes.io/component: runtime
+    app.kubernetes.io/part-of: plugin-pipeline
+  annotations:
+    plugin-pipeline/description: "Service account for plugin runtime"
+automountServiceAccountToken: false
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: plugin-runner
+  namespace: plugins
+  labels:
+    app.kubernetes.io/name: plugin-runner
+    app.kubernetes.io/component: runtime
+    app.kubernetes.io/part-of: plugin-pipeline
+  annotations:
+    plugin-pipeline/description: "Role for plugin runtime with minimal permissions"
+rules:
+  # Minimal permissions for plugins
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list"]
+    resourceNames: ["plugin-config"]
+  
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list"]
+    resourceNames: ["plugin-secrets"]
+  
+  # Allow plugins to read their own pod information
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: plugin-runner
+  namespace: plugins
+  labels:
+    app.kubernetes.io/name: plugin-runner
+    app.kubernetes.io/component: runtime
+    app.kubernetes.io/part-of: plugin-pipeline
+  annotations:
+    plugin-pipeline/description: "Role binding for plugin runtime"
+subjects:
+  - kind: ServiceAccount
+    name: plugin-runner
+    namespace: plugins
+roleRef:
+  kind: Role
+  name: plugin-runner
+  apiGroup: rbac.authorization.k8s.io

@@ -1,0 +1,185 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: progressive-delivery-rules
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: progressive-delivery
+    prometheus: kube-prometheus
+    role: alert-rules
+spec:
+  groups:
+  - name: progressive-delivery.rules
+    interval: 30s
+    rules:
+    - alert: ProgressiveDeploymentHighErrorRate
+      expr: |
+        (
+          sum(rate(http_requests_total{status=~"5.."}[5m])) by (service, version, namespace)
+          /
+          sum(rate(http_requests_total[5m])) by (service, version, namespace)
+        ) > 0.01
+      for: 1m
+      labels:
+        severity: critical
+        category: progressive-delivery
+      annotations:
+        summary: "High error rate detected in progressive deployment"
+        description: "Error rate for {{ $labels.service }} version {{ $labels.version }} in namespace {{ $labels.namespace }} is {{ $value | humanizePercentage }}"
+    
+    - alert: ProgressiveDeploymentHighLatency
+      expr: |
+        histogram_quantile(0.99,
+          sum(rate(http_request_duration_seconds_bucket[5m])) by (service, version, namespace, le)
+        ) > 2
+      for: 2m
+      labels:
+        severity: warning
+        category: progressive-delivery
+      annotations:
+        summary: "High latency detected in progressive deployment"
+        description: "P99 latency for {{ $labels.service }} version {{ $labels.version }} in namespace {{ $labels.namespace }} is {{ $value }}s"
+    
+    - alert: ProgressiveDeploymentLowAvailability
+      expr: |
+        (
+          sum(up{job=~".*progressive-deployment.*"}) by (service, version, namespace)
+          /
+          count(up{job=~".*progressive-deployment.*"}) by (service, version, namespace)
+        ) < 0.99
+      for: 2m
+      labels:
+        severity: critical
+        category: progressive-delivery
+      annotations:
+        summary: "Low availability detected in progressive deployment"
+        description: "Availability for {{ $labels.service }} version {{ $labels.version }} in namespace {{ $labels.namespace }} is {{ $value | humanizePercentage }}"
+    
+    - alert: CanaryAnalysisFailed
+      expr: |
+        flagger_canary_status{phase="failed"} == 1
+      for: 0m
+      labels:
+        severity: critical
+        category: canary-deployment
+      annotations:
+        summary: "Canary analysis failed"
+        description: "Canary analysis for {{ $labels.name }} in namespace {{ $labels.namespace }} has failed"
+    
+    - alert: BlueGreenSwitchFailed
+      expr: |
+        increase(rollout_phase_duration_seconds{phase="blueGreenSwitch"}[5m]) > 300
+      for: 0m
+      labels:
+        severity: warning
+        category: blue-green-deployment
+      annotations:
+        summary: "Blue-green switch taking too long"
+        description: "Blue-green switch for {{ $labels.rollout }} is taking more than 5 minutes"
+    
+    - alert: RollbackTriggered
+      expr: |
+        increase(progressive_deployment_rollbacks_total[5m]) > 0
+      for: 0m
+      labels:
+        severity: warning
+        category: progressive-delivery
+      annotations:
+        summary: "Progressive deployment rollback triggered"
+        description: "Rollback has been triggered for deployment {{ $labels.deployment }} in namespace {{ $labels.namespace }}"
+    
+    - alert: DeploymentStuck
+      expr: |
+        time() - progressive_deployment_start_time > 3600
+        and
+        progressive_deployment_phase{phase!="completed",phase!="failed"} == 1
+      for: 0m
+      labels:
+        severity: warning
+        category: progressive-delivery
+      annotations:
+        summary: "Progressive deployment stuck"
+        description: "Deployment {{ $labels.deployment }} has been running for more than 1 hour without completion"
+    
+    - alert: TrafficSplitImbalanced
+      expr: |
+        abs(
+          istio_request_total{source_app="istio-proxy"}
+          /
+          on(destination_service_name) group_left()
+          sum(istio_request_total{source_app="istio-proxy"}) by (destination_service_name)
+        ) > 0.1
+      for: 5m
+      labels:
+        severity: info
+        category: traffic-management
+      annotations:
+        summary: "Traffic split significantly imbalanced"
+        description: "Traffic split for service {{ $labels.destination_service_name }} is more than 10% off target"
+
+  - name: progressive-delivery-metrics.rules
+    interval: 30s
+    rules:
+    - record: progressive_delivery:error_rate
+      expr: |
+        sum(rate(http_requests_total{status=~"5.."}[5m])) by (service, version, namespace)
+        /
+        sum(rate(http_requests_total[5m])) by (service, version, namespace)
+    
+    - record: progressive_delivery:latency_p99
+      expr: |
+        histogram_quantile(0.99,
+          sum(rate(http_request_duration_seconds_bucket[5m])) by (service, version, namespace, le)
+        )
+    
+    - record: progressive_delivery:latency_p95
+      expr: |
+        histogram_quantile(0.95,
+          sum(rate(http_request_duration_seconds_bucket[5m])) by (service, version, namespace, le)
+        )
+    
+    - record: progressive_delivery:latency_p90
+      expr: |
+        histogram_quantile(0.90,
+          sum(rate(http_request_duration_seconds_bucket[5m])) by (service, version, namespace, le)
+        )
+    
+    - record: progressive_delivery:request_rate
+      expr: |
+        sum(rate(http_requests_total[5m])) by (service, version, namespace)
+    
+    - record: progressive_delivery:availability
+      expr: |
+        sum(up{job=~".*progressive-deployment.*"}) by (service, version, namespace)
+        /
+        count(up{job=~".*progressive-deployment.*"}) by (service, version, namespace)
+    
+    - record: canary_deployment:success_rate
+      expr: |
+        sum(rate(http_requests_total{status!~"5.."}[5m])) by (service, version, namespace)
+        /
+        sum(rate(http_requests_total[5m])) by (service, version, namespace)
+    
+    - record: traffic_split:canary_percentage
+      expr: |
+        flagger_canary_weight
+    
+    - record: rollout_analysis:duration_seconds
+      expr: |
+        rollout_phase_duration_seconds
+    
+    - record: progressive_delivery:deployment_frequency
+      expr: |
+        increase(progressive_deployment_starts_total[24h])
+    
+    - record: progressive_delivery:mttr_seconds
+      expr: |
+        avg_over_time(
+          (progressive_deployment_rollback_time - progressive_deployment_failure_time)[24h:]
+        )
+    
+    - record: progressive_delivery:change_failure_rate
+      expr: |
+        increase(progressive_deployment_rollbacks_total[24h])
+        /
+        increase(progressive_deployment_starts_total[24h])

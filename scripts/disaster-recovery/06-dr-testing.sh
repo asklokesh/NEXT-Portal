@@ -1,0 +1,1046 @@
+#!/bin/bash
+
+# Disaster Recovery Testing and Validation Framework
+# This script provides comprehensive testing of DR capabilities
+
+set -euo pipefail
+
+# Source DR configuration
+source "$(dirname "$0")/01-dr-config.sh"
+
+# Testing specific configuration
+TEST_TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+TEST_RESULTS_DIR="${DR_LOGS_DIR}/tests"
+TEST_REPORT_FILE="${TEST_RESULTS_DIR}/dr-test-report-${TEST_TIMESTAMP}.html"
+DRY_RUN=false
+TEST_TYPES=""
+CHAOS_TESTING=false
+LOAD_TESTING=false
+PARALLEL_TESTS=false
+
+# Test categories
+declare -A TEST_CATEGORIES=(
+    ["backup"]="Backup and restore operations"
+    ["failover"]="Failover mechanisms"
+    ["network"]="Network connectivity and routing"
+    ["data"]="Data consistency and replication"
+    ["security"]="Security configurations"
+    ["performance"]="Performance and scalability"
+    ["monitoring"]="Monitoring and alerting"
+    ["automation"]="Automation workflows"
+)
+
+# Initialize testing logging
+setup_logging "INFO"
+
+# Parse command line arguments
+parse_test_arguments() {
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --test-types)
+                TEST_TYPES="$2"
+                shift 2
+                ;;
+            --chaos-testing)
+                CHAOS_TESTING=true
+                shift
+                ;;
+            --load-testing)
+                LOAD_TESTING=true
+                shift
+                ;;
+            --parallel)
+                PARALLEL_TESTS=true
+                shift
+                ;;
+            --dry-run)
+                DRY_RUN=true
+                shift
+                ;;
+            --help)
+                show_test_usage
+                exit 0
+                ;;
+            *)
+                log "ERROR" "Unknown argument: $1"
+                show_test_usage
+                exit 1
+                ;;
+        esac
+    done
+}
+
+# Show testing usage
+show_test_usage() {
+    cat <<EOF
+Usage: $0 [options]
+
+Options:
+    --test-types TYPES     Comma-separated list of test types to run
+                          (backup,failover,network,data,security,performance,monitoring,automation)
+    --chaos-testing       Enable chaos engineering tests
+    --load-testing        Enable load testing scenarios
+    --parallel           Run tests in parallel where possible
+    --dry-run            Show what tests would run without executing
+    --help               Show this help message
+
+Test Types:
+EOF
+    for category in "${!TEST_CATEGORIES[@]}"; do
+        echo "    ${category} - ${TEST_CATEGORIES[$category]}"
+    done
+    
+    cat <<EOF
+
+Examples:
+    $0 --test-types backup,failover
+    $0 --chaos-testing --load-testing
+    $0 --test-types all --parallel
+EOF
+}
+
+# Initialize test environment
+init_test_environment() {
+    log "INFO" "Initializing DR testing environment..."
+    
+    # Create test results directory
+    mkdir -p "${TEST_RESULTS_DIR}"
+    
+    # Create test data directory
+    mkdir -p "${TEST_RESULTS_DIR}/test-data"
+    
+    # Initialize test report
+    cat > "${TEST_REPORT_FILE}" <<EOF
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Backstage DR Test Report - ${TEST_TIMESTAMP}</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; background-color: #f5f5f5; }
+        .header { background-color: #2c3e50; color: white; padding: 20px; border-radius: 5px; margin-bottom: 20px; }
+        .summary { background-color: white; padding: 15px; border-radius: 5px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .test-section { background-color: white; padding: 15px; border-radius: 5px; margin-bottom: 15px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .test-case { margin-bottom: 10px; padding: 10px; border-left: 4px solid #3498db; background-color: #f8f9fa; }
+        .success { border-left-color: #27ae60; }
+        .failure { border-left-color: #e74c3c; }
+        .warning { border-left-color: #f39c12; }
+        .skip { border-left-color: #95a5a6; }
+        .metric { display: inline-block; margin-right: 20px; }
+        .metric-value { font-weight: bold; color: #2c3e50; }
+        pre { background-color: #2c3e50; color: #ecf0f1; padding: 10px; border-radius: 3px; overflow-x: auto; }
+        .timestamp { color: #7f8c8d; font-size: 0.9em; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>Backstage Disaster Recovery Test Report</h1>
+        <p>Test Run: ${TEST_TIMESTAMP}</p>
+        <p>Generated: $(date -Iseconds)</p>
+    </div>
+    
+    <div class="summary" id="summary">
+        <h2>Test Summary</h2>
+        <div class="metric">Total Tests: <span class="metric-value" id="total-tests">0</span></div>
+        <div class="metric">Passed: <span class="metric-value" id="passed-tests">0</span></div>
+        <div class="metric">Failed: <span class="metric-value" id="failed-tests">0</span></div>
+        <div class="metric">Skipped: <span class="metric-value" id="skipped-tests">0</span></div>
+        <div class="metric">Duration: <span class="metric-value" id="test-duration">0s</span></div>
+    </div>
+EOF
+
+    log "INFO" "Test environment initialized"
+}
+
+# Test result tracking
+declare -A TEST_RESULTS
+TOTAL_TESTS=0
+PASSED_TESTS=0
+FAILED_TESTS=0
+SKIPPED_TESTS=0
+
+# Record test result
+record_test_result() {
+    local test_name="$1"
+    local result="$2"
+    local details="$3"
+    local duration="${4:-0}"
+    
+    TEST_RESULTS["${test_name}"]="${result}"
+    ((TOTAL_TESTS++))
+    
+    case "${result}" in
+        "PASS")
+            ((PASSED_TESTS++))
+            local css_class="success"
+            local icon="✅"
+            ;;
+        "FAIL")
+            ((FAILED_TESTS++))
+            local css_class="failure"
+            local icon="❌"
+            ;;
+        "SKIP")
+            ((SKIPPED_TESTS++))
+            local css_class="skip"
+            local icon="⏭️"
+            ;;
+        *)
+            local css_class="warning"
+            local icon="⚠️"
+            ;;
+    esac
+    
+    # Add to HTML report
+    cat >> "${TEST_REPORT_FILE}" <<EOF
+    <div class="test-case ${css_class}">
+        <h4>${icon} ${test_name} (${duration}s)</h4>
+        <p><strong>Result:</strong> ${result}</p>
+        <p><strong>Details:</strong> ${details}</p>
+        <p class="timestamp">$(date -Iseconds)</p>
+    </div>
+EOF
+    
+    log "INFO" "Test ${test_name}: ${result} (${duration}s) - ${details}"
+}
+
+# Backup and restore tests
+test_backup_restore() {
+    log "INFO" "Running backup and restore tests..."
+    
+    cat >> "${TEST_REPORT_FILE}" <<EOF
+    <div class="test-section">
+        <h2>📦 Backup and Restore Tests</h2>
+EOF
+
+    local start_time=$(date +%s)
+    
+    # Test 1: Database backup
+    log "INFO" "Testing database backup..."
+    if [[ "${DRY_RUN}" == "true" ]]; then
+        record_test_result "Database Backup" "SKIP" "Dry run mode" "0"
+    else
+        local test_backup_tag="test-${TEST_TIMESTAMP}"
+        if /opt/backstage-dr/scripts/02-backup-automation.sh 2>/dev/null; then
+            local backup_duration=$(($(date +%s) - start_time))
+            record_test_result "Database Backup" "PASS" "Backup created successfully with tag ${test_backup_tag}" "${backup_duration}"
+        else
+            record_test_result "Database Backup" "FAIL" "Backup creation failed" "$(($(date +%s) - start_time))"
+        fi
+    fi
+    
+    # Test 2: Backup integrity verification
+    log "INFO" "Testing backup integrity..."
+    start_time=$(date +%s)
+    
+    if [[ "${DRY_RUN}" == "true" ]]; then
+        record_test_result "Backup Integrity" "SKIP" "Dry run mode" "0"
+    else
+        # Find the latest backup
+        local latest_backup=$(ls -t "${DR_BACKUP_DIR}" | head -1)
+        if [[ -n "${latest_backup}" ]] && [[ -d "${DR_BACKUP_DIR}/${latest_backup}" ]]; then
+            # Verify checksums
+            local verification_failed=false
+            find "${DR_BACKUP_DIR}/${latest_backup}" -name "*.sha256" | while read -r checksum_file; do
+                local file_to_check="${checksum_file%.sha256}"
+                if [[ -f "${file_to_check}" ]]; then
+                    if ! cd "$(dirname "${checksum_file}")" && sha256sum -c "$(basename "${checksum_file}")" >/dev/null 2>&1; then
+                        verification_failed=true
+                        break
+                    fi
+                fi
+            done
+            
+            if [[ "${verification_failed}" == "false" ]]; then
+                record_test_result "Backup Integrity" "PASS" "All backup checksums verified successfully" "$(($(date +%s) - start_time))"
+            else
+                record_test_result "Backup Integrity" "FAIL" "Backup integrity verification failed" "$(($(date +%s) - start_time))"
+            fi
+        else
+            record_test_result "Backup Integrity" "FAIL" "No backup found for verification" "$(($(date +%s) - start_time))"
+        fi
+    fi
+    
+    # Test 3: Restore simulation (to test environment)
+    log "INFO" "Testing restore simulation..."
+    start_time=$(date +%s)
+    
+    if [[ "${DRY_RUN}" == "true" ]]; then
+        record_test_result "Restore Simulation" "SKIP" "Dry run mode" "0"
+    else
+        # Create test database for restore
+        local test_db="backstage_test_restore_${TEST_TIMESTAMP}"
+        if PGPASSWORD="${POSTGRES_PASSWORD}" createdb -h "${POSTGRES_DR_HOST}" -p "${POSTGRES_PORT}" -U "${POSTGRES_USER:-postgres}" "${test_db}" 2>/dev/null; then
+            # Attempt restore to test database
+            local latest_backup=$(ls -t "${DR_BACKUP_DIR}" | head -1)
+            if [[ -n "${latest_backup}" ]]; then
+                local pg_backup="${DR_BACKUP_DIR}/${latest_backup}/database/postgres-${latest_backup}.sql.custom"
+                if [[ -f "${pg_backup}" ]]; then
+                    if PGPASSWORD="${POSTGRES_PASSWORD}" pg_restore -h "${POSTGRES_DR_HOST}" -p "${POSTGRES_PORT}" -U "${POSTGRES_USER:-postgres}" -d "${test_db}" "${pg_backup}" >/dev/null 2>&1; then
+                        record_test_result "Restore Simulation" "PASS" "Restore to test database successful" "$(($(date +%s) - start_time))"
+                        # Cleanup test database
+                        PGPASSWORD="${POSTGRES_PASSWORD}" dropdb -h "${POSTGRES_DR_HOST}" -p "${POSTGRES_PORT}" -U "${POSTGRES_USER:-postgres}" "${test_db}" 2>/dev/null || true
+                    else
+                        record_test_result "Restore Simulation" "FAIL" "Restore to test database failed" "$(($(date +%s) - start_time))"
+                    fi
+                else
+                    record_test_result "Restore Simulation" "FAIL" "Backup file not found for restore test" "$(($(date +%s) - start_time))"
+                fi
+            else
+                record_test_result "Restore Simulation" "FAIL" "No backup available for restore test" "$(($(date +%s) - start_time))"
+            fi
+        else
+            record_test_result "Restore Simulation" "FAIL" "Failed to create test database for restore" "$(($(date +%s) - start_time))"
+        fi
+    fi
+    
+    # Test 4: S3 backup upload/download
+    log "INFO" "Testing S3 backup operations..."
+    start_time=$(date +%s)
+    
+    if [[ "${DRY_RUN}" == "true" ]]; then
+        record_test_result "S3 Backup Operations" "SKIP" "Dry run mode" "0"
+    else
+        # Test S3 connectivity and permissions
+        local test_file="${TEST_RESULTS_DIR}/s3-test-${TEST_TIMESTAMP}.txt"
+        echo "S3 connectivity test - ${TEST_TIMESTAMP}" > "${test_file}"
+        
+        if aws s3 cp "${test_file}" "s3://${S3_BACKUP_BUCKET}/test/" >/dev/null 2>&1; then
+            if aws s3 cp "s3://${S3_BACKUP_BUCKET}/test/$(basename "${test_file}")" "${test_file}.downloaded" >/dev/null 2>&1; then
+                if diff "${test_file}" "${test_file}.downloaded" >/dev/null 2>&1; then
+                    record_test_result "S3 Backup Operations" "PASS" "S3 upload/download operations successful" "$(($(date +%s) - start_time))"
+                else
+                    record_test_result "S3 Backup Operations" "FAIL" "S3 file integrity check failed" "$(($(date +%s) - start_time))"
+                fi
+                # Cleanup
+                aws s3 rm "s3://${S3_BACKUP_BUCKET}/test/$(basename "${test_file}")" >/dev/null 2>&1 || true
+                rm -f "${test_file}.downloaded"
+            else
+                record_test_result "S3 Backup Operations" "FAIL" "S3 download failed" "$(($(date +%s) - start_time))"
+            fi
+        else
+            record_test_result "S3 Backup Operations" "FAIL" "S3 upload failed" "$(($(date +%s) - start_time))"
+        fi
+        rm -f "${test_file}"
+    fi
+    
+    cat >> "${TEST_REPORT_FILE}" <<EOF
+    </div>
+EOF
+}
+
+# Failover tests
+test_failover_mechanisms() {
+    log "INFO" "Running failover mechanism tests..."
+    
+    cat >> "${TEST_REPORT_FILE}" <<EOF
+    <div class="test-section">
+        <h2>🔄 Failover Mechanism Tests</h2>
+EOF
+
+    # Test 1: Health check endpoints
+    log "INFO" "Testing health check endpoints..."
+    local start_time=$(date +%s)
+    
+    local health_checks=(
+        "https://backstage.local/health"
+        "https://backstage.local/api/health"
+        "https://dr.backstage.local/health"
+    )
+    
+    local failed_health_checks=()
+    for endpoint in "${health_checks[@]}"; do
+        if ! curl -s --max-time 10 "${endpoint}" >/dev/null 2>&1; then
+            failed_health_checks+=("${endpoint}")
+        fi
+    done
+    
+    if [[ ${#failed_health_checks[@]} -eq 0 ]]; then
+        record_test_result "Health Check Endpoints" "PASS" "All health endpoints responding" "$(($(date +%s) - start_time))"
+    else
+        record_test_result "Health Check Endpoints" "FAIL" "Failed endpoints: ${failed_health_checks[*]}" "$(($(date +%s) - start_time))"
+    fi
+    
+    # Test 2: DNS resolution
+    log "INFO" "Testing DNS resolution..."
+    start_time=$(date +%s)
+    
+    local dns_names=("backstage.local" "dr.backstage.local" "admin.backstage.local")
+    local failed_dns=()
+    
+    for dns_name in "${dns_names[@]}"; do
+        if ! nslookup "${dns_name}" >/dev/null 2>&1; then
+            failed_dns+=("${dns_name}")
+        fi
+    done
+    
+    if [[ ${#failed_dns[@]} -eq 0 ]]; then
+        record_test_result "DNS Resolution" "PASS" "All DNS names resolve correctly" "$(($(date +%s) - start_time))"
+    else
+        record_test_result "DNS Resolution" "FAIL" "Failed DNS names: ${failed_dns[*]}" "$(($(date +%s) - start_time))"
+    fi
+    
+    # Test 3: Kubernetes cluster connectivity
+    log "INFO" "Testing Kubernetes cluster connectivity..."
+    start_time=$(date +%s)
+    
+    local cluster_tests=()
+    
+    # Test primary cluster
+    if kubectl config use-context "${PRIMARY_CLUSTER}" >/dev/null 2>&1; then
+        if kubectl get nodes >/dev/null 2>&1; then
+            cluster_tests+=("Primary cluster: OK")
+        else
+            cluster_tests+=("Primary cluster: Failed to list nodes")
+        fi
+    else
+        cluster_tests+=("Primary cluster: Context not found")
+    fi
+    
+    # Test DR cluster
+    if kubectl config use-context "${DR_CLUSTER}" >/dev/null 2>&1; then
+        if kubectl get nodes >/dev/null 2>&1; then
+            cluster_tests+=("DR cluster: OK")
+        else
+            cluster_tests+=("DR cluster: Failed to list nodes")
+        fi
+    else
+        cluster_tests+=("DR cluster: Context not found")
+    fi
+    
+    if [[ "${cluster_tests[*]}" == *"Failed"* ]] || [[ "${cluster_tests[*]}" == *"not found"* ]]; then
+        record_test_result "Kubernetes Connectivity" "FAIL" "$(printf '%s; ' "${cluster_tests[@]}")" "$(($(date +%s) - start_time))"
+    else
+        record_test_result "Kubernetes Connectivity" "PASS" "$(printf '%s; ' "${cluster_tests[@]}")" "$(($(date +%s) - start_time))"
+    fi
+    
+    # Test 4: Database failover readiness
+    log "INFO" "Testing database failover readiness..."
+    start_time=$(date +%s)
+    
+    local db_tests=()
+    
+    # Test primary database
+    if PGPASSWORD="${POSTGRES_PASSWORD}" pg_isready -h "${POSTGRES_PRIMARY_HOST}" -p "${POSTGRES_PORT}" -d "${POSTGRES_DB}" >/dev/null 2>&1; then
+        db_tests+=("Primary DB: Ready")
+    else
+        db_tests+=("Primary DB: Not ready")
+    fi
+    
+    # Test DR database
+    if PGPASSWORD="${POSTGRES_PASSWORD}" pg_isready -h "${POSTGRES_DR_HOST}" -p "${POSTGRES_PORT}" -d "${POSTGRES_DB}" >/dev/null 2>&1; then
+        db_tests+=("DR DB: Ready")
+    else
+        db_tests+=("DR DB: Not ready")
+    fi
+    
+    # Check replication status if available
+    local replication_lag=$(PGPASSWORD="${POSTGRES_PASSWORD}" psql -h "${POSTGRES_DR_HOST}" -p "${POSTGRES_PORT}" -U "${POSTGRES_USER:-postgres}" -d "${POSTGRES_DB}" -t -c "SELECT EXTRACT(EPOCH FROM (now() - pg_last_xact_replay_timestamp()));" 2>/dev/null | tr -d ' ' || echo "unknown")
+    
+    if [[ "${replication_lag}" != "unknown" ]] && [[ "${replication_lag%.*}" -lt 300 ]]; then
+        db_tests+=("Replication lag: ${replication_lag}s (OK)")
+    elif [[ "${replication_lag}" != "unknown" ]]; then
+        db_tests+=("Replication lag: ${replication_lag}s (HIGH)")
+    else
+        db_tests+=("Replication lag: Unknown")
+    fi
+    
+    if [[ "${db_tests[*]}" == *"Not ready"* ]] || [[ "${db_tests[*]}" == *"HIGH"* ]]; then
+        record_test_result "Database Failover Readiness" "FAIL" "$(printf '%s; ' "${db_tests[@]}")" "$(($(date +%s) - start_time))"
+    else
+        record_test_result "Database Failover Readiness" "PASS" "$(printf '%s; ' "${db_tests[@]}")" "$(($(date +%s) - start_time))"
+    fi
+    
+    cat >> "${TEST_REPORT_FILE}" <<EOF
+    </div>
+EOF
+}
+
+# Network connectivity tests
+test_network_connectivity() {
+    log "INFO" "Running network connectivity tests..."
+    
+    cat >> "${TEST_REPORT_FILE}" <<EOF
+    <div class="test-section">
+        <h2>🌐 Network Connectivity Tests</h2>
+EOF
+
+    # Test 1: Cross-region connectivity
+    log "INFO" "Testing cross-region connectivity..."
+    local start_time=$(date +%s)
+    
+    # Test connectivity between regions
+    if kubectl config use-context "${PRIMARY_CLUSTER}" >/dev/null 2>&1; then
+        local primary_lb=$(kubectl get service istio-ingressgateway -n istio-system -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "")
+        local dr_endpoint="dr.backstage.local"
+        
+        if [[ -n "${primary_lb}" ]]; then
+            if curl -s --max-time 10 "http://${primary_lb}/health" >/dev/null 2>&1; then
+                if curl -s --max-time 10 "https://${dr_endpoint}/health" >/dev/null 2>&1; then
+                    record_test_result "Cross-Region Connectivity" "PASS" "Primary and DR endpoints accessible" "$(($(date +%s) - start_time))"
+                else
+                    record_test_result "Cross-Region Connectivity" "FAIL" "DR endpoint not accessible" "$(($(date +%s) - start_time))"
+                fi
+            else
+                record_test_result "Cross-Region Connectivity" "FAIL" "Primary endpoint not accessible" "$(($(date +%s) - start_time))"
+            fi
+        else
+            record_test_result "Cross-Region Connectivity" "FAIL" "Could not determine primary load balancer IP" "$(($(date +%s) - start_time))"
+        fi
+    else
+        record_test_result "Cross-Region Connectivity" "FAIL" "Cannot connect to primary cluster" "$(($(date +%s) - start_time))"
+    fi
+    
+    # Test 2: Istio mesh connectivity
+    log "INFO" "Testing Istio mesh connectivity..."
+    start_time=$(date +%s)
+    
+    if kubectl config use-context "${PRIMARY_CLUSTER}" >/dev/null 2>&1; then
+        # Check istio-proxy sidecars
+        local total_pods=$(kubectl get pods -A --no-headers | grep -v "Completed\|Succeeded" | wc -l)
+        local istio_injected_pods=$(kubectl get pods -A -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.containers[*].name}{"\n"}{end}' | grep -c "istio-proxy" || echo "0")
+        
+        if [[ ${istio_injected_pods} -gt 0 ]]; then
+            local injection_percentage=$((istio_injected_pods * 100 / total_pods))
+            if [[ ${injection_percentage} -gt 50 ]]; then
+                record_test_result "Istio Mesh Connectivity" "PASS" "${istio_injected_pods}/${total_pods} pods with Istio proxy (${injection_percentage}%)" "$(($(date +%s) - start_time))"
+            else
+                record_test_result "Istio Mesh Connectivity" "FAIL" "Low Istio injection rate: ${injection_percentage}%" "$(($(date +%s) - start_time))"
+            fi
+        else
+            record_test_result "Istio Mesh Connectivity" "FAIL" "No Istio proxies found" "$(($(date +%s) - start_time))"
+        fi
+    else
+        record_test_result "Istio Mesh Connectivity" "FAIL" "Cannot connect to cluster" "$(($(date +%s) - start_time))"
+    fi
+    
+    # Test 3: Load balancer health
+    log "INFO" "Testing load balancer health..."
+    start_time=$(date +%s)
+    
+    local lb_tests=()
+    
+    # Test primary load balancer
+    if curl -s --max-time 10 "https://backstage.local/health" | jq -e '.status == "ok"' >/dev/null 2>&1; then
+        lb_tests+=("Primary LB: Healthy")
+    else
+        lb_tests+=("Primary LB: Unhealthy")
+    fi
+    
+    # Test DR load balancer
+    if curl -s --max-time 10 "https://dr.backstage.local/health" >/dev/null 2>&1; then
+        lb_tests+=("DR LB: Healthy")
+    else
+        lb_tests+=("DR LB: Unhealthy")
+    fi
+    
+    if [[ "${lb_tests[*]}" == *"Unhealthy"* ]]; then
+        record_test_result "Load Balancer Health" "FAIL" "$(printf '%s; ' "${lb_tests[@]}")" "$(($(date +%s) - start_time))"
+    else
+        record_test_result "Load Balancer Health" "PASS" "$(printf '%s; ' "${lb_tests[@]}")" "$(($(date +%s) - start_time))"
+    fi
+    
+    cat >> "${TEST_REPORT_FILE}" <<EOF
+    </div>
+EOF
+}
+
+# Data consistency tests
+test_data_consistency() {
+    log "INFO" "Running data consistency tests..."
+    
+    cat >> "${TEST_REPORT_FILE}" <<EOF
+    <div class="test-section">
+        <h2>💾 Data Consistency Tests</h2>
+EOF
+
+    # Test 1: Database replication consistency
+    log "INFO" "Testing database replication consistency..."
+    local start_time=$(date +%s)
+    
+    if [[ "${DRY_RUN}" == "true" ]]; then
+        record_test_result "Database Replication Consistency" "SKIP" "Dry run mode" "0"
+    else
+        # Create test record in primary
+        local test_table="dr_test_${TEST_TIMESTAMP}"
+        local test_value="test_value_${TEST_TIMESTAMP}"
+        
+        # Create test table and insert data in primary
+        if PGPASSWORD="${POSTGRES_PASSWORD}" psql -h "${POSTGRES_PRIMARY_HOST}" -p "${POSTGRES_PORT}" -U "${POSTGRES_USER:-postgres}" -d "${POSTGRES_DB}" -c "CREATE TABLE IF NOT EXISTS ${test_table} (id SERIAL PRIMARY KEY, value TEXT, created_at TIMESTAMP DEFAULT NOW());" >/dev/null 2>&1; then
+            if PGPASSWORD="${POSTGRES_PASSWORD}" psql -h "${POSTGRES_PRIMARY_HOST}" -p "${POSTGRES_PORT}" -U "${POSTGRES_USER:-postgres}" -d "${POSTGRES_DB}" -c "INSERT INTO ${test_table} (value) VALUES ('${test_value}');" >/dev/null 2>&1; then
+                
+                # Wait for replication
+                sleep 10
+                
+                # Check if data exists in DR database
+                local dr_value=$(PGPASSWORD="${POSTGRES_PASSWORD}" psql -h "${POSTGRES_DR_HOST}" -p "${POSTGRES_PORT}" -U "${POSTGRES_USER:-postgres}" -d "${POSTGRES_DB}" -t -c "SELECT value FROM ${test_table} WHERE value = '${test_value}';" 2>/dev/null | tr -d ' ' || echo "")
+                
+                if [[ "${dr_value}" == "${test_value}" ]]; then
+                    record_test_result "Database Replication Consistency" "PASS" "Test data replicated successfully" "$(($(date +%s) - start_time))"
+                else
+                    record_test_result "Database Replication Consistency" "FAIL" "Test data not found in DR database" "$(($(date +%s) - start_time))"
+                fi
+                
+                # Cleanup test table
+                PGPASSWORD="${POSTGRES_PASSWORD}" psql -h "${POSTGRES_PRIMARY_HOST}" -p "${POSTGRES_PORT}" -U "${POSTGRES_USER:-postgres}" -d "${POSTGRES_DB}" -c "DROP TABLE IF EXISTS ${test_table};" >/dev/null 2>&1 || true
+            else
+                record_test_result "Database Replication Consistency" "FAIL" "Failed to insert test data in primary" "$(($(date +%s) - start_time))"
+            fi
+        else
+            record_test_result "Database Replication Consistency" "FAIL" "Failed to create test table in primary" "$(($(date +%s) - start_time))"
+        fi
+    fi
+    
+    # Test 2: Redis data consistency
+    log "INFO" "Testing Redis data consistency..."
+    start_time=$(date +%s)
+    
+    if [[ "${DRY_RUN}" == "true" ]]; then
+        record_test_result "Redis Data Consistency" "SKIP" "Dry run mode" "0"
+    else
+        local redis_test_key="dr_test:${TEST_TIMESTAMP}"
+        local redis_test_value="redis_value_${TEST_TIMESTAMP}"
+        
+        # Set value in primary Redis
+        if redis-cli -h "${REDIS_PRIMARY_HOST}" -p "${REDIS_PORT}" SET "${redis_test_key}" "${redis_test_value}" EX 300 >/dev/null 2>&1; then
+            # Check if value exists in DR Redis (if replication is configured)
+            local dr_redis_value=$(redis-cli -h "${REDIS_DR_HOST}" -p "${REDIS_PORT}" GET "${redis_test_key}" 2>/dev/null || echo "")
+            
+            if [[ "${dr_redis_value}" == "${redis_test_value}" ]]; then
+                record_test_result "Redis Data Consistency" "PASS" "Redis data replicated successfully" "$(($(date +%s) - start_time))"
+            else
+                record_test_result "Redis Data Consistency" "FAIL" "Redis data not replicated or replication not configured" "$(($(date +%s) - start_time))"
+            fi
+            
+            # Cleanup
+            redis-cli -h "${REDIS_PRIMARY_HOST}" -p "${REDIS_PORT}" DEL "${redis_test_key}" >/dev/null 2>&1 || true
+        else
+            record_test_result "Redis Data Consistency" "FAIL" "Failed to set test value in primary Redis" "$(($(date +%s) - start_time))"
+        fi
+    fi
+    
+    cat >> "${TEST_REPORT_FILE}" <<EOF
+    </div>
+EOF
+}
+
+# Performance tests
+test_performance() {
+    log "INFO" "Running performance tests..."
+    
+    cat >> "${TEST_REPORT_FILE}" <<EOF
+    <div class="test-section">
+        <h2>⚡ Performance Tests</h2>
+EOF
+
+    # Test 1: API response time
+    log "INFO" "Testing API response time..."
+    local start_time=$(date +%s)
+    
+    local api_endpoints=(
+        "https://backstage.local/api/health"
+        "https://backstage.local/api/catalog/entities"
+    )
+    
+    local response_times=()
+    local failed_endpoints=()
+    
+    for endpoint in "${api_endpoints[@]}"; do
+        local response_time=$(curl -o /dev/null -s -w "%{time_total}" --max-time 10 "${endpoint}" 2>/dev/null || echo "999")
+        if [[ "${response_time}" != "999" ]]; then
+            response_times+=("${endpoint}: ${response_time}s")
+        else
+            failed_endpoints+=("${endpoint}")
+        fi
+    done
+    
+    if [[ ${#failed_endpoints[@]} -eq 0 ]]; then
+        record_test_result "API Response Time" "PASS" "$(printf '%s; ' "${response_times[@]}")" "$(($(date +%s) - start_time))"
+    else
+        record_test_result "API Response Time" "FAIL" "Failed endpoints: ${failed_endpoints[*]}" "$(($(date +%s) - start_time))"
+    fi
+    
+    # Test 2: Database performance
+    log "INFO" "Testing database performance..."
+    start_time=$(date +%s)
+    
+    if [[ "${DRY_RUN}" == "true" ]]; then
+        record_test_result "Database Performance" "SKIP" "Dry run mode" "0"
+    else
+        local db_start_time=$(date +%s%3N)
+        local table_count=$(PGPASSWORD="${POSTGRES_PASSWORD}" psql -h "${POSTGRES_PRIMARY_HOST}" -p "${POSTGRES_PORT}" -U "${POSTGRES_USER:-postgres}" -d "${POSTGRES_DB}" -t -c "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public';" 2>/dev/null | tr -d ' ' || echo "0")
+        local db_query_time=$(( $(date +%s%3N) - db_start_time ))
+        
+        if [[ "${table_count}" -gt 0 ]]; then
+            if [[ ${db_query_time} -lt 1000 ]]; then
+                record_test_result "Database Performance" "PASS" "Query time: ${db_query_time}ms, Tables: ${table_count}" "$(($(date +%s) - start_time))"
+            else
+                record_test_result "Database Performance" "FAIL" "Slow query time: ${db_query_time}ms" "$(($(date +%s) - start_time))"
+            fi
+        else
+            record_test_result "Database Performance" "FAIL" "No tables found or query failed" "$(($(date +%s) - start_time))"
+        fi
+    fi
+    
+    cat >> "${TEST_REPORT_FILE}" <<EOF
+    </div>
+EOF
+}
+
+# Monitoring tests
+test_monitoring() {
+    log "INFO" "Running monitoring tests..."
+    
+    cat >> "${TEST_REPORT_FILE}" <<EOF
+    <div class="test-section">
+        <h2>📊 Monitoring Tests</h2>
+EOF
+
+    # Test 1: Prometheus metrics collection
+    log "INFO" "Testing Prometheus metrics collection..."
+    local start_time=$(date +%s)
+    
+    local prometheus_url="http://prometheus.istio-system:9090"
+    if curl -s --max-time 10 "${prometheus_url}/api/v1/query?query=up" | jq -e '.data.result | length > 0' >/dev/null 2>&1; then
+        local target_count=$(curl -s --max-time 10 "${prometheus_url}/api/v1/query?query=up" | jq '.data.result | length' 2>/dev/null || echo "0")
+        record_test_result "Prometheus Metrics Collection" "PASS" "Collecting metrics from ${target_count} targets" "$(($(date +%s) - start_time))"
+    else
+        record_test_result "Prometheus Metrics Collection" "FAIL" "Prometheus not responding or no metrics found" "$(($(date +%s) - start_time))"
+    fi
+    
+    # Test 2: Istio metrics availability
+    log "INFO" "Testing Istio metrics availability..."
+    start_time=$(date +%s)
+    
+    local istio_metrics_query="istio_requests_total"
+    if curl -s --max-time 10 "${prometheus_url}/api/v1/query?query=${istio_metrics_query}" | jq -e '.data.result | length > 0' >/dev/null 2>&1; then
+        local istio_metrics_count=$(curl -s --max-time 10 "${prometheus_url}/api/v1/query?query=${istio_metrics_query}" | jq '.data.result | length' 2>/dev/null || echo "0")
+        record_test_result "Istio Metrics Availability" "PASS" "Found ${istio_metrics_count} Istio metric series" "$(($(date +%s) - start_time))"
+    else
+        record_test_result "Istio Metrics Availability" "FAIL" "Istio metrics not available" "$(($(date +%s) - start_time))"
+    fi
+    
+    # Test 3: Alerting rules
+    log "INFO" "Testing alerting rules..."
+    start_time=$(date +%s)
+    
+    if curl -s --max-time 10 "${prometheus_url}/api/v1/rules" | jq -e '.data.groups | length > 0' >/dev/null 2>&1; then
+        local rules_count=$(curl -s --max-time 10 "${prometheus_url}/api/v1/rules" | jq '[.data.groups[].rules[]] | length' 2>/dev/null || echo "0")
+        record_test_result "Alerting Rules" "PASS" "Found ${rules_count} alerting rules" "$(($(date +%s) - start_time))"
+    else
+        record_test_result "Alerting Rules" "FAIL" "No alerting rules found" "$(($(date +%s) - start_time))"
+    fi
+    
+    cat >> "${TEST_REPORT_FILE}" <<EOF
+    </div>
+EOF
+}
+
+# Chaos engineering tests
+run_chaos_tests() {
+    log "INFO" "Running chaos engineering tests..."
+    
+    cat >> "${TEST_REPORT_FILE}" <<EOF
+    <div class="test-section">
+        <h2>🔥 Chaos Engineering Tests</h2>
+EOF
+
+    if [[ "${DRY_RUN}" == "true" ]]; then
+        record_test_result "Pod Failure Simulation" "SKIP" "Dry run mode" "0"
+        record_test_result "Network Partition Simulation" "SKIP" "Dry run mode" "0"
+        record_test_result "Resource Exhaustion Simulation" "SKIP" "Dry run mode" "0"
+    else
+        # Test 1: Pod failure simulation
+        log "INFO" "Testing pod failure resilience..."
+        local start_time=$(date +%s)
+        
+        if kubectl config use-context "${PRIMARY_CLUSTER}" >/dev/null 2>&1; then
+            # Get a random non-critical pod
+            local target_pod=$(kubectl get pods -n developer-portal -l app=backstage-frontend --no-headers | head -1 | awk '{print $1}')
+            
+            if [[ -n "${target_pod}" ]]; then
+                # Delete the pod
+                kubectl delete pod "${target_pod}" -n developer-portal >/dev/null 2>&1
+                
+                # Wait for replacement
+                sleep 30
+                
+                # Check if service is still available
+                if curl -s --max-time 10 "https://backstage.local/health" >/dev/null 2>&1; then
+                    record_test_result "Pod Failure Simulation" "PASS" "Service recovered from pod failure" "$(($(date +%s) - start_time))"
+                else
+                    record_test_result "Pod Failure Simulation" "FAIL" "Service not available after pod failure" "$(($(date +%s) - start_time))"
+                fi
+            else
+                record_test_result "Pod Failure Simulation" "SKIP" "No suitable pod found for testing" "$(($(date +%s) - start_time))"
+            fi
+        else
+            record_test_result "Pod Failure Simulation" "FAIL" "Cannot connect to cluster" "$(($(date +%s) - start_time))"
+        fi
+        
+        # Test 2: Network latency injection
+        log "INFO" "Testing network latency resilience..."
+        start_time=$(date +%s)
+        
+        # Use Istio fault injection for controlled network testing
+        local fault_vs_yaml="/tmp/chaos-test-vs-${TEST_TIMESTAMP}.yaml"
+        cat > "${fault_vs_yaml}" <<EOF
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: chaos-test-latency
+  namespace: developer-portal
+spec:
+  hosts:
+  - backstage-backend.developer-portal.svc.cluster.local
+  http:
+  - fault:
+      delay:
+        percentage:
+          value: 50.0
+        fixedDelay: 5s
+    route:
+    - destination:
+        host: backstage-backend.developer-portal.svc.cluster.local
+EOF
+        
+        if kubectl apply -f "${fault_vs_yaml}" >/dev/null 2>&1; then
+            sleep 30  # Let fault injection take effect
+            
+            # Test if system handles latency gracefully
+            local response_time=$(curl -o /dev/null -s -w "%{time_total}" --max-time 15 "https://backstage.local/api/health" 2>/dev/null || echo "999")
+            
+            # Cleanup fault injection
+            kubectl delete -f "${fault_vs_yaml}" >/dev/null 2>&1
+            rm -f "${fault_vs_yaml}"
+            
+            if [[ "${response_time}" != "999" ]]; then
+                if (( $(echo "${response_time} < 10" | bc -l) )); then
+                    record_test_result "Network Latency Simulation" "PASS" "System handled latency injection (${response_time}s response time)" "$(($(date +%s) - start_time))"
+                else
+                    record_test_result "Network Latency Simulation" "FAIL" "High response time during latency injection (${response_time}s)" "$(($(date +%s) - start_time))"
+                fi
+            else
+                record_test_result "Network Latency Simulation" "FAIL" "Service became unavailable during latency injection" "$(($(date +%s) - start_time))"
+            fi
+        else
+            record_test_result "Network Latency Simulation" "FAIL" "Failed to apply fault injection configuration" "$(($(date +%s) - start_time))"
+        fi
+    fi
+    
+    cat >> "${TEST_REPORT_FILE}" <<EOF
+    </div>
+EOF
+}
+
+# Generate final test report
+generate_final_report() {
+    local end_time=$(date +%s)
+    local total_duration=$((end_time - TEST_START_TIME))
+    
+    # Update summary in HTML report
+    sed -i.bak \
+        -e "s/id=\"total-tests\">0/id=\"total-tests\">${TOTAL_TESTS}/" \
+        -e "s/id=\"passed-tests\">0/id=\"passed-tests\">${PASSED_TESTS}/" \
+        -e "s/id=\"failed-tests\">0/id=\"failed-tests\">${FAILED_TESTS}/" \
+        -e "s/id=\"skipped-tests\">0/id=\"skipped-tests\">${SKIPPED_TESTS}/" \
+        -e "s/id=\"test-duration\">0s/id=\"test-duration\">${total_duration}s/" \
+        "${TEST_REPORT_FILE}"
+    
+    rm -f "${TEST_REPORT_FILE}.bak"
+    
+    # Complete HTML report
+    cat >> "${TEST_REPORT_FILE}" <<EOF
+    
+    <div class="test-section">
+        <h2>📋 Test Summary</h2>
+        <p><strong>Total Tests:</strong> ${TOTAL_TESTS}</p>
+        <p><strong>Passed:</strong> ${PASSED_TESTS}</p>
+        <p><strong>Failed:</strong> ${FAILED_TESTS}</p>
+        <p><strong>Skipped:</strong> ${SKIPPED_TESTS}</p>
+        <p><strong>Success Rate:</strong> $((PASSED_TESTS * 100 / TOTAL_TESTS))%</p>
+        <p><strong>Total Duration:</strong> ${total_duration} seconds</p>
+    </div>
+    
+    <div class="test-section">
+        <h2>🔧 Recommendations</h2>
+EOF
+
+    # Add recommendations based on test results
+    if [[ ${FAILED_TESTS} -gt 0 ]]; then
+        cat >> "${TEST_REPORT_FILE}" <<EOF
+        <div class="test-case failure">
+            <h4>⚠️ Action Required</h4>
+            <p>${FAILED_TESTS} tests failed and require immediate attention:</p>
+            <ul>
+EOF
+        for test_name in "${!TEST_RESULTS[@]}"; do
+            if [[ "${TEST_RESULTS[$test_name]}" == "FAIL" ]]; then
+                cat >> "${TEST_REPORT_FILE}" <<EOF
+                <li>${test_name}</li>
+EOF
+            fi
+        done
+        cat >> "${TEST_REPORT_FILE}" <<EOF
+            </ul>
+            <p>Review the failed tests above and follow the corresponding runbooks.</p>
+        </div>
+EOF
+    fi
+    
+    if [[ ${SKIPPED_TESTS} -gt 0 ]]; then
+        cat >> "${TEST_REPORT_FILE}" <<EOF
+        <div class="test-case warning">
+            <h4>📝 Tests Skipped</h4>
+            <p>${SKIPPED_TESTS} tests were skipped. Consider running a full test suite in a test environment.</p>
+        </div>
+EOF
+    fi
+    
+    local success_rate=$((PASSED_TESTS * 100 / TOTAL_TESTS))
+    if [[ ${success_rate} -ge 95 ]]; then
+        cat >> "${TEST_REPORT_FILE}" <<EOF
+        <div class="test-case success">
+            <h4>✅ Excellent DR Readiness</h4>
+            <p>Success rate of ${success_rate}% indicates excellent disaster recovery readiness.</p>
+        </div>
+EOF
+    elif [[ ${success_rate} -ge 80 ]]; then
+        cat >> "${TEST_REPORT_FILE}" <<EOF
+        <div class="test-case warning">
+            <h4>⚠️ Good DR Readiness</h4>
+            <p>Success rate of ${success_rate}% indicates good disaster recovery readiness with some improvements needed.</p>
+        </div>
+EOF
+    else
+        cat >> "${TEST_REPORT_FILE}" <<EOF
+        <div class="test-case failure">
+            <h4>❌ Poor DR Readiness</h4>
+            <p>Success rate of ${success_rate}% indicates significant issues with disaster recovery readiness. Immediate action required.</p>
+        </div>
+EOF
+    fi
+    
+    cat >> "${TEST_REPORT_FILE}" <<EOF
+    </div>
+    
+    <div class="footer">
+        <p>Report generated: $(date -Iseconds)</p>
+        <p>Test duration: ${total_duration} seconds</p>
+    </div>
+</body>
+</html>
+EOF
+
+    log "INFO" "Test report generated: ${TEST_REPORT_FILE}"
+}
+
+# Send test results notification
+send_test_notification() {
+    local success_rate=$((PASSED_TESTS * 100 / TOTAL_TESTS))
+    local message="🧪 Backstage DR Test Completed - ${PASSED_TESTS}/${TOTAL_TESTS} passed (${success_rate}%)"
+    
+    if [[ ${FAILED_TESTS} -gt 0 ]]; then
+        message="${message} - ${FAILED_TESTS} FAILED"
+    fi
+    
+    # Send Slack notification
+    if [[ -n "${SLACK_WEBHOOK_URL}" ]]; then
+        local color="good"
+        if [[ ${FAILED_TESTS} -gt 0 ]]; then
+            color="danger"
+        elif [[ ${SKIPPED_TESTS} -gt 0 ]]; then
+            color="warning"
+        fi
+        
+        curl -X POST "${SLACK_WEBHOOK_URL}" \
+            -H 'Content-type: application/json' \
+            --data "{
+                \"text\":\"${message}\",
+                \"color\":\"${color}\",
+                \"attachments\":[{
+                    \"color\":\"${color}\",
+                    \"fields\":[
+                        {\"title\":\"Total Tests\",\"value\":\"${TOTAL_TESTS}\",\"short\":true},
+                        {\"title\":\"Passed\",\"value\":\"${PASSED_TESTS}\",\"short\":true},
+                        {\"title\":\"Failed\",\"value\":\"${FAILED_TESTS}\",\"short\":true},
+                        {\"title\":\"Skipped\",\"value\":\"${SKIPPED_TESTS}\",\"short\":true}
+                    ]
+                }]
+            }" >/dev/null 2>&1 || true
+    fi
+    
+    # Send email notification
+    if [[ -n "${EMAIL_ALERTS}" ]] && command -v mail >/dev/null 2>&1; then
+        echo "${message}" | mail -s "Backstage DR Test Results" "${EMAIL_ALERTS}" || true
+    fi
+    
+    log "INFO" "${message}"
+}
+
+# Main testing function
+main() {
+    parse_test_arguments "$@"
+    
+    TEST_START_TIME=$(date +%s)
+    
+    log "INFO" "Starting Backstage Disaster Recovery Testing - ${TEST_TIMESTAMP}"
+    
+    init_test_environment
+    
+    # Set default test types if not specified
+    if [[ -z "${TEST_TYPES}" ]]; then
+        TEST_TYPES="backup,failover,network,data,performance,monitoring"
+    elif [[ "${TEST_TYPES}" == "all" ]]; then
+        TEST_TYPES="backup,failover,network,data,security,performance,monitoring,automation"
+    fi
+    
+    # Run specified test categories
+    if [[ "${TEST_TYPES}" == *"backup"* ]]; then
+        test_backup_restore
+    fi
+    
+    if [[ "${TEST_TYPES}" == *"failover"* ]]; then
+        test_failover_mechanisms
+    fi
+    
+    if [[ "${TEST_TYPES}" == *"network"* ]]; then
+        test_network_connectivity
+    fi
+    
+    if [[ "${TEST_TYPES}" == *"data"* ]]; then
+        test_data_consistency
+    fi
+    
+    if [[ "${TEST_TYPES}" == *"performance"* ]]; then
+        test_performance
+    fi
+    
+    if [[ "${TEST_TYPES}" == *"monitoring"* ]]; then
+        test_monitoring
+    fi
+    
+    # Run chaos tests if requested
+    if [[ "${CHAOS_TESTING}" == "true" ]]; then
+        run_chaos_tests
+    fi
+    
+    # Generate final report
+    generate_final_report
+    
+    # Send notifications
+    send_test_notification
+    
+    # Exit with error code if any tests failed
+    if [[ ${FAILED_TESTS} -gt 0 ]]; then
+        log "ERROR" "DR testing completed with ${FAILED_TESTS} failures"
+        exit 1
+    else
+        log "INFO" "DR testing completed successfully"
+        exit 0
+    fi
+}
+
+# Execute main function if script is run directly
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    main "$@"
+fi

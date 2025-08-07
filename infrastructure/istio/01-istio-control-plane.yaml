@@ -1,0 +1,295 @@
+apiVersion: install.istio.io/v1alpha1
+kind: IstioOperator
+metadata:
+  name: control-plane
+  namespace: istio-system
+spec:
+  # Istio 1.20+ configuration
+  revision: "1-20-0"
+  values:
+    defaultRevision: "1-20-0"
+    pilot:
+      # Enhanced pilot configuration for high availability
+      env:
+        PILOT_ENABLE_WORKLOAD_ENTRY_AUTOREGISTRATION: true
+        PILOT_ENABLE_CROSS_CLUSTER_WORKLOAD_ENTRY: true
+        PILOT_EXTERNAL_GALLEY: false
+        PILOT_ENABLE_STATUS: true
+        PILOT_TRACE_SAMPLING: 1.0
+        PILOT_SKIP_VALIDATE_TRUST_DOMAIN: false
+        EXTERNAL_ISTIOD: false
+    global:
+      # Global mesh configuration
+      meshID: backstage-mesh
+      network: primary-network
+      trustDomain: "backstage.local"
+      defaultNodeSelector: {}
+      defaultPodDisruptionBudget:
+        enabled: true
+        minAvailable: 1
+      logging:
+        level: "default:info"
+      tracer:
+        zipkin:
+          address: jaeger-collector.istio-system:9411
+        datadog: {}
+        lightstep: {}
+        stackdriver: {}
+      meshNetworks:
+        primary-network:
+          endpoints:
+          - fromRegistry: Kubernetes
+          gateways:
+          - service: istio-gateway/istio-eastwestgateway
+            port: 15443
+      # Enhanced security settings
+      defaultResources:
+        requests:
+          cpu: 10m
+          memory: 64Mi
+        limits:
+          cpu: 2000m
+          memory: 1024Mi
+      # Multi-cluster configuration
+      remotePilotAddress: ""
+      istiod:
+        enableAnalysis: true
+      proxy:
+        autoInject: enabled
+        clusterDomain: "cluster.local"
+        componentLogLevel: "misc:error"
+        enableCoreDump: false
+        excludeIPRanges: ""
+        excludeInboundPorts: ""
+        excludeOutboundPorts: ""
+        image:
+          imageType: "default"
+        includeIPRanges: "*"
+        includeInboundPorts: "*"
+        includeOutboundPorts: ""
+        logLevel: warning
+        outlierLogPath: ""
+        privileged: false
+        readinessFailureThreshold: 30
+        readinessInitialDelaySeconds: 1
+        readinessPeriodSeconds: 2
+        resources:
+          limits:
+            cpu: 2000m
+            memory: 1024Mi
+          requests:
+            cpu: 100m
+            memory: 128Mi
+        statusPort: 15020
+        tracer: "zipkin"
+      proxy_init:
+        image:
+          imageType: "default"
+        resources:
+          limits:
+            cpu: 2000m
+            memory: 1024Mi
+          requests:
+            cpu: 10m
+            memory: 10Mi
+  components:
+    pilot:
+      k8s:
+        env:
+        - name: PILOT_TRACE_SAMPLING
+          value: "1"
+        - name: PILOT_ENABLE_STATUS
+          value: "true"
+        - name: PILOT_ENABLE_WORKLOAD_ENTRY_AUTOREGISTRATION
+          value: "true"
+        - name: EXTERNAL_ISTIOD
+          value: "false"
+        - name: PILOT_ENABLE_CROSS_CLUSTER_WORKLOAD_ENTRY
+          value: "true"
+        resources:
+          requests:
+            cpu: 500m
+            memory: 2048Mi
+          limits:
+            cpu: 2000m
+            memory: 4096Mi
+        hpaSpec:
+          maxReplicas: 5
+          minReplicas: 2
+          scaleTargetRef:
+            apiVersion: apps/v1
+            kind: Deployment
+            name: istiod
+          targetCPUUtilizationPercentage: 80
+          behavior:
+            scaleDown:
+              stabilizationWindowSeconds: 300
+              policies:
+              - type: Percent
+                value: 50
+                periodSeconds: 60
+            scaleUp:
+              stabilizationWindowSeconds: 0
+              policies:
+              - type: Percent
+                value: 100
+                periodSeconds: 15
+        podDisruptionBudget:
+          minAvailable: 1
+        strategy:
+          rollingUpdate:
+            maxSurge: 100%
+            maxUnavailable: 25%
+    ingressGateways:
+    - name: istio-ingressgateway
+      enabled: true
+      k8s:
+        service:
+          type: LoadBalancer
+          ports:
+          - port: 15021
+            targetPort: 15021
+            name: status-port
+          - port: 80
+            targetPort: 8080
+            name: http2
+          - port: 443
+            targetPort: 8443
+            name: https
+          - port: 15443
+            targetPort: 15443
+            name: tls
+        hpaSpec:
+          maxReplicas: 10
+          minReplicas: 3
+          scaleTargetRef:
+            apiVersion: apps/v1
+            kind: Deployment
+            name: istio-ingressgateway
+          targetCPUUtilizationPercentage: 80
+          behavior:
+            scaleDown:
+              stabilizationWindowSeconds: 300
+              policies:
+              - type: Percent
+                value: 50
+                periodSeconds: 60
+            scaleUp:
+              stabilizationWindowSeconds: 0
+              policies:
+              - type: Percent
+                value: 100
+                periodSeconds: 15
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 2000m
+            memory: 1024Mi
+        podDisruptionBudget:
+          minAvailable: 2
+        strategy:
+          rollingUpdate:
+            maxSurge: 100%
+            maxUnavailable: 25%
+    egressGateways:
+    - name: istio-egressgateway
+      enabled: true
+      k8s:
+        hpaSpec:
+          maxReplicas: 5
+          minReplicas: 2
+          scaleTargetRef:
+            apiVersion: apps/v1
+            kind: Deployment
+            name: istio-egressgateway
+          targetCPUUtilizationPercentage: 80
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 2000m
+            memory: 1024Mi
+        podDisruptionBudget:
+          minAvailable: 1
+        strategy:
+          rollingUpdate:
+            maxSurge: 100%
+            maxUnavailable: 25%
+  meshConfig:
+    # Enhanced mesh configuration
+    trustDomain: "backstage.local"
+    defaultConfig:
+      # Proxy configuration
+      proxyStatsMatcher:
+        inclusionRegexps:
+        - ".*outlier_detection.*"
+        - ".*circuit_breakers.*"
+        - ".*upstream_rq_retry.*"
+        - ".*upstream_rq_pending.*"
+        - ".*_cx_.*"
+        exclusionRegexps:
+        - ".*osconfig.*"
+      holdApplicationUntilProxyStarts: true
+      discoveryRefreshDelay: 10s
+      configPath: "/etc/istio/proxy"
+      binaryPath: "/usr/local/bin/envoy"
+      serviceCluster: "istio-proxy"
+      drainDuration: "45s"
+      parentShutdownDuration: "60s"
+      discoveryAddress: "istiod.istio-system.svc:15010"
+      zipkinAddress: "jaeger-collector.istio-system.svc:9411"
+      # Enhanced tracing configuration
+      sampling: 1.0
+      # Connection timeout
+      connectTimeout: "10s"
+      # Circuit breaker settings
+      outlierDetection:
+        consecutive5xxErrors: 5
+        consecutiveGatewayErrors: 5
+        interval: "30s"
+        baseEjectionTime: "30s"
+        maxEjectionPercent: 50
+        minHealthPercent: 50
+    # Access logging
+    accessLogFile: /dev/stdout
+    accessLogFormat: |
+      [%START_TIME%] "%REQ(:METHOD)% %REQ(X-ENVOY-ORIGINAL-PATH?:PATH)% %PROTOCOL%"
+      %RESPONSE_CODE% %RESPONSE_FLAGS% %BYTES_RECEIVED% %BYTES_SENT%
+      %DURATION% %RESP(X-ENVOY-UPSTREAM-SERVICE-TIME)% "%REQ(X-FORWARDED-FOR)%"
+      "%REQ(USER-AGENT)%" "%REQ(X-REQUEST-ID)%" "%REQ(:AUTHORITY)%" "%UPSTREAM_HOST%"
+      %UPSTREAM_CLUSTER% %UPSTREAM_LOCAL_ADDRESS% %DOWNSTREAM_LOCAL_ADDRESS%
+      %DOWNSTREAM_REMOTE_ADDRESS% %REQUESTED_SERVER_NAME% %ROUTE_NAME%
+    # Default providers
+    defaultProviders:
+      metrics:
+      - prometheus
+      tracing:
+      - jaeger
+      accessLogging:
+      - envoy
+    # Extension providers
+    extensionProviders:
+    - name: prometheus
+      prometheus: {}
+    - name: jaeger
+      zipkin:
+        service: jaeger-collector.istio-system.svc
+        port: 9411
+    - name: envoy
+      envoyFileAccessLog:
+        path: /dev/stdout
+    # Security settings
+    trustDomainAliases: 
+    - "backstage.local"
+    - "cluster.local"
+    # DNS settings
+    dnsRefreshRate: "300s"
+    # H2 upgrade policy
+    h2UpgradePolicy: UPGRADE
+    # Ingress settings
+    ingressService: "istio-ingressgateway"
+    ingressSelector: "ingressgateway"
+    ingressClass: "istio"

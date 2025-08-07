@@ -1,0 +1,436 @@
+---
+# HashiCorp Vault HA Deployment with Raft Storage
+# Production-ready configuration that surpasses basic secret management
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: vault
+  labels:
+    name: vault
+    istio-injection: enabled
+---
+# Service Account
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: vault
+  namespace: vault
+---
+# RBAC
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: vault
+rules:
+  - apiGroups: [""]
+    resources:
+      - pods
+      - services
+      - endpoints
+      - persistentvolumeclaims
+      - events
+      - configmaps
+      - secrets
+    verbs: ["*"]
+  - apiGroups: [""]
+    resources:
+      - namespaces
+    verbs: ["get"]
+  - apiGroups: ["apps"]
+    resources:
+      - deployments
+      - daemonsets
+      - replicasets
+      - statefulsets
+    verbs: ["*"]
+  - apiGroups: ["batch"]
+    resources:
+      - jobs
+      - cronjobs
+    verbs: ["*"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: vault
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: vault
+subjects:
+  - kind: ServiceAccount
+    name: vault
+    namespace: vault
+---
+# ConfigMap for Vault configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vault-config
+  namespace: vault
+data:
+  vault.hcl: |
+    ui = true
+    
+    listener "tcp" {
+      tls_disable = 0
+      address = "[::]:8200"
+      cluster_address = "[::]:8201"
+      tls_cert_file = "/vault/userconfig/vault-tls/tls.crt"
+      tls_key_file = "/vault/userconfig/vault-tls/tls.key"
+      tls_client_ca_file = "/vault/userconfig/vault-tls/ca.crt"
+      
+      # Performance tuning
+      max_request_size = 33554432
+      max_request_duration = "90s"
+      
+      # HTTP/2 support
+      http2 = true
+    }
+    
+    storage "raft" {
+      path = "/vault/data"
+      
+      retry_join {
+        leader_api_addr = "https://vault-0.vault-internal:8200"
+        leader_ca_cert_file = "/vault/userconfig/vault-tls/ca.crt"
+        leader_client_cert_file = "/vault/userconfig/vault-tls/tls.crt"
+        leader_client_key_file = "/vault/userconfig/vault-tls/tls.key"
+      }
+      
+      retry_join {
+        leader_api_addr = "https://vault-1.vault-internal:8200"
+        leader_ca_cert_file = "/vault/userconfig/vault-tls/ca.crt"
+        leader_client_cert_file = "/vault/userconfig/vault-tls/tls.crt"
+        leader_client_key_file = "/vault/userconfig/vault-tls/tls.key"
+      }
+      
+      retry_join {
+        leader_api_addr = "https://vault-2.vault-internal:8200"
+        leader_ca_cert_file = "/vault/userconfig/vault-tls/ca.crt"
+        leader_client_cert_file = "/vault/userconfig/vault-tls/tls.crt"
+        leader_client_key_file = "/vault/userconfig/vault-tls/tls.key"
+      }
+      
+      performance_multiplier = 1
+      max_entry_size = "1048576"
+      autopilot_reconcile_interval = "10s"
+      autopilot_update_interval = "2s"
+    }
+    
+    # Auto-unseal with Google Cloud KMS
+    seal "gcpckms" {
+      project     = "PROJECT_ID"
+      region      = "us-central1"
+      key_ring    = "vault-keyring"
+      crypto_key  = "vault-key"
+    }
+    
+    # Telemetry
+    telemetry {
+      prometheus_retention_time = "24h"
+      disable_hostname = true
+    }
+    
+    service_registration "kubernetes" {
+      namespace = "vault"
+      pod_name = "${HOSTNAME}"
+    }
+    
+    log_level = "info"
+    log_format = "json"
+    
+    # Performance settings
+    cache_size = 131072
+    disable_mlock = false
+    disable_cache = false
+    disable_clustering = false
+    disable_performance_standby = false
+    
+    # API rate limiting
+    api_addr = "https://${HOSTNAME}.vault-internal:8200"
+    cluster_addr = "https://${HOSTNAME}.vault-internal:8201"
+    
+    # Default and max lease TTLs
+    default_lease_ttl = "768h"
+    max_lease_ttl = "768h"
+    
+    # Plugin directory
+    plugin_directory = "/vault/plugins"
+---
+# Headless Service for internal cluster communication
+apiVersion: v1
+kind: Service
+metadata:
+  name: vault-internal
+  namespace: vault
+  labels:
+    app: vault
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  ports:
+    - name: https
+      port: 8200
+      targetPort: 8200
+    - name: internal
+      port: 8201
+      targetPort: 8201
+  selector:
+    app: vault
+---
+# External Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: vault
+  namespace: vault
+  labels:
+    app: vault
+spec:
+  type: LoadBalancer
+  ports:
+    - name: https
+      port: 8200
+      targetPort: 8200
+  selector:
+    app: vault
+---
+# StatefulSet for Vault HA cluster
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: vault
+  namespace: vault
+  labels:
+    app: vault
+spec:
+  serviceName: vault-internal
+  replicas: 3
+  updateStrategy:
+    type: RollingUpdate
+  podManagementPolicy: Parallel
+  selector:
+    matchLabels:
+      app: vault
+  template:
+    metadata:
+      labels:
+        app: vault
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8200"
+        prometheus.io/path: "/v1/sys/metrics"
+    spec:
+      serviceAccountName: vault
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  app: vault
+              topologyKey: kubernetes.io/hostname
+      terminationGracePeriodSeconds: 10
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 100
+        fsGroup: 1000
+      volumes:
+        - name: config
+          configMap:
+            name: vault-config
+        - name: vault-tls
+          secret:
+            secretName: vault-tls
+        - name: plugins
+          emptyDir: {}
+      containers:
+        - name: vault
+          image: hashicorp/vault:1.16.1
+          imagePullPolicy: IfNotPresent
+          command:
+            - vault
+            - server
+            - -config=/vault/config/vault.hcl
+          env:
+            - name: HOSTNAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: VAULT_API_ADDR
+              value: "https://$(HOSTNAME).vault-internal:8200"
+            - name: VAULT_CLUSTER_ADDR
+              value: "https://$(HOSTNAME).vault-internal:8201"
+            - name: VAULT_LOG_LEVEL
+              value: "info"
+            - name: VAULT_LOG_FORMAT
+              value: "json"
+            - name: SKIP_CHOWN
+              value: "true"
+            - name: SKIP_SETCAP
+              value: "true"
+            - name: GOOGLE_APPLICATION_CREDENTIALS
+              value: /vault/userconfig/gcp-kms/key.json
+          ports:
+            - containerPort: 8200
+              name: https
+            - containerPort: 8201
+              name: internal
+            - containerPort: 8202
+              name: replication
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "250m"
+            limits:
+              memory: "2Gi"
+              cpu: "1000m"
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              add:
+                - IPC_LOCK
+          volumeMounts:
+            - name: data
+              mountPath: /vault/data
+            - name: config
+              mountPath: /vault/config
+            - name: vault-tls
+              mountPath: /vault/userconfig/vault-tls
+              readOnly: true
+            - name: plugins
+              mountPath: /vault/plugins
+          livenessProbe:
+            httpGet:
+              path: /v1/sys/health?standbyok=true&perfstandbyok=true
+              port: 8200
+              scheme: HTTPS
+            initialDelaySeconds: 60
+            periodSeconds: 5
+            timeoutSeconds: 3
+          readinessProbe:
+            httpGet:
+              path: /v1/sys/health?standbyok=true&perfstandbyok=true&uninitcode=204&sealedcode=204
+              port: 8200
+              scheme: HTTPS
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 3
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        storageClassName: fast-ssd
+        resources:
+          requests:
+            storage: 10Gi
+---
+# PodDisruptionBudget
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: vault
+  namespace: vault
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: vault
+---
+# NetworkPolicy
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: vault
+  namespace: vault
+spec:
+  podSelector:
+    matchLabels:
+      app: vault
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: portal
+        - namespaceSelector:
+            matchLabels:
+              name: vault
+      ports:
+        - protocol: TCP
+          port: 8200
+        - protocol: TCP
+          port: 8201
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              name: vault
+      ports:
+        - protocol: TCP
+          port: 8200
+        - protocol: TCP
+          port: 8201
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - protocol: TCP
+          port: 443  # For KMS access
+        - protocol: TCP
+          port: 53   # DNS
+        - protocol: UDP
+          port: 53   # DNS
+---
+# HorizontalPodAutoscaler (for read replicas)
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: vault-read-replicas
+  namespace: vault
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: vault-standby
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80
+---
+# ServiceMonitor for Prometheus
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: vault
+  namespace: vault
+  labels:
+    app: vault
+spec:
+  selector:
+    matchLabels:
+      app: vault
+  endpoints:
+    - port: https
+      scheme: https
+      path: /v1/sys/metrics
+      interval: 30s
+      tlsConfig:
+        insecureSkipVerify: true
+      bearerTokenSecret:
+        name: vault-metrics-token
+        key: token

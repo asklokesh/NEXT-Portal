@@ -1,0 +1,639 @@
+name: Plugin Deployment Pipeline
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - 'plugins/**'
+      - '.github/workflows/plugin-deploy.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'plugins/**'
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      plugin_name:
+        description: 'Plugin name to deploy'
+        required: true
+        type: string
+      environment:
+        description: 'Target environment'
+        required: true
+        type: choice
+        options:
+          - development
+          - staging
+          - production
+      deployment_strategy:
+        description: 'Deployment strategy'
+        required: true
+        type: choice
+        options:
+          - rolling-update
+          - blue-green
+          - canary
+          - a-b-testing
+        default: 'rolling-update'
+      skip_tests:
+        description: 'Skip tests'
+        required: false
+        type: boolean
+        default: false
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+  PLUGIN_PIPELINE_URL: ${{ secrets.PLUGIN_PIPELINE_URL }}
+  KUBERNETES_NAMESPACE: plugin-pipeline
+
+jobs:
+  # Detect changed plugins
+  detect-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      plugins: ${{ steps.changes.outputs.plugins }}
+      matrix: ${{ steps.changes.outputs.matrix }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect plugin changes
+        id: changes
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            # Manual dispatch - deploy specified plugin
+            echo "plugins=[\"${{ github.event.inputs.plugin_name }}\"]" >> $GITHUB_OUTPUT
+            echo "matrix={\"plugin\":[\"${{ github.event.inputs.plugin_name }}\"]}" >> $GITHUB_OUTPUT
+          else
+            # Automatic detection of changed plugins
+            if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+              BASE_SHA=${{ github.event.pull_request.base.sha }}
+              HEAD_SHA=${{ github.event.pull_request.head.sha }}
+            else
+              BASE_SHA=${{ github.event.before }}
+              HEAD_SHA=${{ github.sha }}
+            fi
+            
+            changed_plugins=$(git diff --name-only $BASE_SHA $HEAD_SHA | grep '^plugins/' | cut -d'/' -f2 | sort -u | jq -R -s -c 'split("\n")[:-1]')
+            
+            if [[ "$changed_plugins" == "[]" ]]; then
+              echo "No plugin changes detected"
+              echo "plugins=[]" >> $GITHUB_OUTPUT
+              echo "matrix={\"plugin\":[]}" >> $GITHUB_OUTPUT
+            else
+              echo "Changed plugins: $changed_plugins"
+              echo "plugins=$changed_plugins" >> $GITHUB_OUTPUT
+              echo "matrix={\"plugin\":$(echo $changed_plugins | jq -c .)}" >> $GITHUB_OUTPUT
+            fi
+          fi
+
+  # Plugin validation and testing
+  validate-plugin:
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: ${{ needs.detect-changes.outputs.plugins != '[]' }}
+    strategy:
+      matrix: ${{ fromJson(needs.detect-changes.outputs.matrix) }}
+      fail-fast: false
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: 'plugins/${{ matrix.plugin }}/package-lock.json'
+
+      - name: Install dependencies
+        run: |
+          cd plugins/${{ matrix.plugin }}
+          npm ci
+
+      - name: Validate plugin manifest
+        run: |
+          cd plugins/${{ matrix.plugin }}
+          if [[ ! -f "plugin.json" ]]; then
+            echo "::error::Plugin manifest (plugin.json) not found"
+            exit 1
+          fi
+          
+          # Validate plugin.json schema
+          npx ajv validate \
+            -s ../../infrastructure/plugin-pipeline/schemas/plugin-manifest.schema.json \
+            -d plugin.json
+
+      - name: Lint code
+        run: |
+          cd plugins/${{ matrix.plugin }}
+          npm run lint || echo "::warning::Linting failed but continuing"
+
+      - name: Run unit tests
+        if: ${{ !github.event.inputs.skip_tests }}
+        run: |
+          cd plugins/${{ matrix.plugin }}
+          npm test -- --coverage --ci
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results-${{ matrix.plugin }}
+          path: |
+            plugins/${{ matrix.plugin }}/coverage/
+            plugins/${{ matrix.plugin }}/test-results.xml
+
+  # Security scanning
+  security-scan:
+    runs-on: ubuntu-latest
+    needs: [detect-changes, validate-plugin]
+    if: ${{ needs.detect-changes.outputs.plugins != '[]' }}
+    strategy:
+      matrix: ${{ fromJson(needs.detect-changes.outputs.matrix) }}
+      fail-fast: false
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: 'plugins/${{ matrix.plugin }}'
+          format: 'sarif'
+          output: 'trivy-results-${{ matrix.plugin }}.sarif'
+
+      - name: Upload Trivy scan results
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: 'trivy-results-${{ matrix.plugin }}.sarif'
+
+      - name: Run npm audit
+        run: |
+          cd plugins/${{ matrix.plugin }}
+          npm audit --audit-level moderate || echo "::warning::NPM audit found issues"
+
+      - name: Secret scanning with TruffleHog
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: plugins/${{ matrix.plugin }}
+          base: main
+          head: HEAD
+          extra_args: --debug --only-verified
+
+  # Build and publish container images
+  build-image:
+    runs-on: ubuntu-latest
+    needs: [detect-changes, validate-plugin, security-scan]
+    if: ${{ needs.detect-changes.outputs.plugins != '[]' }}
+    strategy:
+      matrix: ${{ fromJson(needs.detect-changes.outputs.matrix) }}
+      fail-fast: false
+    outputs:
+      image-tags: ${{ steps.meta.outputs.tags }}
+      image-digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/plugin-${{ matrix.plugin }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,prefix={{branch}}-
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push image
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: plugins/${{ matrix.plugin }}
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            BUILD_VERSION=${{ steps.meta.outputs.version }}
+            BUILD_DATE=${{ steps.meta.outputs.date }}
+            VCS_REF=${{ github.sha }}
+
+      - name: Sign container image
+        env:
+          COSIGN_EXPERIMENTAL: 1
+        run: |
+          cosign sign --yes ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/plugin-${{ matrix.plugin }}@${{ steps.build.outputs.digest }}
+
+      - name: Generate SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/plugin-${{ matrix.plugin }}@${{ steps.build.outputs.digest }}
+          format: spdx-json
+          output-file: sbom-${{ matrix.plugin }}.spdx.json
+
+      - name: Upload SBOM
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-${{ matrix.plugin }}
+          path: sbom-${{ matrix.plugin }}.spdx.json
+
+  # Integration tests
+  integration-tests:
+    runs-on: ubuntu-latest
+    needs: [detect-changes, build-image]
+    if: ${{ needs.detect-changes.outputs.plugins != '[]' && !github.event.inputs.skip_tests }}
+    strategy:
+      matrix: ${{ fromJson(needs.detect-changes.outputs.matrix) }}
+      fail-fast: false
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: testdb
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup test environment
+        run: |
+          # Start plugin pipeline test instance
+          docker run -d \
+            --name plugin-pipeline-test \
+            --network host \
+            -e DATABASE_URL=postgresql://postgres:postgres@localhost:5432/testdb \
+            -e REDIS_URL=redis://localhost:6379/0 \
+            -e NODE_ENV=test \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/plugin-pipeline-orchestrator:latest
+
+      - name: Wait for services
+        run: |
+          timeout 60 bash -c 'until curl -f http://localhost:8080/health; do sleep 2; done'
+
+      - name: Run integration tests
+        run: |
+          cd plugins/${{ matrix.plugin }}
+          npm run test:integration
+
+      - name: Upload integration test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: integration-test-results-${{ matrix.plugin }}
+          path: plugins/${{ matrix.plugin }}/test-results/
+
+  # Deployment to development environment
+  deploy-dev:
+    runs-on: ubuntu-latest
+    needs: [detect-changes, build-image, integration-tests]
+    if: |
+      always() && 
+      needs.detect-changes.outputs.plugins != '[]' && 
+      (github.ref == 'refs/heads/develop' || github.event_name == 'workflow_dispatch') &&
+      needs.build-image.result == 'success' &&
+      (needs.integration-tests.result == 'success' || needs.integration-tests.result == 'skipped')
+    environment: development
+    strategy:
+      matrix: ${{ fromJson(needs.detect-changes.outputs.matrix) }}
+      fail-fast: false
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: 'v1.28.0'
+
+      - name: Configure kubectl
+        run: |
+          echo "${{ secrets.KUBE_CONFIG_DEV }}" | base64 -d > kubeconfig
+          export KUBECONFIG=kubeconfig
+          kubectl config current-context
+
+      - name: Deploy to development
+        run: |
+          export KUBECONFIG=kubeconfig
+          
+          # Prepare deployment payload
+          cat > deployment-request.json << EOF
+          {
+            "plugin": {
+              "name": "${{ matrix.plugin }}",
+              "version": "${{ github.sha }}",
+              "image": "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/plugin-${{ matrix.plugin }}@${{ needs.build-image.outputs.image-digest }}",
+              "namespace": "dev-plugins",
+              "runtime": {
+                "type": "container",
+                "framework": "docker"
+              },
+              "resources": {
+                "cpu": {"request": "100m", "limit": "500m"},
+                "memory": {"request": "128Mi", "limit": "512Mi"}
+              },
+              "networking": {
+                "ports": [{"name": "http", "port": 3000, "protocol": "TCP"}]
+              },
+              "healthChecks": {
+                "liveness": {
+                  "type": "http",
+                  "path": "/health",
+                  "port": 3000,
+                  "initialDelaySeconds": 30,
+                  "periodSeconds": 10
+                },
+                "readiness": {
+                  "type": "http",
+                  "path": "/ready",
+                  "port": 3000,
+                  "initialDelaySeconds": 15,
+                  "periodSeconds": 5
+                }
+              }
+            },
+            "strategy": "${{ github.event.inputs.deployment_strategy || 'rolling-update' }}",
+            "options": {
+              "skipSecurityScan": false,
+              "skipDependencyCheck": false,
+              "environment": "development"
+            }
+          }
+          EOF
+          
+          # Deploy via plugin pipeline API
+          INSTALLATION_ID=$(curl -s -X POST \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${{ secrets.PLUGIN_PIPELINE_TOKEN_DEV }}" \
+            -d @deployment-request.json \
+            ${{ secrets.PLUGIN_PIPELINE_URL_DEV }}/api/v1/plugins/install | jq -r '.installationId')
+          
+          echo "Installation ID: $INSTALLATION_ID"
+          echo "INSTALLATION_ID=$INSTALLATION_ID" >> $GITHUB_ENV
+
+      - name: Wait for deployment completion
+        timeout-minutes: 10
+        run: |
+          while true; do
+            STATUS=$(curl -s -H "Authorization: Bearer ${{ secrets.PLUGIN_PIPELINE_TOKEN_DEV }}" \
+              ${{ secrets.PLUGIN_PIPELINE_URL_DEV }}/api/v1/installations/$INSTALLATION_ID | jq -r '.status')
+            
+            echo "Deployment status: $STATUS"
+            
+            case $STATUS in
+              "installed")
+                echo "Deployment successful!"
+                exit 0
+                ;;
+              "failed"|"rolled-back")
+                echo "Deployment failed with status: $STATUS"
+                exit 1
+                ;;
+              *)
+                echo "Waiting for deployment to complete..."
+                sleep 30
+                ;;
+            esac
+          done
+
+      - name: Run post-deployment tests
+        run: |
+          # Get plugin endpoint
+          ENDPOINT=$(curl -s -H "Authorization: Bearer ${{ secrets.PLUGIN_PIPELINE_TOKEN_DEV }}" \
+            ${{ secrets.PLUGIN_PIPELINE_URL_DEV }}/api/v1/plugins/${{ matrix.plugin }}/endpoint)
+          
+          echo "Plugin endpoint: $ENDPOINT"
+          
+          # Basic health check
+          curl -f "$ENDPOINT/health" || exit 1
+          
+          # Run smoke tests
+          cd plugins/${{ matrix.plugin }}
+          npm run test:smoke -- --endpoint="$ENDPOINT"
+
+  # Deployment approval for staging/production
+  deployment-approval:
+    runs-on: ubuntu-latest
+    needs: [detect-changes, deploy-dev]
+    if: |
+      always() && 
+      needs.detect-changes.outputs.plugins != '[]' && 
+      (github.ref == 'refs/heads/main' || github.event.inputs.environment != 'development') &&
+      needs.deploy-dev.result == 'success'
+    environment: 
+      name: ${{ github.event.inputs.environment || 'staging' }}
+      url: https://${{ github.event.inputs.environment || 'staging' }}.example.com
+    steps:
+      - name: Request deployment approval
+        run: |
+          echo "Deployment approval requested for: ${{ needs.detect-changes.outputs.plugins }}"
+          echo "Target environment: ${{ github.event.inputs.environment || 'staging' }}"
+
+  # Deploy to staging/production
+  deploy-production:
+    runs-on: ubuntu-latest
+    needs: [detect-changes, deployment-approval]
+    if: always() && needs.deployment-approval.result == 'success'
+    environment: ${{ github.event.inputs.environment || 'staging' }}
+    strategy:
+      matrix: ${{ fromJson(needs.detect-changes.outputs.matrix) }}
+      fail-fast: false
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v3
+
+      - name: Configure kubectl for production
+        run: |
+          if [[ "${{ github.event.inputs.environment }}" == "production" ]]; then
+            echo "${{ secrets.KUBE_CONFIG_PROD }}" | base64 -d > kubeconfig
+          else
+            echo "${{ secrets.KUBE_CONFIG_STAGING }}" | base64 -d > kubeconfig
+          fi
+          export KUBECONFIG=kubeconfig
+
+      - name: Deploy with progressive delivery
+        run: |
+          export KUBECONFIG=kubeconfig
+          
+          # Use canary deployment for production
+          STRATEGY="${{ github.event.inputs.deployment_strategy }}"
+          if [[ "${{ github.event.inputs.environment }}" == "production" && "$STRATEGY" == "rolling-update" ]]; then
+            STRATEGY="canary"
+          fi
+          
+          # Prepare deployment with feature flags
+          cat > deployment-request.json << EOF
+          {
+            "plugin": {
+              "name": "${{ matrix.plugin }}",
+              "version": "${{ github.sha }}",
+              "image": "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/plugin-${{ matrix.plugin }}@${{ needs.build-image.outputs.image-digest }}",
+              "namespace": "${{ github.event.inputs.environment || 'staging' }}-plugins",
+              "featureFlags": {
+                "enabled": true,
+                "flags": {
+                  "new-feature": false,
+                  "beta-features": "${{ github.event.inputs.environment != 'production' }}"
+                }
+              },
+              "resources": {
+                "cpu": {"request": "200m", "limit": "1000m"},
+                "memory": {"request": "256Mi", "limit": "1Gi"}
+              },
+              "autoscaling": {
+                "enabled": true,
+                "minReplicas": "${{ github.event.inputs.environment == 'production' && 3 || 2 }}",
+                "maxReplicas": "${{ github.event.inputs.environment == 'production' && 10 || 5 }}",
+                "targetCPUUtilization": 70
+              }
+            },
+            "strategy": "$STRATEGY",
+            "options": {
+              "skipSecurityScan": false,
+              "skipDependencyCheck": false,
+              "environment": "${{ github.event.inputs.environment || 'staging' }}",
+              "rolloutPercentages": [10, 25, 50, 100]
+            }
+          }
+          EOF
+          
+          # Deploy via plugin pipeline API
+          PIPELINE_URL="${{ github.event.inputs.environment == 'production' && secrets.PLUGIN_PIPELINE_URL_PROD || secrets.PLUGIN_PIPELINE_URL_STAGING }}"
+          PIPELINE_TOKEN="${{ github.event.inputs.environment == 'production' && secrets.PLUGIN_PIPELINE_TOKEN_PROD || secrets.PLUGIN_PIPELINE_TOKEN_STAGING }}"
+          
+          INSTALLATION_ID=$(curl -s -X POST \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer $PIPELINE_TOKEN" \
+            -d @deployment-request.json \
+            $PIPELINE_URL/api/v1/plugins/install | jq -r '.installationId')
+          
+          echo "INSTALLATION_ID=$INSTALLATION_ID" >> $GITHUB_ENV
+
+      - name: Monitor deployment progress
+        timeout-minutes: 20
+        run: |
+          PIPELINE_URL="${{ github.event.inputs.environment == 'production' && secrets.PLUGIN_PIPELINE_URL_PROD || secrets.PLUGIN_PIPELINE_URL_STAGING }}"
+          PIPELINE_TOKEN="${{ github.event.inputs.environment == 'production' && secrets.PLUGIN_PIPELINE_TOKEN_PROD || secrets.PLUGIN_PIPELINE_TOKEN_STAGING }}"
+          
+          while true; do
+            RESPONSE=$(curl -s -H "Authorization: Bearer $PIPELINE_TOKEN" \
+              $PIPELINE_URL/api/v1/installations/$INSTALLATION_ID)
+            
+            STATUS=$(echo $RESPONSE | jq -r '.status')
+            PHASE=$(echo $RESPONSE | jq -r '.currentPhase.name // "unknown"')
+            
+            echo "Deployment status: $STATUS, Phase: $PHASE"
+            
+            # Log metrics for monitoring
+            ERROR_RATE=$(echo $RESPONSE | jq -r '.currentPhase.metrics.errorRate // 0')
+            RESPONSE_TIME=$(echo $RESPONSE | jq -r '.currentPhase.metrics.responseTime // 0')
+            
+            echo "::notice::Deployment metrics - Error Rate: ${ERROR_RATE}%, Response Time: ${RESPONSE_TIME}ms"
+            
+            case $STATUS in
+              "installed")
+                echo "Deployment successful!"
+                exit 0
+                ;;
+              "failed"|"rolled-back")
+                echo "::error::Deployment failed with status: $STATUS"
+                curl -s -H "Authorization: Bearer $PIPELINE_TOKEN" \
+                  $PIPELINE_URL/api/v1/installations/$INSTALLATION_ID/logs
+                exit 1
+                ;;
+              *)
+                sleep 30
+                ;;
+            esac
+          done
+
+      - name: Run production validation tests
+        if: github.event.inputs.environment == 'production'
+        run: |
+          # Get plugin endpoint
+          PIPELINE_URL="${{ secrets.PLUGIN_PIPELINE_URL_PROD }}"
+          PIPELINE_TOKEN="${{ secrets.PLUGIN_PIPELINE_TOKEN_PROD }}"
+          
+          ENDPOINT=$(curl -s -H "Authorization: Bearer $PIPELINE_TOKEN" \
+            $PIPELINE_URL/api/v1/plugins/${{ matrix.plugin }}/endpoint | jq -r '.endpoint')
+          
+          echo "Plugin endpoint: $ENDPOINT"
+          
+          # Comprehensive health checks
+          curl -f "$ENDPOINT/health" || exit 1
+          curl -f "$ENDPOINT/metrics" || exit 1
+          
+          # Load testing
+          cd plugins/${{ matrix.plugin }}
+          npm run test:load -- --endpoint="$ENDPOINT" --duration=60s
+
+  # Notification and reporting
+  notify-deployment:
+    runs-on: ubuntu-latest
+    needs: [detect-changes, deploy-production]
+    if: always() && needs.detect-changes.outputs.plugins != '[]'
+    steps:
+      - name: Notify deployment status
+        uses: 8398a7/action-slack@v3
+        with:
+          status: ${{ needs.deploy-production.result }}
+          channel: '#platform-deployments'
+          text: |
+            Plugin deployment completed:
+            - Plugins: ${{ needs.detect-changes.outputs.plugins }}
+            - Environment: ${{ github.event.inputs.environment || 'staging' }}
+            - Status: ${{ needs.deploy-production.result }}
+            - Commit: ${{ github.sha }}
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+      - name: Update deployment dashboard
+        run: |
+          # Update internal deployment tracking
+          curl -X POST -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${{ secrets.DASHBOARD_API_TOKEN }}" \
+            -d '{
+              "event": "deployment_completed",
+              "plugins": ${{ needs.detect-changes.outputs.plugins }},
+              "environment": "${{ github.event.inputs.environment || 'staging' }}",
+              "status": "${{ needs.deploy-production.result }}",
+              "commit": "${{ github.sha }}",
+              "timestamp": "'$(date -u +%Y-%m-%dT%H:%M:%SZ)'"
+            }' \
+            ${{ secrets.DASHBOARD_API_URL }}/api/v1/deployments

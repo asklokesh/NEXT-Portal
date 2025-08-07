@@ -1,0 +1,32 @@
+name: saas-idp-infrastructure
+runtime:
+  name: nodejs
+  options:
+    typescript: true
+description: Multi-cloud Infrastructure as Code for SaaS IDP Platform
+config:
+  cloud:provider:
+    description: Cloud provider (aws, gcp, azure)
+    default: aws
+  environment:
+    description: Deployment environment
+    default: development
+  region:
+    description: Primary deployment region
+    default: us-east-1
+  multiRegion:
+    description: Enable multi-region deployment
+    type: boolean
+    default: false
+  enableMonitoring:
+    description: Enable monitoring stack
+    type: boolean
+    default: true
+  enableBackup:
+    description: Enable automated backups
+    type: boolean
+    default: true
+  enableDR:
+    description: Enable disaster recovery
+    type: boolean
+    default: false

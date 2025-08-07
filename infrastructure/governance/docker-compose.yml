@@ -1,0 +1,455 @@
+version: '3.8'
+
+services:
+  # Open Policy Agent (OPA) for policy evaluation
+  opa:
+    image: openpolicyagent/opa:latest-envoy
+    container_name: governance-opa
+    ports:
+      - "8181:8181"
+    volumes:
+      - ./policies:/policies:ro
+      - ./opa-config:/config:ro
+    command: >
+      run --server
+      --config-file /config/config.yaml
+      --addr 0.0.0.0:8181
+      /policies
+    networks:
+      - governance-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8181/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # PostgreSQL database for governance data
+  governance-db:
+    image: postgres:15-alpine
+    container_name: governance-postgres
+    environment:
+      POSTGRES_DB: governance
+      POSTGRES_USER: governance_user
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-governance_password}
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --lc-collate=C --lc-ctype=C"
+    volumes:
+      - governance-db-data:/var/lib/postgresql/data
+      - ./init-scripts:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "5432:5432"
+    networks:
+      - governance-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U governance_user -d governance"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  # Redis for caching and real-time data
+  governance-redis:
+    image: redis:7-alpine
+    container_name: governance-redis
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-governance_redis_password}
+    volumes:
+      - governance-redis-data:/data
+      - ./redis-config:/usr/local/etc/redis:ro
+    ports:
+      - "6379:6379"
+    networks:
+      - governance-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # Elasticsearch for audit logs and search
+  governance-elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.11.0
+    container_name: governance-elasticsearch
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - xpack.security.enrollment.enabled=false
+      - ES_JAVA_OPTS=-Xms2g -Xmx2g
+    volumes:
+      - governance-es-data:/usr/share/elasticsearch/data
+      - ./elasticsearch-config:/usr/share/elasticsearch/config:ro
+    ports:
+      - "9200:9200"
+      - "9300:9300"
+    networks:
+      - governance-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9200/_cluster/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  # Kibana for log visualization
+  governance-kibana:
+    image: docker.elastic.co/kibana/kibana:8.11.0
+    container_name: governance-kibana
+    environment:
+      - ELASTICSEARCH_HOSTS=http://governance-elasticsearch:9200
+      - XPACK_SECURITY_ENABLED=false
+    ports:
+      - "5601:5601"
+    networks:
+      - governance-network
+    depends_on:
+      governance-elasticsearch:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:5601/api/status || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
+
+  # Prometheus for metrics collection
+  governance-prometheus:
+    image: prom/prometheus:v2.48.0
+    container_name: governance-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus-config:/etc/prometheus:ro
+      - governance-prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+      - '--web.enable-admin-api'
+    networks:
+      - governance-network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:9090/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # Grafana for metrics visualization
+  governance-grafana:
+    image: grafana/grafana:10.2.0
+    container_name: governance-grafana
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_INSTALL_PLUGINS=grafana-piechart-panel,grafana-clock-panel
+    ports:
+      - "3001:3000"
+    volumes:
+      - governance-grafana-data:/var/lib/grafana
+      - ./grafana-config/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana-config/dashboards:/var/lib/grafana/dashboards:ro
+    networks:
+      - governance-network
+    depends_on:
+      governance-prometheus:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:3000/api/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # Jaeger for distributed tracing
+  governance-jaeger:
+    image: jaegertracing/all-in-one:1.51
+    container_name: governance-jaeger
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+    ports:
+      - "16686:16686"
+      - "14268:14268"
+      - "14250:14250"
+      - "4317:4317"   # OTLP gRPC
+      - "4318:4318"   # OTLP HTTP
+    networks:
+      - governance-network
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:16686/ || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # Governance Policy Engine Service
+  governance-policy-engine:
+    build:
+      context: ../../
+      dockerfile: ./infrastructure/governance/Dockerfile.policy-engine
+    container_name: governance-policy-engine
+    environment:
+      - NODE_ENV=production
+      - OPA_URL=http://governance-opa:8181
+      - DATABASE_URL=postgresql://governance_user:${POSTGRES_PASSWORD:-governance_password}@governance-db:5432/governance
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-governance_redis_password}@governance-redis:6379
+      - ELASTICSEARCH_URL=http://governance-elasticsearch:9200
+      - JAEGER_ENDPOINT=http://governance-jaeger:14268/api/traces
+    ports:
+      - "8080:8080"
+      - "8081:8081" # Health check port
+    volumes:
+      - ./logs:/app/logs
+    networks:
+      - governance-network
+    depends_on:
+      governance-db:
+        condition: service_healthy
+      governance-redis:
+        condition: service_healthy
+      governance-elasticsearch:
+        condition: service_healthy
+      opa:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped
+
+  # Governance Compliance Service
+  governance-compliance:
+    build:
+      context: ../../
+      dockerfile: ./infrastructure/governance/Dockerfile.compliance
+    container_name: governance-compliance
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://governance_user:${POSTGRES_PASSWORD:-governance_password}@governance-db:5432/governance
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-governance_redis_password}@governance-redis:6379
+      - ELASTICSEARCH_URL=http://governance-elasticsearch:9200
+      - POLICY_ENGINE_URL=http://governance-policy-engine:8080
+      - JAEGER_ENDPOINT=http://governance-jaeger:14268/api/traces
+    ports:
+      - "8082:8080"
+      - "8083:8081" # Health check port
+    volumes:
+      - ./logs:/app/logs
+      - ./compliance-reports:/app/reports
+    networks:
+      - governance-network
+    depends_on:
+      governance-policy-engine:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped
+
+  # Governance Security Service
+  governance-security:
+    build:
+      context: ../../
+      dockerfile: ./infrastructure/governance/Dockerfile.security
+    container_name: governance-security
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://governance_user:${POSTGRES_PASSWORD:-governance_password}@governance-db:5432/governance
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-governance_redis_password}@governance-redis:6379
+      - ELASTICSEARCH_URL=http://governance-elasticsearch:9200
+      - POLICY_ENGINE_URL=http://governance-policy-engine:8080
+      - JAEGER_ENDPOINT=http://governance-jaeger:14268/api/traces
+      # Security scanning integration
+      - TRIVY_SERVER=http://trivy-server:4954
+      - SNYK_TOKEN=${SNYK_TOKEN}
+      - SONARQUBE_URL=${SONARQUBE_URL}
+      - SONARQUBE_TOKEN=${SONARQUBE_TOKEN}
+    ports:
+      - "8084:8080"
+      - "8085:8081" # Health check port
+    volumes:
+      - ./logs:/app/logs
+      - ./security-reports:/app/reports
+    networks:
+      - governance-network
+    depends_on:
+      governance-policy-engine:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped
+
+  # Governance Quality Gates Service
+  governance-quality-gates:
+    build:
+      context: ../../
+      dockerfile: ./infrastructure/governance/Dockerfile.quality-gates
+    container_name: governance-quality-gates
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://governance_user:${POSTGRES_PASSWORD:-governance_password}@governance-db:5432/governance
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-governance_redis_password}@governance-redis:6379
+      - ELASTICSEARCH_URL=http://governance-elasticsearch:9200
+      - POLICY_ENGINE_URL=http://governance-policy-engine:8080
+      - COMPLIANCE_SERVICE_URL=http://governance-compliance:8080
+      - SECURITY_SERVICE_URL=http://governance-security:8080
+      - JAEGER_ENDPOINT=http://governance-jaeger:14268/api/traces
+    ports:
+      - "8086:8080"
+      - "8087:8081" # Health check port
+    volumes:
+      - ./logs:/app/logs
+    networks:
+      - governance-network
+    depends_on:
+      governance-compliance:
+        condition: service_healthy
+      governance-security:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped
+
+  # Governance Monitoring Service
+  governance-monitoring:
+    build:
+      context: ../../
+      dockerfile: ./infrastructure/governance/Dockerfile.monitoring
+    container_name: governance-monitoring
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://governance_user:${POSTGRES_PASSWORD:-governance_password}@governance-db:5432/governance
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-governance_redis_password}@governance-redis:6379
+      - ELASTICSEARCH_URL=http://governance-elasticsearch:9200
+      - PROMETHEUS_URL=http://governance-prometheus:9090
+      - POLICY_ENGINE_URL=http://governance-policy-engine:8080
+      - COMPLIANCE_SERVICE_URL=http://governance-compliance:8080
+      - SECURITY_SERVICE_URL=http://governance-security:8080
+      - QUALITY_GATES_URL=http://governance-quality-gates:8080
+      - JAEGER_ENDPOINT=http://governance-jaeger:14268/api/traces
+      # Notification services
+      - SMTP_HOST=${SMTP_HOST}
+      - SMTP_PORT=${SMTP_PORT}
+      - SMTP_USER=${SMTP_USER}
+      - SMTP_PASSWORD=${SMTP_PASSWORD}
+      - SLACK_WEBHOOK_URL=${SLACK_WEBHOOK_URL}
+      - PAGERDUTY_API_KEY=${PAGERDUTY_API_KEY}
+    ports:
+      - "8088:8080"
+      - "8089:8081" # Health check port
+    volumes:
+      - ./logs:/app/logs
+      - ./reports:/app/reports
+    networks:
+      - governance-network
+    depends_on:
+      governance-quality-gates:
+        condition: service_healthy
+      governance-prometheus:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped
+
+  # Governance API Gateway
+  governance-gateway:
+    image: nginx:alpine
+    container_name: governance-gateway
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx-config:/etc/nginx:ro
+      - ./ssl-certs:/etc/ssl/certs:ro
+    networks:
+      - governance-network
+    depends_on:
+      - governance-policy-engine
+      - governance-compliance
+      - governance-security
+      - governance-quality-gates
+      - governance-monitoring
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+
+  # Trivy vulnerability scanner server
+  trivy-server:
+    image: aquasec/trivy:latest
+    container_name: trivy-server
+    command: server --listen 0.0.0.0:4954
+    ports:
+      - "4954:4954"
+    networks:
+      - governance-network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:4954/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # OTEL Collector for observability
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:latest
+    container_name: governance-otel-collector
+    command: ["--config=/etc/otel-collector-config.yaml"]
+    volumes:
+      - ./otel-config/otel-collector-config.yaml:/etc/otel-collector-config.yaml:ro
+    ports:
+      - "4317:4317"   # OTLP gRPC receiver
+      - "4318:4318"   # OTLP HTTP receiver
+      - "8888:8888"   # Prometheus metrics
+    networks:
+      - governance-network
+    depends_on:
+      - governance-jaeger
+      - governance-prometheus
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:13133/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+networks:
+  governance-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+volumes:
+  governance-db-data:
+    driver: local
+  governance-redis-data:
+    driver: local
+  governance-es-data:
+    driver: local
+  governance-prometheus-data:
+    driver: local
+  governance-grafana-data:
+    driver: local

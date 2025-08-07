@@ -1,0 +1,432 @@
+apiVersion: networking.istio.io/v1beta1
+kind: Gateway
+metadata:
+  name: plugin-pipeline-gateway
+  namespace: plugin-pipeline
+  labels:
+    app.kubernetes.io/name: plugin-pipeline-gateway
+    app.kubernetes.io/component: service-mesh
+    app.kubernetes.io/part-of: plugin-pipeline
+  annotations:
+    plugin-pipeline/description: "Istio gateway for plugin pipeline API access"
+spec:
+  selector:
+    istio: ingressgateway
+  servers:
+    - port:
+        number: 443
+        name: https
+        protocol: HTTPS
+      tls:
+        mode: SIMPLE
+        credentialName: plugin-pipeline-tls
+      hosts:
+        - plugin-pipeline.example.com
+    - port:
+        number: 80
+        name: http
+        protocol: HTTP
+      hosts:
+        - plugin-pipeline.example.com
+      tls:
+        httpsRedirect: true
+---
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: plugin-pipeline-vs
+  namespace: plugin-pipeline
+  labels:
+    app.kubernetes.io/name: plugin-pipeline-vs
+    app.kubernetes.io/component: service-mesh
+    app.kubernetes.io/part-of: plugin-pipeline
+  annotations:
+    plugin-pipeline/description: "Istio virtual service for plugin pipeline routing"
+spec:
+  hosts:
+    - plugin-pipeline.example.com
+  gateways:
+    - plugin-pipeline-gateway
+  http:
+    - match:
+        - uri:
+            prefix: "/api/v1/"
+      route:
+        - destination:
+            host: plugin-pipeline-orchestrator.plugin-pipeline.svc.cluster.local
+            port:
+              number: 8080
+      timeout: 60s
+      retries:
+        attempts: 3
+        perTryTimeout: 20s
+        retryOn: gateway-error,connect-failure,refused-stream
+    - match:
+        - uri:
+            prefix: "/metrics"
+      route:
+        - destination:
+            host: plugin-pipeline-orchestrator.plugin-pipeline.svc.cluster.local
+            port:
+              number: 9090
+      headers:
+        request:
+          set:
+            Authorization: "Bearer {{ .Values.metricsToken }}"
+    - match:
+        - uri:
+            prefix: "/health"
+      route:
+        - destination:
+            host: plugin-pipeline-orchestrator.plugin-pipeline.svc.cluster.local
+            port:
+              number: 8081
+      timeout: 10s
+---
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: plugin-pipeline-orchestrator-dr
+  namespace: plugin-pipeline
+  labels:
+    app.kubernetes.io/name: plugin-pipeline-orchestrator-dr
+    app.kubernetes.io/component: service-mesh
+    app.kubernetes.io/part-of: plugin-pipeline
+  annotations:
+    plugin-pipeline/description: "Istio destination rule for plugin pipeline orchestrator"
+spec:
+  host: plugin-pipeline-orchestrator.plugin-pipeline.svc.cluster.local
+  trafficPolicy:
+    loadBalancer:
+      simple: LEAST_CONN
+    connectionPool:
+      tcp:
+        maxConnections: 100
+        connectTimeout: 30s
+      http:
+        http1MaxPendingRequests: 50
+        http2MaxRequests: 100
+        maxRequestsPerConnection: 10
+        maxRetries: 3
+        idleTimeout: 90s
+    outlierDetection:
+      consecutiveErrors: 3
+      interval: 30s
+      baseEjectionTime: 30s
+      maxEjectionPercent: 50
+  subsets:
+    - name: v1
+      labels:
+        version: v1.0.0
+---
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: plugin-pipeline-peer-auth
+  namespace: plugin-pipeline
+  labels:
+    app.kubernetes.io/name: plugin-pipeline-peer-auth
+    app.kubernetes.io/component: service-mesh
+    app.kubernetes.io/part-of: plugin-pipeline
+  annotations:
+    plugin-pipeline/description: "Istio peer authentication for plugin pipeline"
+spec:
+  selector:
+    matchLabels:
+      app: plugin-pipeline-orchestrator
+  mtls:
+    mode: STRICT
+---
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: plugin-pipeline-authz
+  namespace: plugin-pipeline
+  labels:
+    app.kubernetes.io/name: plugin-pipeline-authz
+    app.kubernetes.io/component: service-mesh
+    app.kubernetes.io/part-of: plugin-pipeline
+  annotations:
+    plugin-pipeline/description: "Istio authorization policy for plugin pipeline"
+spec:
+  selector:
+    matchLabels:
+      app: plugin-pipeline-orchestrator
+  rules:
+    # Allow traffic from istio-proxy (ingress gateway)
+    - from:
+        - source:
+            principals: ["cluster.local/ns/istio-system/sa/istio-ingressgateway-service-account"]
+      to:
+        - operation:
+            methods: ["GET", "POST", "PUT", "DELETE", "PATCH"]
+    
+    # Allow traffic from monitoring systems
+    - from:
+        - source:
+            principals: ["cluster.local/ns/monitoring/sa/prometheus"]
+      to:
+        - operation:
+            methods: ["GET"]
+            paths: ["/metrics"]
+    
+    # Allow health checks from Kubernetes
+    - from:
+        - source:
+            principals: ["cluster.local/ns/kube-system/sa/kubernetes-dashboard"]
+      to:
+        - operation:
+            methods: ["GET"]
+            paths: ["/health/*"]
+    
+    # Allow traffic from plugin namespaces
+    - from:
+        - source:
+            namespaces: ["plugins"]
+        - source:
+            namespaces: ["plugin-*"]
+      to:
+        - operation:
+            methods: ["GET", "POST"]
+            paths: ["/api/v1/webhooks/*"]
+---
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: plugin-default-authz
+  namespace: plugins
+  labels:
+    app.kubernetes.io/name: plugin-default-authz
+    app.kubernetes.io/component: service-mesh
+    app.kubernetes.io/part-of: plugin-pipeline
+  annotations:
+    plugin-pipeline/description: "Default authorization policy for plugin runtime"
+spec:
+  # Apply to all pods in the namespace
+  rules:
+    # Allow traffic from istio-proxy (service mesh)
+    - from:
+        - source:
+            principals: ["cluster.local/ns/istio-system/sa/istio-proxy"]
+    
+    # Allow traffic from plugin pipeline orchestrator
+    - from:
+        - source:
+            principals: ["cluster.local/ns/plugin-pipeline/sa/plugin-pipeline-orchestrator"]
+    
+    # Allow traffic from monitoring
+    - from:
+        - source:
+            principals: ["cluster.local/ns/monitoring/sa/prometheus"]
+      to:
+        - operation:
+            methods: ["GET"]
+            paths: ["/metrics"]
+    
+    # Allow traffic from developer portal
+    - from:
+        - source:
+            principals: ["cluster.local/ns/developer-portal/sa/backstage-backend"]
+      to:
+        - operation:
+            methods: ["GET", "POST"]
+    
+    # Allow inter-plugin communication
+    - from:
+        - source:
+            namespaces: ["plugins"]
+        - source:
+            namespaces: ["plugin-*"]
+    
+    # Deny all other traffic (implicit)
+---
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: plugin-default-peer-auth
+  namespace: plugins
+  labels:
+    app.kubernetes.io/name: plugin-default-peer-auth
+    app.kubernetes.io/component: service-mesh
+    app.kubernetes.io/part-of: plugin-pipeline
+  annotations:
+    plugin-pipeline/description: "Default peer authentication for plugin runtime"
+spec:
+  # Apply to all pods in the namespace
+  mtls:
+    mode: STRICT
+---
+apiVersion: networking.istio.io/v1alpha3
+kind: Sidecar
+metadata:
+  name: plugin-pipeline-sidecar
+  namespace: plugin-pipeline
+  labels:
+    app.kubernetes.io/name: plugin-pipeline-sidecar
+    app.kubernetes.io/component: service-mesh
+    app.kubernetes.io/part-of: plugin-pipeline
+  annotations:
+    plugin-pipeline/description: "Istio sidecar configuration for plugin pipeline"
+spec:
+  workloadSelector:
+    labels:
+      app: plugin-pipeline-orchestrator
+  egress:
+    # Allow access to Kubernetes API
+    - port:
+        number: 443
+        protocol: HTTPS
+        name: k8s-api
+      hosts:
+        - kubernetes.default.svc.cluster.local
+    
+    # Allow access to Docker registry
+    - port:
+        number: 443
+        protocol: HTTPS
+        name: docker-registry
+      hosts:
+        - registry.hub.docker.com
+        - "*.docker.io"
+    
+    # Allow access to plugin registries
+    - port:
+        number: 443
+        protocol: HTTPS
+        name: npm-registry
+      hosts:
+        - registry.npmjs.org
+    
+    # Allow access to security scanners
+    - port:
+        number: 443
+        protocol: HTTPS
+        name: security-scanners
+      hosts:
+        - snyk.io
+        - "*.snyk.io"
+    
+    # Allow access to monitoring services
+    - port:
+        number: 9090
+        protocol: HTTP
+        name: prometheus
+      hosts:
+        - prometheus.monitoring.svc.cluster.local
+    
+    - port:
+        number: 3100
+        protocol: HTTP
+        name: loki
+      hosts:
+        - loki.monitoring.svc.cluster.local
+    
+    - port:
+        number: 14268
+        protocol: HTTP
+        name: jaeger
+      hosts:
+        - jaeger-collector.istio-system.svc.cluster.local
+    
+    # Allow access to databases
+    - port:
+        number: 5432
+        protocol: TCP
+        name: postgres
+      hosts:
+        - postgres-service.database.svc.cluster.local
+    
+    - port:
+        number: 6379
+        protocol: TCP
+        name: redis
+      hosts:
+        - redis-service.cache.svc.cluster.local
+    
+    # Allow access to plugin namespaces
+    - hosts:
+        - "*.plugins.svc.cluster.local"
+        - "*.plugin-*.svc.cluster.local"
+---
+apiVersion: networking.istio.io/v1alpha3
+kind: Sidecar
+metadata:
+  name: plugin-default-sidecar
+  namespace: plugins
+  labels:
+    app.kubernetes.io/name: plugin-default-sidecar
+    app.kubernetes.io/component: service-mesh
+    app.kubernetes.io/part-of: plugin-pipeline
+  annotations:
+    plugin-pipeline/description: "Default sidecar configuration for plugin runtime"
+spec:
+  # Apply to all workloads in the namespace
+  egress:
+    # Allow access to developer portal backend
+    - port:
+        number: 7007
+        protocol: HTTP
+        name: backstage-backend
+      hosts:
+        - backstage-backend.developer-portal.svc.cluster.local
+    
+    # Allow access to databases (plugins might need DB access)
+    - port:
+        number: 5432
+        protocol: TCP
+        name: postgres
+      hosts:
+        - postgres-service.database.svc.cluster.local
+    
+    - port:
+        number: 6379
+        protocol: TCP
+        name: redis
+      hosts:
+        - redis-service.cache.svc.cluster.local
+    
+    # Allow inter-plugin communication
+    - hosts:
+        - "*.plugins.svc.cluster.local"
+        - "*.plugin-*.svc.cluster.local"
+    
+    # Allow external API access (limited)
+    - port:
+        number: 443
+        protocol: HTTPS
+        name: external-apis
+      hosts:
+        - api.github.com
+        - api.gitlab.com
+        - "*.amazonaws.com"
+---
+apiVersion: telemetry.istio.io/v1alpha1
+kind: Telemetry
+metadata:
+  name: plugin-pipeline-telemetry
+  namespace: plugin-pipeline
+  labels:
+    app.kubernetes.io/name: plugin-pipeline-telemetry
+    app.kubernetes.io/component: service-mesh
+    app.kubernetes.io/part-of: plugin-pipeline
+  annotations:
+    plugin-pipeline/description: "Istio telemetry configuration for plugin pipeline"
+spec:
+  selector:
+    matchLabels:
+      app: plugin-pipeline-orchestrator
+  metrics:
+    - providers:
+        - name: prometheus
+    - overrides:
+        - match:
+            metric: REQUEST_COUNT
+          tags:
+            plugin_name:
+              value: "{{ .plugin_name | default 'unknown' }}"
+            operation_type:
+              value: "{{ .operation_type | default 'unknown' }}"
+  tracing:
+    - providers:
+        - name: jaeger
+      randomSamplingPercentage: 10.0

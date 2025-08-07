@@ -1,0 +1,750 @@
+import { Incident, User, Alert, SLADefinition, Runbook } from './types';
+import { PagerDutyClient } from './integrations/pagerduty';
+import { OpsGenieClient } from './integrations/opsgenie';
+import { SlackClient } from './integrations/slack';
+
+interface NotificationClients {
+  slack?: SlackClient;
+  pagerDuty?: PagerDutyClient;
+  opsgenie?: OpsGenieClient;
+}
+
+interface NotificationTemplate {
+  id: string;
+  name: string;
+  type: 'incident_created' | 'incident_updated' | 'incident_resolved' | 'alert_fired' | 'sla_breach' | 'runbook_executed';
+  channels: NotificationChannel[];
+  template: {
+    title: string;
+    message: string;
+    priority: 'low' | 'medium' | 'high' | 'critical';
+    tags?: string[];
+  };
+  conditions: NotificationCondition[];
+}
+
+interface NotificationChannel {
+  type: 'slack' | 'email' | 'sms' | 'webhook' | 'pagerduty' | 'opsgenie';
+  config: Record<string, any>;
+  enabled: boolean;
+}
+
+interface NotificationCondition {
+  field: string;
+  operator: 'equals' | 'contains' | 'greater_than' | 'less_than';
+  value: any;
+}
+
+interface NotificationHistory {
+  id: string;
+  incidentId?: string;
+  alertId?: string;
+  type: string;
+  channel: string;
+  recipient: string;
+  subject: string;
+  message: string;
+  status: 'sent' | 'failed' | 'pending';
+  sentAt: Date;
+  error?: string;
+}
+
+export class NotificationService {
+  private templates: Map<string, NotificationTemplate> = new Map();
+  private history: NotificationHistory[] = [];
+
+  constructor(private clients: NotificationClients) {
+    this.initializeDefaultTemplates();
+  }
+
+  async notifyIncidentCreated(incident: Incident): Promise<void> {
+    const template = this.templates.get('incident_created');
+    if (!template) return;
+
+    const notifications = this.buildNotifications(template, { incident });
+    await this.sendNotifications(notifications, incident.id);
+  }
+
+  async notifyIncidentUpdated(incident: Incident, updates: Partial<Incident>): Promise<void> {
+    const template = this.templates.get('incident_updated');
+    if (!template) return;
+
+    // Only notify for significant updates
+    if (!this.isSignificantUpdate(updates)) return;
+
+    const notifications = this.buildNotifications(template, { incident, updates });
+    await this.sendNotifications(notifications, incident.id);
+  }
+
+  async notifyIncidentResolved(incident: Incident, resolution: string): Promise<void> {
+    const template = this.templates.get('incident_resolved');
+    if (!template) return;
+
+    const notifications = this.buildNotifications(template, { incident, resolution });
+    await this.sendNotifications(notifications, incident.id);
+  }
+
+  async notifyIncidentAcknowledged(incident: Incident, user: User): Promise<void> {
+    const template = this.templates.get('incident_acknowledged');
+    if (!template) return;
+
+    const notifications = this.buildNotifications(template, { incident, user });
+    await this.sendNotifications(notifications, incident.id);
+  }
+
+  async notifyAlertFired(alert: Alert): Promise<void> {
+    const template = this.templates.get('alert_fired');
+    if (!template) return;
+
+    const notifications = this.buildNotifications(template, { alert });
+    await this.sendNotifications(notifications, undefined, alert.id);
+  }
+
+  async notifySLABreach(incident: Incident, sla: SLADefinition, target: any, currentValue: number): Promise<void> {
+    const template = this.templates.get('sla_breach');
+    if (!template) return;
+
+    const notifications = this.buildNotifications(template, { 
+      incident, 
+      sla, 
+      target, 
+      currentValue 
+    });
+    await this.sendNotifications(notifications, incident.id);
+  }
+
+  async notifySLAWarning(incident: Incident, sla: SLADefinition, target: any, currentValue: number): Promise<void> {
+    const template = this.templates.get('sla_warning');
+    if (!template) return;
+
+    const notifications = this.buildNotifications(template, { 
+      incident, 
+      sla, 
+      target, 
+      currentValue 
+    });
+    await this.sendNotifications(notifications, incident.id);
+  }
+
+  async notifyRunbookSuccess(incident: Incident, runbook: Runbook, result: any): Promise<void> {
+    const template = this.templates.get('runbook_success');
+    if (!template) return;
+
+    const notifications = this.buildNotifications(template, { 
+      incident, 
+      runbook, 
+      result 
+    });
+    await this.sendNotifications(notifications, incident.id);
+  }
+
+  async notifyRunbookFailure(incident: Incident, runbook: Runbook, result: any): Promise<void> {
+    const template = this.templates.get('runbook_failure');
+    if (!template) return;
+
+    const notifications = this.buildNotifications(template, { 
+      incident, 
+      runbook, 
+      result 
+    });
+    await this.sendNotifications(notifications, incident.id);
+  }
+
+  async notifyUser(userId: string, incident: Incident, reason: string): Promise<void> {
+    // Get user contact methods and send personalized notification
+    const user = await this.getUserById(userId);
+    if (!user) return;
+
+    for (const contactMethod of user.contactMethods) {
+      if (!contactMethod.verified) continue;
+
+      try {
+        switch (contactMethod.type) {
+          case 'slack':
+            await this.sendSlackDM(contactMethod.value, this.formatUserNotification(incident, reason, user));
+            break;
+          case 'email':
+            await this.sendEmail(contactMethod.value, `Incident Escalation: ${incident.title}`, 
+              this.formatUserNotification(incident, reason, user));
+            break;
+          case 'phone':
+            await this.sendSMS(contactMethod.value, this.formatUserNotification(incident, reason, user, true));
+            break;
+          case 'pagerduty':
+            if (this.clients.pagerDuty) {
+              await this.clients.pagerDuty.notifyUser(contactMethod.value, incident, reason);
+            }
+            break;
+        }
+
+        this.recordNotification({
+          id: this.generateNotificationId(),
+          incidentId: incident.id,
+          type: 'user_escalation',
+          channel: contactMethod.type,
+          recipient: contactMethod.value,
+          subject: `Incident Escalation: ${incident.title}`,
+          message: reason,
+          status: 'sent',
+          sentAt: new Date()
+        });
+
+      } catch (error) {
+        console.error(`Failed to notify user ${userId} via ${contactMethod.type}:`, error);
+        
+        this.recordNotification({
+          id: this.generateNotificationId(),
+          incidentId: incident.id,
+          type: 'user_escalation',
+          channel: contactMethod.type,
+          recipient: contactMethod.value,
+          subject: `Incident Escalation: ${incident.title}`,
+          message: reason,
+          status: 'failed',
+          sentAt: new Date(),
+          error: error instanceof Error ? error.message : 'Unknown error'
+        });
+      }
+    }
+  }
+
+  async notifyTeam(incident: Incident | Alert, config: any): Promise<void> {
+    const { teamId, reason } = config;
+    
+    // Get team members and notify each
+    const teamMembers = await this.getTeamMembers(teamId);
+    
+    for (const member of teamMembers) {
+      if ('id' in incident) {
+        // It's an incident
+        await this.notifyUser(member.id, incident, reason || 'Team notification');
+      } else {
+        // It's an alert - create a simplified notification
+        await this.notifyUserAboutAlert(member.id, incident, reason);
+      }
+    }
+  }
+
+  private buildNotifications(template: NotificationTemplate, context: any): Array<{
+    channel: NotificationChannel;
+    subject: string;
+    message: string;
+  }> {
+    const notifications = [];
+
+    // Check conditions
+    if (!this.evaluateConditions(template.conditions, context)) {
+      return notifications;
+    }
+
+    for (const channel of template.channels) {
+      if (!channel.enabled) continue;
+
+      const subject = this.renderTemplate(template.template.title, context);
+      const message = this.renderTemplate(template.template.message, context);
+
+      notifications.push({
+        channel,
+        subject,
+        message
+      });
+    }
+
+    return notifications;
+  }
+
+  private async sendNotifications(notifications: Array<{
+    channel: NotificationChannel;
+    subject: string;
+    message: string;
+  }>, incidentId?: string, alertId?: string): Promise<void> {
+    for (const notification of notifications) {
+      try {
+        await this.sendNotification(notification.channel, notification.subject, notification.message);
+        
+        this.recordNotification({
+          id: this.generateNotificationId(),
+          incidentId,
+          alertId,
+          type: notification.channel.type,
+          channel: notification.channel.type,
+          recipient: notification.channel.config.recipient || 'unknown',
+          subject: notification.subject,
+          message: notification.message,
+          status: 'sent',
+          sentAt: new Date()
+        });
+
+      } catch (error) {
+        console.error(`Failed to send notification via ${notification.channel.type}:`, error);
+        
+        this.recordNotification({
+          id: this.generateNotificationId(),
+          incidentId,
+          alertId,
+          type: notification.channel.type,
+          channel: notification.channel.type,
+          recipient: notification.channel.config.recipient || 'unknown',
+          subject: notification.subject,
+          message: notification.message,
+          status: 'failed',
+          sentAt: new Date(),
+          error: error instanceof Error ? error.message : 'Unknown error'
+        });
+      }
+    }
+  }
+
+  private async sendNotification(channel: NotificationChannel, subject: string, message: string): Promise<void> {
+    switch (channel.type) {
+      case 'slack':
+        await this.sendSlackNotification(channel.config.channel, subject, message);
+        break;
+      
+      case 'email':
+        await this.sendEmail(channel.config.recipients, subject, message);
+        break;
+      
+      case 'webhook':
+        await this.sendWebhookNotification(channel.config.url, { subject, message });
+        break;
+      
+      case 'pagerduty':
+        if (this.clients.pagerDuty) {
+          await this.clients.pagerDuty.sendNotification(channel.config, subject, message);
+        }
+        break;
+      
+      case 'opsgenie':
+        if (this.clients.opsgenie) {
+          await this.clients.opsgenie.sendNotification(channel.config, subject, message);
+        }
+        break;
+      
+      default:
+        throw new Error(`Unsupported notification channel: ${channel.type}`);
+    }
+  }
+
+  private async sendSlackNotification(channelId: string, subject: string, message: string): Promise<void> {
+    if (!this.clients.slack) {
+      throw new Error('Slack client not configured');
+    }
+
+    await this.clients.slack.sendMessage(channelId, {
+      text: subject,
+      blocks: [
+        {
+          type: 'header',
+          text: {
+            type: 'plain_text',
+            text: subject
+          }
+        },
+        {
+          type: 'section',
+          text: {
+            type: 'mrkdwn',
+            text: message
+          }
+        }
+      ]
+    });
+  }
+
+  private async sendSlackDM(userId: string, message: string): Promise<void> {
+    if (!this.clients.slack) {
+      throw new Error('Slack client not configured');
+    }
+
+    await this.clients.slack.sendDirectMessage(userId, message);
+  }
+
+  private async sendEmail(recipients: string | string[], subject: string, message: string): Promise<void> {
+    const recipientList = Array.isArray(recipients) ? recipients : [recipients];
+    
+    // Mock email sending - in real implementation, use email service
+    console.log(`Email sent to ${recipientList.join(', ')}: ${subject}`);
+    console.log(`Message: ${message}`);
+  }
+
+  private async sendSMS(phoneNumber: string, message: string): Promise<void> {
+    // Mock SMS sending - in real implementation, use SMS service
+    console.log(`SMS sent to ${phoneNumber}: ${message}`);
+  }
+
+  private async sendWebhookNotification(url: string, payload: any): Promise<void> {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(payload)
+    });
+
+    if (!response.ok) {
+      throw new Error(`Webhook request failed: ${response.status} ${response.statusText}`);
+    }
+  }
+
+  private renderTemplate(template: string, context: any): string {
+    let result = template;
+
+    // Replace incident variables
+    if (context.incident) {
+      const incident = context.incident;
+      result = result.replace(/\{\{incident\.id\}\}/g, incident.id);
+      result = result.replace(/\{\{incident\.title\}\}/g, incident.title);
+      result = result.replace(/\{\{incident\.description\}\}/g, incident.description);
+      result = result.replace(/\{\{incident\.severity\}\}/g, incident.severity);
+      result = result.replace(/\{\{incident\.status\}\}/g, incident.status);
+      result = result.replace(/\{\{incident\.priority\}\}/g, incident.priority);
+      result = result.replace(/\{\{incident\.commander\}\}/g, incident.incidentCommander.name);
+      result = result.replace(/\{\{incident\.services\}\}/g, incident.affectedServices.join(', '));
+      result = result.replace(/\{\{incident\.duration\}\}/g, this.formatDuration(incident.createdAt));
+    }
+
+    // Replace alert variables
+    if (context.alert) {
+      const alert = context.alert;
+      result = result.replace(/\{\{alert\.id\}\}/g, alert.id);
+      result = result.replace(/\{\{alert\.title\}\}/g, alert.title);
+      result = result.replace(/\{\{alert\.description\}\}/g, alert.description);
+      result = result.replace(/\{\{alert\.severity\}\}/g, alert.severity);
+      result = result.replace(/\{\{alert\.source\}\}/g, alert.source);
+    }
+
+    // Replace user variables
+    if (context.user) {
+      const user = context.user;
+      result = result.replace(/\{\{user\.name\}\}/g, user.name);
+      result = result.replace(/\{\{user\.email\}\}/g, user.email);
+      result = result.replace(/\{\{user\.role\}\}/g, user.role);
+    }
+
+    // Replace SLA variables
+    if (context.sla) {
+      const sla = context.sla;
+      result = result.replace(/\{\{sla\.name\}\}/g, sla.name);
+      result = result.replace(/\{\{sla\.description\}\}/g, sla.description);
+    }
+
+    // Replace runbook variables
+    if (context.runbook) {
+      const runbook = context.runbook;
+      result = result.replace(/\{\{runbook\.name\}\}/g, runbook.name);
+      result = result.replace(/\{\{runbook\.description\}\}/g, runbook.description);
+    }
+
+    // Replace other context variables
+    if (context.resolution) {
+      result = result.replace(/\{\{resolution\}\}/g, context.resolution);
+    }
+
+    if (context.reason) {
+      result = result.replace(/\{\{reason\}\}/g, context.reason);
+    }
+
+    if (context.currentValue) {
+      result = result.replace(/\{\{currentValue\}\}/g, context.currentValue.toString());
+    }
+
+    if (context.target) {
+      result = result.replace(/\{\{target\.metric\}\}/g, context.target.metric);
+      result = result.replace(/\{\{target\.value\}\}/g, context.target.value.toString());
+    }
+
+    return result;
+  }
+
+  private evaluateConditions(conditions: NotificationCondition[], context: any): boolean {
+    if (conditions.length === 0) return true;
+
+    return conditions.every(condition => {
+      const value = this.getContextValue(condition.field, context);
+      
+      switch (condition.operator) {
+        case 'equals':
+          return value === condition.value;
+        case 'contains':
+          return String(value).includes(String(condition.value));
+        case 'greater_than':
+          return Number(value) > Number(condition.value);
+        case 'less_than':
+          return Number(value) < Number(condition.value);
+        default:
+          return false;
+      }
+    });
+  }
+
+  private getContextValue(field: string, context: any): any {
+    const parts = field.split('.');
+    let value = context;
+    
+    for (const part of parts) {
+      value = value?.[part];
+    }
+    
+    return value;
+  }
+
+  private isSignificantUpdate(updates: Partial<Incident>): boolean {
+    const significantFields = ['status', 'severity', 'priority', 'incidentCommander', 'resolution'];
+    return significantFields.some(field => updates.hasOwnProperty(field));
+  }
+
+  private formatDuration(startTime: Date): string {
+    const now = new Date();
+    const diffMs = now.getTime() - startTime.getTime();
+    const diffMins = Math.floor(diffMs / 60000);
+    const diffHours = Math.floor(diffMins / 60);
+    
+    if (diffHours > 0) {
+      return `${diffHours}h ${diffMins % 60}m`;
+    } else {
+      return `${diffMins}m`;
+    }
+  }
+
+  private formatUserNotification(incident: Incident, reason: string, user: User, short = false): string {
+    if (short) {
+      return `INCIDENT: ${incident.title} - ${incident.severity.toUpperCase()} - ${reason}`;
+    }
+
+    return `
+Hello ${user.name},
+
+You are being notified about incident: ${incident.title}
+
+Severity: ${incident.severity.toUpperCase()}
+Priority: ${incident.priority}
+Status: ${incident.status}
+Affected Services: ${incident.affectedServices.join(', ')}
+Reason: ${reason}
+
+Incident Commander: ${incident.incidentCommander.name}
+Created: ${incident.createdAt.toLocaleString()}
+
+Please acknowledge this incident and take appropriate action.
+
+Incident Details: https://portal.example.com/incidents/${incident.id}
+    `.trim();
+  }
+
+  private async notifyUserAboutAlert(userId: string, alert: Alert, reason?: string): Promise<void> {
+    const user = await this.getUserById(userId);
+    if (!user) return;
+
+    const message = `
+Alert: ${alert.title}
+Severity: ${alert.severity.toUpperCase()}
+Source: ${alert.source}
+${reason ? `Reason: ${reason}` : ''}
+
+Alert Details: https://portal.example.com/alerts/${alert.id}
+    `.trim();
+
+    // Send via primary contact method
+    const primaryContact = user.contactMethods.find(c => c.priority === 1 && c.verified);
+    if (primaryContact) {
+      switch (primaryContact.type) {
+        case 'slack':
+          await this.sendSlackDM(primaryContact.value, message);
+          break;
+        case 'email':
+          await this.sendEmail(primaryContact.value, `Alert: ${alert.title}`, message);
+          break;
+        case 'phone':
+          await this.sendSMS(primaryContact.value, `ALERT: ${alert.title} - ${alert.severity.toUpperCase()}`);
+          break;
+      }
+    }
+  }
+
+  private async getUserById(userId: string): Promise<User | null> {
+    // Mock user lookup - in real implementation, query database
+    return {
+      id: userId,
+      name: 'John Doe',
+      email: 'john.doe@example.com',
+      role: 'SRE',
+      contactMethods: [
+        { type: 'email', value: 'john.doe@example.com', verified: true, priority: 1 },
+        { type: 'slack', value: '@john.doe', verified: true, priority: 2 },
+        { type: 'phone', value: '+1-555-0123', verified: true, priority: 3 }
+      ],
+      escalationLevel: 1,
+      timezone: 'UTC'
+    };
+  }
+
+  private async getTeamMembers(teamId: string): Promise<User[]> {
+    // Mock team lookup - in real implementation, query database
+    return [
+      await this.getUserById('user1'),
+      await this.getUserById('user2')
+    ].filter((user): user is User => user !== null);
+  }
+
+  private recordNotification(notification: NotificationHistory): void {
+    this.history.push(notification);
+    
+    // Keep only last 1000 notifications
+    if (this.history.length > 1000) {
+      this.history.shift();
+    }
+  }
+
+  private generateNotificationId(): string {
+    return 'notif_' + Math.random().toString(36).substr(2, 12);
+  }
+
+  private initializeDefaultTemplates(): void {
+    // Incident Created Template
+    this.templates.set('incident_created', {
+      id: 'incident_created',
+      name: 'Incident Created',
+      type: 'incident_created',
+      channels: [
+        {
+          type: 'slack',
+          config: { channel: '#incidents' },
+          enabled: true
+        }
+      ],
+      template: {
+        title: '🚨 New Incident: {{incident.title}}',
+        message: `
+**Severity:** {{incident.severity}}
+**Priority:** {{incident.priority}}
+**Affected Services:** {{incident.services}}
+**Commander:** {{incident.commander}}
+
+**Description:** {{incident.description}}
+
+[View Incident](https://portal.example.com/incidents/{{incident.id}})
+        `.trim(),
+        priority: 'high'
+      },
+      conditions: []
+    });
+
+    // Incident Updated Template
+    this.templates.set('incident_updated', {
+      id: 'incident_updated',
+      name: 'Incident Updated',
+      type: 'incident_updated',
+      channels: [
+        {
+          type: 'slack',
+          config: { channel: '#incidents' },
+          enabled: true
+        }
+      ],
+      template: {
+        title: '🔄 Incident Updated: {{incident.title}}',
+        message: `
+**Status:** {{incident.status}}
+**Severity:** {{incident.severity}}
+**Duration:** {{incident.duration}}
+
+[View Incident](https://portal.example.com/incidents/{{incident.id}})
+        `.trim(),
+        priority: 'medium'
+      },
+      conditions: []
+    });
+
+    // Incident Resolved Template
+    this.templates.set('incident_resolved', {
+      id: 'incident_resolved',
+      name: 'Incident Resolved',
+      type: 'incident_resolved',
+      channels: [
+        {
+          type: 'slack',
+          config: { channel: '#incidents' },
+          enabled: true
+        }
+      ],
+      template: {
+        title: '✅ Incident Resolved: {{incident.title}}',
+        message: `
+**Duration:** {{incident.duration}}
+**Commander:** {{incident.commander}}
+
+**Resolution:** {{resolution}}
+
+[View Incident](https://portal.example.com/incidents/{{incident.id}})
+        `.trim(),
+        priority: 'low'
+      },
+      conditions: []
+    });
+
+    // SLA Breach Template
+    this.templates.set('sla_breach', {
+      id: 'sla_breach',
+      name: 'SLA Breach',
+      type: 'sla_breach',
+      channels: [
+        {
+          type: 'slack',
+          config: { channel: '#sla-alerts' },
+          enabled: true
+        },
+        {
+          type: 'email',
+          config: { recipients: ['management@example.com'] },
+          enabled: true
+        }
+      ],
+      template: {
+        title: '🔴 SLA Breach: {{sla.name}}',
+        message: `
+**Incident:** {{incident.title}}
+**SLA:** {{sla.name}}
+**Metric:** {{target.metric}}
+**Current Value:** {{currentValue}}
+**Threshold:** {{target.value}}
+
+Immediate attention required!
+
+[View Incident](https://portal.example.com/incidents/{{incident.id}})
+        `.trim(),
+        priority: 'critical'
+      },
+      conditions: []
+    });
+
+    console.log('Initialized default notification templates');
+  }
+
+  // Public methods for template management
+  public addTemplate(template: NotificationTemplate): void {
+    this.templates.set(template.id, template);
+    console.log(`Notification template added: ${template.name}`);
+  }
+
+  public removeTemplate(templateId: string): void {
+    this.templates.delete(templateId);
+    console.log(`Notification template removed: ${templateId}`);
+  }
+
+  public getTemplates(): NotificationTemplate[] {
+    return Array.from(this.templates.values());
+  }
+
+  public getNotificationHistory(incidentId?: string, limit = 100): NotificationHistory[] {
+    let history = this.history;
+    
+    if (incidentId) {
+      history = history.filter(n => n.incidentId === incidentId);
+    }
+
+    return history
+      .sort((a, b) => b.sentAt.getTime() - a.sentAt.getTime())
+      .slice(0, limit);
+  }
+}

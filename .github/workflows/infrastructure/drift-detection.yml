@@ -1,0 +1,219 @@
+name: Drift Detection
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'  # Every 6 hours
+  workflow_dispatch:
+    inputs:
+      stack:
+        description: 'Stack to check for drift'
+        required: false
+        type: choice
+        options:
+          - all
+          - dev
+          - staging
+          - production
+        default: 'all'
+
+env:
+  PULUMI_ACCESS_TOKEN: ${{ secrets.PULUMI_ACCESS_TOKEN }}
+  AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+  AWS_REGION: us-east-1
+  NODE_VERSION: '18'
+
+jobs:
+  detect-drift:
+    name: Detect Infrastructure Drift
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        stack: ${{ fromJson(github.event.inputs.stack == 'all' && '["dev", "staging", "production"]' || format('["{0}"]', github.event.inputs.stack || 'all')) }}
+    
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: infrastructure/pulumi/package-lock.json
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Install Dependencies
+        working-directory: infrastructure/pulumi
+        run: |
+          npm ci
+          npm install -g @pulumi/pulumi
+
+      - name: Pulumi Login
+        run: pulumi login
+
+      - name: Check Stack Drift
+        id: drift
+        working-directory: infrastructure/pulumi
+        run: |
+          if [[ "${{ matrix.stack }}" == "all" ]]; then
+            STACKS=("dev" "staging" "production")
+          else
+            STACKS=("${{ matrix.stack }}")
+          fi
+          
+          DRIFT_DETECTED=false
+          DRIFT_REPORT=""
+          
+          for STACK in "${STACKS[@]}"; do
+            echo "Checking drift for stack: $STACK"
+            pulumi stack select $STACK
+            
+            # Run refresh to detect drift
+            DRIFT_OUTPUT=$(pulumi refresh --diff --json 2>&1 || true)
+            
+            # Check if drift was detected
+            if echo "$DRIFT_OUTPUT" | grep -q "drift"; then
+              DRIFT_DETECTED=true
+              DRIFT_COUNT=$(echo "$DRIFT_OUTPUT" | grep -c "drift" || true)
+              DRIFT_REPORT="$DRIFT_REPORT\n\n## Stack: $STACK\nDrift detected in $DRIFT_COUNT resources"
+              
+              # Extract drifted resources
+              echo "$DRIFT_OUTPUT" | jq -r '.diagnostics[] | select(.severity == "warning" or .severity == "error") | .message' >> drift-$STACK.txt
+            else
+              DRIFT_REPORT="$DRIFT_REPORT\n\n## Stack: $STACK\nNo drift detected ✅"
+            fi
+          done
+          
+          echo "drift_detected=$DRIFT_DETECTED" >> $GITHUB_OUTPUT
+          echo "drift_report<<EOF" >> $GITHUB_OUTPUT
+          echo "$DRIFT_REPORT" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Run Drift Detection Script
+        working-directory: infrastructure/pulumi
+        run: |
+          npm run drift:detect -- --stack ${{ matrix.stack }}
+
+      - name: Generate Drift Report
+        if: steps.drift.outputs.drift_detected == 'true'
+        run: |
+          echo "# Infrastructure Drift Report" > drift-report.md
+          echo "**Date:** $(date)" >> drift-report.md
+          echo "**Stack:** ${{ matrix.stack }}" >> drift-report.md
+          echo "" >> drift-report.md
+          echo "${{ steps.drift.outputs.drift_report }}" >> drift-report.md
+          
+          if [ -f drift-${{ matrix.stack }}.txt ]; then
+            echo "" >> drift-report.md
+            echo "## Detailed Drift Information" >> drift-report.md
+            echo '```' >> drift-report.md
+            cat drift-${{ matrix.stack }}.txt >> drift-report.md
+            echo '```' >> drift-report.md
+          fi
+
+      - name: Create GitHub Issue
+        if: steps.drift.outputs.drift_detected == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const driftReport = fs.readFileSync('drift-report.md', 'utf8');
+            
+            const issue = await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `[Drift Detected] Infrastructure drift in ${{ matrix.stack }} stack`,
+              body: driftReport,
+              labels: ['infrastructure', 'drift', 'urgent', '${{ matrix.stack }}']
+            });
+            
+            console.log(`Created issue #${issue.data.number}`);
+
+      - name: Send Slack Notification
+        if: steps.drift.outputs.drift_detected == 'true'
+        uses: 8398a7/action-slack@v3
+        with:
+          status: custom
+          custom_payload: |
+            {
+              text: "⚠️ Infrastructure Drift Detected",
+              attachments: [{
+                color: 'warning',
+                title: 'Drift Detection Results',
+                fields: [
+                  {
+                    title: 'Stack',
+                    value: '${{ matrix.stack }}',
+                    short: true
+                  },
+                  {
+                    title: 'Status',
+                    value: 'Drift Detected',
+                    short: true
+                  }
+                ],
+                footer: 'Pulumi Drift Detection',
+                ts: Math.floor(Date.now() / 1000)
+              }]
+            }
+          webhook_url: ${{ secrets.SLACK_WEBHOOK }}
+
+      - name: Upload Drift Report
+        if: steps.drift.outputs.drift_detected == 'true'
+        uses: actions/upload-artifact@v3
+        with:
+          name: drift-report-${{ matrix.stack }}
+          path: |
+            drift-report.md
+            drift-${{ matrix.stack }}.txt
+
+  reconcile-drift:
+    name: Reconcile Drift
+    needs: detect-drift
+    if: needs.detect-drift.outputs.drift_detected == 'true'
+    runs-on: ubuntu-latest
+    environment: drift-reconciliation
+    
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: infrastructure/pulumi/package-lock.json
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Install Dependencies
+        working-directory: infrastructure/pulumi
+        run: |
+          npm ci
+          npm install -g @pulumi/pulumi
+
+      - name: Pulumi Login
+        run: pulumi login
+
+      - name: Reconcile Drift
+        working-directory: infrastructure/pulumi
+        run: |
+          echo "Manual approval required for drift reconciliation"
+          echo "Please review the drift report and approve the reconciliation"
+          
+          # This step requires manual approval in the GitHub environment
+          # Once approved, it will run:
+          # pulumi up --yes --message "Automatic drift reconciliation"

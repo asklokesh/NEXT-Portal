@@ -1,0 +1,645 @@
+/**
+ * Advanced Metrics Collection System
+ * 
+ * Production-ready metrics collection with multi-dimensional data,
+ * real-time streaming, aggregation, and platform integration.
+ */
+
+import { EventEmitter } from 'events';
+import { performance } from 'perf_hooks';
+import * as os from 'os';
+import { ObservabilityConfig } from './observability-config';
+
+export interface Metric {
+  name: string;
+  value: number;
+  timestamp: Date;
+  type: 'counter' | 'gauge' | 'histogram' | 'summary';
+  labels: Record<string, string>;
+  metadata?: Record<string, any>;
+}
+
+export interface MetricSeries {
+  name: string;
+  type: string;
+  data: Array<{ timestamp: Date; value: number; labels: Record<string, string> }>;
+}
+
+export interface AggregatedMetric {
+  name: string;
+  aggregationType: 'sum' | 'avg' | 'min' | 'max' | 'count' | 'p50' | 'p95' | 'p99';
+  value: number;
+  timeWindow: string;
+  timestamp: Date;
+  labels: Record<string, string>;
+}
+
+export class MetricsCollector extends EventEmitter {
+  private config: ObservabilityConfig;
+  private metrics: Map<string, Metric[]> = new Map();
+  private aggregatedMetrics: Map<string, AggregatedMetric> = new Map();
+  private collectionInterval?: NodeJS.Timeout;
+  private startTime = Date.now();
+  private isRunning = false;
+  private buffer: Metric[] = [];
+  private bufferSize: number;
+  
+  // Performance tracking
+  private requestCounts = new Map<string, number>();
+  private responseTimes = new Map<string, number[]>();
+  private errorCounts = new Map<string, number>();
+  
+  // Business metrics
+  private businessMetrics = new Map<string, number>();
+  private userMetrics = new Map<string, number>();
+  
+  // System metrics cache
+  private lastSystemMetrics?: any;
+  private systemMetricsCache: any = {};
+  private systemMetricsCacheTime = 0;
+  private readonly SYSTEM_CACHE_TTL = 5000; // 5 seconds
+
+  constructor(config: ObservabilityConfig) {
+    super();
+    this.config = config;
+    this.bufferSize = config.metrics.batchSize || 100;
+    
+    // Initialize metric collection
+    this.initializeDefaultMetrics();
+    
+    // Start background collectors
+    this.setupSystemMetricsCollection();
+    this.setupPerformanceMetricsCollection();
+  }
+
+  /**
+   * Start metrics collection
+   */
+  async start(): Promise<void> {
+    if (this.isRunning) return;
+    
+    this.isRunning = true;
+    
+    // Start periodic collection
+    this.collectionInterval = setInterval(() => {
+      this.collectSystemMetrics();
+      this.collectPerformanceMetrics();
+      this.collectBusinessMetrics();
+      this.processBuffer();
+    }, this.config.metrics.collectionInterval);
+    
+    // Immediate collection
+    await this.collectSystemMetrics();
+    await this.collectPerformanceMetrics();
+    
+    this.emit('started', { timestamp: new Date() });
+    console.log('📊 Metrics Collector started');
+  }
+
+  /**
+   * Stop metrics collection
+   */
+  async stop(): Promise<void> {
+    if (!this.isRunning) return;
+    
+    this.isRunning = false;
+    
+    if (this.collectionInterval) {
+      clearInterval(this.collectionInterval);
+    }
+    
+    // Flush remaining metrics
+    await this.processBuffer();
+    
+    this.emit('stopped', { timestamp: new Date() });
+    console.log('📊 Metrics Collector stopped');
+  }
+
+  /**
+   * Record a metric
+   */
+  recordMetric(name: string, value: number, type: Metric['type'], labels: Record<string, string> = {}): void {
+    const metric: Metric = {
+      name,
+      value,
+      timestamp: new Date(),
+      type,
+      labels: {
+        service: this.config.serviceName,
+        environment: this.config.environment,
+        version: this.config.version,
+        ...labels,
+      },
+    };
+    
+    this.buffer.push(metric);
+    
+    if (this.buffer.length >= this.bufferSize) {
+      this.processBuffer();
+    }
+    
+    this.emit('metric-recorded', metric);
+  }
+
+  /**
+   * Increment a counter
+   */
+  incrementCounter(name: string, value: number = 1, labels: Record<string, string> = {}): void {
+    this.recordMetric(name, value, 'counter', labels);
+  }
+
+  /**
+   * Set a gauge value
+   */
+  setGauge(name: string, value: number, labels: Record<string, string> = {}): void {
+    this.recordMetric(name, value, 'gauge', labels);
+  }
+
+  /**
+   * Record histogram value
+   */
+  recordHistogram(name: string, value: number, labels: Record<string, string> = {}): void {
+    this.recordMetric(name, value, 'histogram', labels);
+  }
+
+  /**
+   * Record HTTP request metrics
+   */
+  recordHttpRequest(method: string, path: string, statusCode: number, responseTime: number): void {
+    const labels = {
+      method,
+      path: this.sanitizePath(path),
+      status_code: statusCode.toString(),
+      status_class: `${Math.floor(statusCode / 100)}xx`,
+    };
+    
+    // Request count
+    this.incrementCounter('http_requests_total', 1, labels);
+    
+    // Response time
+    this.recordHistogram('http_request_duration_ms', responseTime, labels);
+    
+    // Error tracking
+    if (statusCode >= 400) {
+      this.incrementCounter('http_errors_total', 1, labels);
+    }
+    
+    // Track for aggregation
+    const pathKey = `${method}:${path}`;
+    this.requestCounts.set(pathKey, (this.requestCounts.get(pathKey) || 0) + 1);
+    
+    const times = this.responseTimes.get(pathKey) || [];
+    times.push(responseTime);
+    this.responseTimes.set(pathKey, times.slice(-100)); // Keep last 100 measurements
+    
+    if (statusCode >= 400) {
+      this.errorCounts.set(pathKey, (this.errorCounts.get(pathKey) || 0) + 1);
+    }
+  }
+
+  /**
+   * Record database query metrics
+   */
+  recordDatabaseQuery(operation: string, table: string, duration: number, success: boolean): void {
+    const labels = {
+      operation,
+      table,
+      status: success ? 'success' : 'error',
+    };
+    
+    this.incrementCounter('db_queries_total', 1, labels);
+    this.recordHistogram('db_query_duration_ms', duration, labels);
+    
+    if (!success) {
+      this.incrementCounter('db_errors_total', 1, labels);
+    }
+  }
+
+  /**
+   * Record business metrics
+   */
+  recordBusinessMetric(name: string, value: number, labels: Record<string, string> = {}): void {
+    this.businessMetrics.set(name, value);
+    this.recordMetric(`business_${name}`, value, 'gauge', { ...labels, type: 'business' });
+  }
+
+  /**
+   * Record user engagement metrics
+   */
+  recordUserMetric(action: string, userId?: string, labels: Record<string, string> = {}): void {
+    const metricLabels = {
+      action,
+      ...labels,
+      ...(userId ? { user_type: 'identified' } : { user_type: 'anonymous' }),
+    };
+    
+    this.incrementCounter('user_actions_total', 1, metricLabels);
+    
+    // Track unique users (if ID provided)
+    if (userId) {
+      this.userMetrics.set(`active_users_${action}`, (this.userMetrics.get(`active_users_${action}`) || 0) + 1);
+    }
+  }
+
+  /**
+   * Record plugin-specific metrics
+   */
+  recordPluginMetric(pluginName: string, metricName: string, value: number, type: Metric['type'] = 'gauge'): void {
+    const labels = {
+      plugin: pluginName,
+      type: 'plugin',
+    };
+    
+    this.recordMetric(`plugin_${metricName}`, value, type, labels);
+  }
+
+  /**
+   * Record custom application metrics
+   */
+  recordCustomMetric(name: string, value: number, type: Metric['type'] = 'gauge', labels: Record<string, string> = {}): void {
+    this.recordMetric(`custom_${name}`, value, type, { ...labels, type: 'custom' });
+  }
+
+  /**
+   * Get system metrics
+   */
+  async getSystemMetrics(): Promise<any> {
+    const now = Date.now();
+    
+    // Return cached metrics if still valid
+    if (this.systemMetricsCacheTime && (now - this.systemMetricsCacheTime) < this.SYSTEM_CACHE_TTL) {
+      return this.systemMetricsCache;
+    }
+    
+    const metrics = {
+      uptime: process.uptime(),
+      memory: process.memoryUsage(),
+      cpu: await this.getCpuUsage(),
+      system: {
+        loadavg: os.loadavg(),
+        totalmem: os.totalmem(),
+        freemem: os.freemem(),
+        platform: os.platform(),
+        cpuCount: os.cpus().length,
+      },
+      performance: {
+        responseTime: this.getAverageResponseTime(),
+        errorRate: this.getErrorRate(),
+        throughput: this.getThroughput(),
+      },
+      business: Object.fromEntries(this.businessMetrics),
+      users: Object.fromEntries(this.userMetrics),
+    };
+    
+    // Cache the metrics
+    this.systemMetricsCache = metrics;
+    this.systemMetricsCacheTime = now;
+    
+    return metrics;
+  }
+
+  /**
+   * Get metrics by name
+   */
+  getMetrics(name?: string): Metric[] {
+    if (name) {
+      return this.metrics.get(name) || [];
+    }
+    
+    const allMetrics: Metric[] = [];
+    for (const metricArray of this.metrics.values()) {
+      allMetrics.push(...metricArray);
+    }
+    return allMetrics;
+  }
+
+  /**
+   * Get aggregated metrics
+   */
+  getAggregatedMetrics(timeWindow: string = '5m'): AggregatedMetric[] {
+    return Array.from(this.aggregatedMetrics.values());
+  }
+
+  /**
+   * Export metrics for Prometheus format
+   */
+  exportPrometheusMetrics(): string {
+    const lines: string[] = [];
+    const metricGroups = new Map<string, Metric[]>();
+    
+    // Group metrics by name
+    for (const metricArray of this.metrics.values()) {
+      for (const metric of metricArray) {
+        if (!metricGroups.has(metric.name)) {
+          metricGroups.set(metric.name, []);
+        }
+        metricGroups.get(metric.name)!.push(metric);
+      }
+    }
+    
+    // Export each metric group
+    for (const [name, metrics] of metricGroups) {
+      const metric = metrics[0]; // Use first metric for metadata
+      
+      // Add help and type
+      lines.push(`# HELP ${name} ${this.getMetricDescription(name)}`);
+      lines.push(`# TYPE ${name} ${metric.type}`);
+      
+      // Add metric values
+      for (const m of metrics) {
+        const labelStr = Object.entries(m.labels)
+          .map(([key, value]) => `${key}="${value}"`)
+          .join(',');
+        
+        lines.push(`${name}{${labelStr}} ${m.value} ${m.timestamp.getTime()}`);
+      }
+    }
+    
+    return lines.join('\n');
+  }
+
+  /**
+   * Initialize default metrics
+   */
+  private initializeDefaultMetrics(): void {
+    // Service info
+    this.setGauge('service_info', 1, {
+      name: this.config.serviceName,
+      version: this.config.version,
+      environment: this.config.environment,
+    });
+    
+    // Start time
+    this.setGauge('service_start_time_seconds', this.startTime / 1000);
+  }
+
+  /**
+   * Setup system metrics collection
+   */
+  private setupSystemMetricsCollection(): void {
+    // Memory metrics
+    setInterval(() => {
+      const memUsage = process.memoryUsage();
+      this.setGauge('nodejs_memory_heap_used_bytes', memUsage.heapUsed);
+      this.setGauge('nodejs_memory_heap_total_bytes', memUsage.heapTotal);
+      this.setGauge('nodejs_memory_external_bytes', memUsage.external);
+      this.setGauge('nodejs_memory_rss_bytes', memUsage.rss);
+    }, 10000); // Every 10 seconds
+    
+    // System metrics
+    setInterval(() => {
+      const load = os.loadavg();
+      this.setGauge('system_load_1m', load[0]);
+      this.setGauge('system_load_5m', load[1]);
+      this.setGauge('system_load_15m', load[2]);
+      
+      this.setGauge('system_memory_total_bytes', os.totalmem());
+      this.setGauge('system_memory_free_bytes', os.freemem());
+      this.setGauge('system_memory_usage_percent', ((os.totalmem() - os.freemem()) / os.totalmem()) * 100);
+    }, 30000); // Every 30 seconds
+  }
+
+  /**
+   * Setup performance metrics collection
+   */
+  private setupPerformanceMetricsCollection(): void {
+    // Event loop lag
+    setInterval(() => {
+      const start = performance.now();
+      setImmediate(() => {
+        const lag = performance.now() - start;
+        this.setGauge('nodejs_eventloop_lag_ms', lag);
+      });
+    }, 5000); // Every 5 seconds
+  }
+
+  /**
+   * Collect system metrics
+   */
+  private async collectSystemMetrics(): Promise<void> {
+    try {
+      // Node.js metrics
+      this.setGauge('nodejs_process_uptime_seconds', process.uptime());
+      this.setGauge('nodejs_active_handles', process._getActiveHandles().length);
+      this.setGauge('nodejs_active_requests', process._getActiveRequests().length);
+      
+      // CPU usage
+      const cpuUsage = await this.getCpuUsage();
+      if (cpuUsage !== null) {
+        this.setGauge('nodejs_cpu_usage_percent', cpuUsage);
+      }
+      
+    } catch (error) {
+      this.emit('collection-error', { error, type: 'system' });
+    }
+  }
+
+  /**
+   * Collect performance metrics
+   */
+  private collectPerformanceMetrics(): void {
+    try {
+      // Calculate aggregated performance metrics
+      for (const [pathKey, times] of this.responseTimes) {
+        if (times.length > 0) {
+          const sorted = [...times].sort((a, b) => a - b);
+          const p50 = sorted[Math.floor(sorted.length * 0.5)];
+          const p95 = sorted[Math.floor(sorted.length * 0.95)];
+          const p99 = sorted[Math.floor(sorted.length * 0.99)];
+          const avg = times.reduce((sum, t) => sum + t, 0) / times.length;
+          
+          const [method, path] = pathKey.split(':', 2);
+          const labels = { method, path };
+          
+          this.setGauge('http_request_duration_p50_ms', p50, labels);
+          this.setGauge('http_request_duration_p95_ms', p95, labels);
+          this.setGauge('http_request_duration_p99_ms', p99, labels);
+          this.setGauge('http_request_duration_avg_ms', avg, labels);
+        }
+      }
+      
+    } catch (error) {
+      this.emit('collection-error', { error, type: 'performance' });
+    }
+  }
+
+  /**
+   * Collect business metrics
+   */
+  private collectBusinessMetrics(): void {
+    try {
+      // Plugin metrics
+      this.setGauge('plugins_total_installed', this.businessMetrics.get('plugins_installed') || 0);
+      this.setGauge('plugins_total_active', this.businessMetrics.get('plugins_active') || 0);
+      this.setGauge('templates_total', this.businessMetrics.get('templates_total') || 0);
+      this.setGauge('users_active_daily', this.businessMetrics.get('users_active_daily') || 0);
+      
+    } catch (error) {
+      this.emit('collection-error', { error, type: 'business' });
+    }
+  }
+
+  /**
+   * Process metrics buffer
+   */
+  private processBuffer(): void {
+    if (this.buffer.length === 0) return;
+    
+    const metricsToProcess = [...this.buffer];
+    this.buffer = [];
+    
+    for (const metric of metricsToProcess) {
+      // Store metric
+      if (!this.metrics.has(metric.name)) {
+        this.metrics.set(metric.name, []);
+      }
+      
+      const metricArray = this.metrics.get(metric.name)!;
+      metricArray.push(metric);
+      
+      // Keep only recent metrics (configurable retention)
+      const maxAge = 3600000; // 1 hour in milliseconds
+      const cutoffTime = Date.now() - maxAge;
+      
+      const filteredMetrics = metricArray.filter(m => m.timestamp.getTime() > cutoffTime);
+      this.metrics.set(metric.name, filteredMetrics);
+    }
+    
+    // Emit processed metrics
+    this.emit('metrics-processed', { count: metricsToProcess.length, timestamp: new Date() });
+  }
+
+  /**
+   * Get CPU usage percentage
+   */
+  private async getCpuUsage(): Promise<number | null> {
+    return new Promise((resolve) => {
+      const startUsage = process.cpuUsage();
+      const startTime = Date.now();
+      
+      setTimeout(() => {
+        const currentUsage = process.cpuUsage(startUsage);
+        const currentTime = Date.now();
+        
+        const totalTime = (currentTime - startTime) * 1000; // Convert to microseconds
+        const totalUsage = currentUsage.user + currentUsage.system;
+        
+        const usage = (totalUsage / totalTime) * 100;
+        resolve(Math.min(usage, 100)); // Cap at 100%
+      }, 100);
+    });
+  }
+
+  /**
+   * Get average response time
+   */
+  private getAverageResponseTime(): number {
+    const allTimes: number[] = [];
+    for (const times of this.responseTimes.values()) {
+      allTimes.push(...times);
+    }
+    
+    return allTimes.length > 0 
+      ? allTimes.reduce((sum, time) => sum + time, 0) / allTimes.length 
+      : 0;
+  }
+
+  /**
+   * Get error rate percentage
+   */
+  private getErrorRate(): number {
+    const totalRequests = Array.from(this.requestCounts.values()).reduce((sum, count) => sum + count, 0);
+    const totalErrors = Array.from(this.errorCounts.values()).reduce((sum, count) => sum + count, 0);
+    
+    return totalRequests > 0 ? (totalErrors / totalRequests) * 100 : 0;
+  }
+
+  /**
+   * Get throughput (requests per second)
+   */
+  private getThroughput(): number {
+    const totalRequests = Array.from(this.requestCounts.values()).reduce((sum, count) => sum + count, 0);
+    const uptime = process.uptime();
+    
+    return uptime > 0 ? totalRequests / uptime : 0;
+  }
+
+  /**
+   * Sanitize path for metrics (remove dynamic segments)
+   */
+  private sanitizePath(path: string): string {
+    return path
+      .replace(/\/[0-9]+/g, '/:id')
+      .replace(/\/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}/gi, '/:uuid')
+      .replace(/\?.+/, ''); // Remove query parameters
+  }
+
+  /**
+   * Get metric description for Prometheus
+   */
+  private getMetricDescription(name: string): string {
+    const descriptions: Record<string, string> = {
+      'http_requests_total': 'Total number of HTTP requests',
+      'http_request_duration_ms': 'HTTP request duration in milliseconds',
+      'http_errors_total': 'Total number of HTTP errors',
+      'nodejs_memory_heap_used_bytes': 'Node.js heap memory used',
+      'nodejs_memory_heap_total_bytes': 'Node.js heap memory total',
+      'nodejs_process_uptime_seconds': 'Node.js process uptime in seconds',
+      'system_memory_usage_percent': 'System memory usage percentage',
+      'plugins_total_installed': 'Total number of installed plugins',
+      'service_info': 'Service information',
+    };
+    
+    return descriptions[name] || `Custom metric: ${name}`;
+  }
+
+  /**
+   * Get health status
+   */
+  async getHealth(): Promise<{ status: string; lastCheck: Date; details?: string }> {
+    try {
+      const metrics = await this.getSystemMetrics();
+      
+      // Check if metrics collection is healthy
+      const isHealthy = this.isRunning && 
+                       metrics.memory.heapUsed < metrics.memory.heapTotal * 0.9 &&
+                       metrics.cpu < 95;
+      
+      return {
+        status: isHealthy ? 'healthy' : 'degraded',
+        lastCheck: new Date(),
+        details: isHealthy ? undefined : 'High resource usage detected',
+      };
+    } catch (error) {
+      return {
+        status: 'unhealthy',
+        lastCheck: new Date(),
+        details: error.message,
+      };
+    }
+  }
+
+  /**
+   * Update configuration
+   */
+  async updateConfig(config: ObservabilityConfig): Promise<void> {
+    this.config = config;
+    this.bufferSize = config.metrics.batchSize || 100;
+    
+    // Restart collection with new interval if running
+    if (this.isRunning) {
+      if (this.collectionInterval) {
+        clearInterval(this.collectionInterval);
+      }
+      
+      this.collectionInterval = setInterval(() => {
+        this.collectSystemMetrics();
+        this.collectPerformanceMetrics();
+        this.collectBusinessMetrics();
+        this.processBuffer();
+      }, this.config.metrics.collectionInterval);
+    }
+  }
+}
+
+export default MetricsCollector;

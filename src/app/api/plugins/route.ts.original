@@ -1,0 +1,139 @@
+import { NextRequest, NextResponse } from 'next/server';
+import { pluginManager } from '@/lib/backstage/plugin-manager';
+
+export async function GET(req: NextRequest) {
+  try {
+    // Fetch available plugins from npm registry
+    const searchParams = new URL(req.url).searchParams;
+    const query = searchParams.get('search') || '@backstage/plugin-';
+    const searchQuery = query.includes('@backstage') ? query : `@backstage/plugin-${query}`;
+    
+    // Fetch from npm registry
+    const response = await fetch(
+      `https://registry.npmjs.org/-/v1/search?text=${encodeURIComponent(searchQuery)}&size=250`,
+      { cache: 'no-store' }
+    );
+    
+    if (!response.ok) {
+      throw new Error('Failed to fetch from npm registry');
+    }
+    
+    const data = await response.json();
+    
+    // Filter and format Backstage plugins
+    const plugins = data.objects
+      .filter((pkg: any) => 
+        pkg.package.name.startsWith('@backstage/plugin-') ||
+        pkg.package.keywords?.includes('backstage-plugin')
+      )
+      .map((item: any) => {
+        const pkg = item.package;
+        return {
+          id: pkg.name.replace('@backstage/plugin-', ''),
+          name: pkg.name,
+          title: pkg.name.replace('@backstage/plugin-', '').replace(/-/g, ' ').replace(/\b\w/g, (l: string) => l.toUpperCase()),
+          description: pkg.description || 'No description available',
+          version: pkg.version,
+          author: pkg.author?.name || pkg.maintainers?.[0]?.name || 'Backstage Community',
+          category: categorizePlugin(pkg.name, pkg.keywords || []),
+          tags: pkg.keywords || [],
+          downloads: item.downloads?.weekly || 0,
+          stars: Math.round((item.score?.final || 0) * 1000),
+          lastUpdated: pkg.date,
+          npm: `https://www.npmjs.com/package/${pkg.name}`,
+          homepage: pkg.links?.homepage || pkg.links?.repository,
+          repository: pkg.links?.repository,
+          installed: false, // Will be checked separately
+          enabled: false,
+          configurable: true
+        };
+      })
+      .sort((a: any, b: any) => b.downloads - a.downloads); // Sort by popularity
+    
+    // Get installed plugins and update status
+    // Temporarily disabled for testing
+    // try {
+    //   const installedPlugins = await pluginManager.getInstalledPlugins();
+    //   plugins.forEach((plugin: any) => {
+    //     const installed = installedPlugins.find(p => p.id === plugin.id);
+    //     if (installed) {
+    //       plugin.installed = true;
+    //       plugin.enabled = installed.enabled;
+    //       plugin.installedVersion = installed.version;
+    //     }
+    //   });
+    // } catch (error) {
+    //   console.log('Could not check installed plugins:', error);
+    // }
+
+    return NextResponse.json({
+      plugins,
+      total: plugins.length
+    });
+  } catch (error) {
+    console.error('Failed to fetch plugins:', error);
+    return NextResponse.json(
+      { error: 'Failed to fetch plugins' },
+      { status: 500 }
+    );
+  }
+}
+
+function categorizePlugin(name: string, keywords: string[]): string {
+  const keywordStr = keywords.join(' ').toLowerCase();
+  const nameStr = name.toLowerCase();
+  
+  if (nameStr.includes('catalog') || keywordStr.includes('catalog')) return 'catalog';
+  if (nameStr.includes('kubernetes') || nameStr.includes('k8s') || keywordStr.includes('kubernetes')) return 'infrastructure';
+  if (nameStr.includes('github') || nameStr.includes('gitlab') || nameStr.includes('bitbucket')) return 'source-control';
+  if (nameStr.includes('jenkins') || nameStr.includes('circleci') || nameStr.includes('ci')) return 'ci-cd';
+  if (nameStr.includes('pagerduty') || nameStr.includes('opsgenie') || keywordStr.includes('incident')) return 'monitoring';
+  if (nameStr.includes('cost') || nameStr.includes('finops')) return 'cost-management';
+  if (nameStr.includes('security') || nameStr.includes('vault') || keywordStr.includes('security')) return 'security';
+  if (nameStr.includes('analytics') || nameStr.includes('insights')) return 'analytics';
+  if (nameStr.includes('docs') || nameStr.includes('techdocs')) return 'documentation';
+  
+  return 'other';
+}
+
+export async function POST(req: NextRequest) {
+  try {
+    const body = await req.json();
+    const { action, pluginId, version, config } = body;
+
+    switch (action) {
+      case 'install':
+        await pluginManager.installPlugin(pluginId, version);
+        return NextResponse.json({ 
+          success: true, 
+          message: `Plugin ${pluginId} installed successfully` 
+        });
+
+      case 'configure':
+        await pluginManager.configurePlugin(pluginId, config);
+        return NextResponse.json({ 
+          success: true, 
+          message: `Plugin ${pluginId} configured successfully` 
+        });
+
+      case 'uninstall':
+        await pluginManager.uninstallPlugin(pluginId);
+        return NextResponse.json({ 
+          success: true, 
+          message: `Plugin ${pluginId} uninstalled successfully` 
+        });
+
+      default:
+        return NextResponse.json(
+          { error: 'Invalid action' },
+          { status: 400 }
+        );
+    }
+  } catch (error) {
+    console.error('Plugin operation failed:', error);
+    return NextResponse.json(
+      { error: 'Plugin operation failed' },
+      { status: 500 }
+    );
+  }
+}

@@ -1,0 +1,567 @@
+# Plugin Orchestrator Helm Chart Values
+# Production-ready configuration for enterprise plugin deployment system
+
+# Global configuration
+global:
+  imageRegistry: ""
+  imagePullSecrets: []
+  storageClass: ""
+  postgresql:
+    auth:
+      postgresPassword: ""
+      username: plugin_orchestrator
+      password: ""
+      database: plugin_orchestrator
+  redis:
+    auth:
+      password: ""
+
+# Plugin Orchestrator application configuration
+pluginOrchestrator:
+  enabled: true
+  image:
+    registry: ghcr.io
+    repository: your-org/saas-idp/plugin-orchestrator
+    tag: "1.0.0"
+    pullPolicy: IfNotPresent
+    pullSecrets: []
+  
+  replicaCount: 3
+  
+  # Container configuration
+  containerPorts:
+    http: 8080
+    health: 8081
+    metrics: 9090
+  
+  # Resource requirements
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: 2000m
+      memory: 4Gi
+  
+  # Node selection
+  nodeSelector: {}
+  tolerations: []
+  affinity:
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            labelSelector:
+              matchExpressions:
+                - key: app.kubernetes.io/name
+                  operator: In
+                  values:
+                    - plugin-orchestrator
+            topologyKey: kubernetes.io/hostname
+  
+  # Security context
+  podSecurityContext:
+    fsGroup: 10001
+    runAsNonRoot: true
+    runAsUser: 10001
+    runAsGroup: 10001
+    seccompProfile:
+      type: RuntimeDefault
+  
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+    readOnlyRootFilesystem: true
+    runAsNonRoot: true
+    runAsUser: 10001
+  
+  # Environment variables
+  env:
+    NODE_ENV: production
+    LOG_LEVEL: info
+    KUBERNETES_IN_CLUSTER: "true"
+    PROMETHEUS_ENABLED: "true"
+    TRACING_ENABLED: "true"
+    SECURITY_TRIVY_ENABLED: "true"
+  
+  # Configuration
+  config:
+    pipeline:
+      maxConcurrentInstallations: 10
+      defaultStrategy: "rolling-update"
+      retryPolicy:
+        maxRetries: 3
+        backoffMultiplier: 2
+        maxBackoffTime: 300000
+      timeouts:
+        installation: 1800000  # 30 minutes
+        healthCheck: 60000     # 1 minute
+        rollback: 300000       # 5 minutes
+    
+    kubernetes:
+      inCluster: true
+      defaultNamespace: "plugin-pipeline"
+    
+    docker:
+      registryUrl: "ghcr.io"
+      buildTimeout: 1800000  # 30 minutes
+      maxConcurrentBuilds: 5
+    
+    serviceMesh:
+      provider: "istio"
+      config: {}
+    
+    monitoring:
+      prometheus:
+        enabled: true
+        scrapeInterval: "30s"
+        retentionTime: "15d"
+      tracing:
+        enabled: true
+        provider: "jaeger"
+        endpoint: "http://jaeger-collector:14268/api/traces"
+        samplingRate: 0.1
+      logging:
+        enabled: true
+        provider: "loki"
+        endpoint: "http://loki:3100"
+        retentionDays: 30
+      alerting:
+        enabled: true
+        provider: "alertmanager"
+        channels: []
+    
+    security:
+      scanners:
+        trivy:
+          enabled: true
+          timeout: "5m"
+        snyk:
+          enabled: false
+          token: ""
+      policies: []
+      thresholds:
+        critical: 0
+        high: 5
+        medium: 20
+        low: 50
+      compliance:
+        frameworks: ["SOC2", "GDPR"]
+    
+    registry:
+      registries:
+        - name: "npm"
+          type: "npm"
+          url: "https://registry.npmjs.org"
+        - name: "docker"
+          type: "docker"
+          url: "https://index.docker.io/v1/"
+        - name: "ghcr"
+          type: "docker"
+          url: "https://ghcr.io"
+      caching:
+        enabled: true
+        ttl: 3600
+        maxSize: 1000
+      validation:
+        schemaValidation: true
+        securityScanning: true
+        compatibilityChecks: true
+
+# Service configuration
+service:
+  type: ClusterIP
+  ports:
+    http: 8080
+    health: 8081
+    metrics: 9090
+  annotations: {}
+  labels: {}
+
+# Ingress configuration
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: plugin-orchestrator.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+# Health checks
+healthChecks:
+  livenessProbe:
+    enabled: true
+    httpGet:
+      path: /health/liveness
+      port: health
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+    successThreshold: 1
+  
+  readinessProbe:
+    enabled: true
+    httpGet:
+      path: /health/readiness
+      port: health
+    initialDelaySeconds: 15
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 3
+    successThreshold: 1
+  
+  startupProbe:
+    enabled: true
+    httpGet:
+      path: /health/startup
+      port: health
+    initialDelaySeconds: 10
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 30
+    successThreshold: 1
+
+# Autoscaling
+autoscaling:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 60
+        - type: Pods
+          value: 2
+          periodSeconds: 60
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Percent
+          value: 50
+          periodSeconds: 60
+
+# Pod Disruption Budget
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 2
+
+# Network Policies
+networkPolicy:
+  enabled: true
+  ingress:
+    enabled: true
+    rules:
+      - from:
+          - namespaceSelector:
+              matchLabels:
+                name: plugin-pipeline
+        ports:
+          - protocol: TCP
+            port: 8080
+      - from:
+          - namespaceSelector:
+              matchLabels:
+                name: monitoring
+        ports:
+          - protocol: TCP
+            port: 9090
+  egress:
+    enabled: true
+    rules:
+      - to: []
+        ports:
+          - protocol: TCP
+            port: 443  # HTTPS
+          - protocol: TCP
+            port: 53   # DNS
+          - protocol: UDP
+            port: 53   # DNS
+
+# Volumes and persistence
+persistence:
+  enabled: true
+  size: 10Gi
+  accessMode: ReadWriteOnce
+  storageClass: ""
+  annotations: {}
+
+# Service Account
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+  automountServiceAccountToken: true
+
+# RBAC
+rbac:
+  create: true
+  rules:
+    - apiGroups: [""]
+      resources: ["pods", "services", "endpoints", "persistentvolumeclaims", "events", "configmaps", "secrets", "namespaces"]
+      verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+    - apiGroups: ["apps"]
+      resources: ["deployments", "daemonsets", "replicasets", "statefulsets"]
+      verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+    - apiGroups: ["batch"]
+      resources: ["jobs", "cronjobs"]
+      verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+    - apiGroups: ["networking.k8s.io"]
+      resources: ["ingresses", "networkpolicies"]
+      verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+    - apiGroups: ["autoscaling"]
+      resources: ["horizontalpodautoscalers"]
+      verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+    - apiGroups: ["policy"]
+      resources: ["poddisruptionbudgets"]
+      verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+    - apiGroups: ["metrics.k8s.io"]
+      resources: ["pods", "nodes"]
+      verbs: ["get", "list"]
+    - apiGroups: ["networking.istio.io"]
+      resources: ["virtualservices", "destinationrules", "gateways"]
+      verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+    - apiGroups: ["security.istio.io"]
+      resources: ["peerauthentications", "authorizationpolicies"]
+      verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+# PostgreSQL database configuration
+postgresql:
+  enabled: true
+  auth:
+    username: plugin_orchestrator
+    database: plugin_orchestrator
+    existingSecret: ""
+  primary:
+    persistence:
+      enabled: true
+      size: 50Gi
+      storageClass: ""
+    resources:
+      requests:
+        cpu: 500m
+        memory: 1Gi
+      limits:
+        cpu: 2000m
+        memory: 4Gi
+  readReplicas:
+    replicaCount: 1
+    persistence:
+      enabled: true
+      size: 50Gi
+    resources:
+      requests:
+        cpu: 250m
+        memory: 512Mi
+      limits:
+        cpu: 1000m
+        memory: 2Gi
+  metrics:
+    enabled: true
+    serviceMonitor:
+      enabled: true
+
+# Redis configuration
+redis:
+  enabled: true
+  architecture: replication
+  auth:
+    enabled: true
+    existingSecret: ""
+  master:
+    count: 1
+    persistence:
+      enabled: true
+      size: 8Gi
+    resources:
+      requests:
+        cpu: 250m
+        memory: 256Mi
+      limits:
+        cpu: 1000m
+        memory: 1Gi
+  replica:
+    replicaCount: 2
+    persistence:
+      enabled: true
+      size: 8Gi
+    resources:
+      requests:
+        cpu: 250m
+        memory: 256Mi
+      limits:
+        cpu: 1000m
+        memory: 1Gi
+  metrics:
+    enabled: true
+    serviceMonitor:
+      enabled: true
+
+# Monitoring configuration
+monitoring:
+  enabled: true
+  
+  prometheus:
+    enabled: true
+    
+  grafana:
+    enabled: true
+    adminPassword: ""
+    dashboards:
+      enabled: true
+      configMapName: plugin-orchestrator-dashboards
+    datasources:
+      enabled: true
+    sidecar:
+      dashboards:
+        enabled: true
+        label: grafana_dashboard
+      datasources:
+        enabled: true
+        label: grafana_datasource
+  
+  serviceMonitor:
+    enabled: true
+    namespace: ""
+    labels: {}
+    scrapeInterval: 30s
+    scrapeTimeout: 10s
+    path: /metrics
+    
+  prometheusRule:
+    enabled: true
+    namespace: ""
+    labels: {}
+    rules:
+      - alert: PluginOrchestratorDown
+        expr: up{job="plugin-orchestrator"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Plugin Orchestrator is down"
+          description: "Plugin Orchestrator has been down for more than 1 minute."
+      
+      - alert: PluginOrchestratorHighMemoryUsage
+        expr: (container_memory_usage_bytes{pod=~"plugin-orchestrator-.*"} / container_spec_memory_limit_bytes) > 0.9
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Plugin Orchestrator high memory usage"
+          description: "Plugin Orchestrator memory usage is above 90% for more than 2 minutes."
+      
+      - alert: PluginOrchestratorHighCPUUsage
+        expr: rate(container_cpu_usage_seconds_total{pod=~"plugin-orchestrator-.*"}[5m]) > 0.8
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Plugin Orchestrator high CPU usage"
+          description: "Plugin Orchestrator CPU usage is above 80% for more than 5 minutes."
+      
+      - alert: PluginInstallationFailureRate
+        expr: rate(plugin_installations_failed_total[5m]) / rate(plugin_installations_total[5m]) > 0.1
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "High plugin installation failure rate"
+          description: "Plugin installation failure rate is above 10% for more than 2 minutes."
+
+# Tracing configuration
+tracing:
+  enabled: true
+  
+  jaeger:
+    enabled: true
+    collector:
+      service:
+        type: ClusterIP
+    query:
+      ingress:
+        enabled: false
+    storage:
+      type: memory
+
+# Logging configuration
+logging:
+  enabled: true
+  
+  loki:
+    enabled: false  # Set to true to deploy Loki
+  
+  promtail:
+    enabled: true
+    config:
+      clients:
+        - url: http://loki:3100/loki/api/v1/push
+
+# Security configuration
+security:
+  podSecurityPolicy:
+    enabled: false
+  
+  podSecurityStandards:
+    enabled: true
+    enforce: "restricted"
+    audit: "restricted"
+    warn: "restricted"
+  
+  networkPolicy:
+    enabled: true
+  
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 10001
+    fsGroup: 10001
+
+# Backup configuration
+backup:
+  enabled: false
+  schedule: "0 2 * * *"  # Daily at 2 AM
+  retention: 30  # days
+  storage:
+    type: "s3"
+    s3:
+      bucket: ""
+      region: ""
+      accessKey: ""
+      secretKey: ""
+
+# Multi-cluster configuration
+multiCluster:
+  enabled: false
+  clusters: []
+
+# External secrets
+externalSecrets:
+  enabled: false
+  secretStore:
+    provider: "vault"
+    vault:
+      server: ""
+      path: ""
+      version: "v2"
+
+# Custom resource definitions
+customResources:
+  enabled: true
+  
+# Feature flags
+featureFlags:
+  enableBetaFeatures: false
+  enableExperimentalFeatures: false
+  
+# Environment-specific overrides (will be overridden by environment-specific values files)
+environment: "production"

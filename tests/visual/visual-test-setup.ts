@@ -1,0 +1,385 @@
+/**
+ * Global Setup for Visual Regression Tests
+ * 
+ * This setup ensures consistent test environment and baseline data
+ * for reliable visual regression testing.
+ */
+import { chromium, FullConfig } from '@playwright/test';
+import { spawn, ChildProcess } from 'child_process';
+import { promises as fs } from 'fs';
+import path from 'path';
+
+let serverProcess: ChildProcess | null = null;
+
+async function waitForServer(url: string, timeout: number = 30000): Promise<void> {
+  const start = Date.now();
+  
+  while (Date.now() - start < timeout) {
+    try {
+      const response = await fetch(url);
+      if (response.ok) {
+        return;
+      }
+    } catch {
+      // Server not ready yet
+    }
+    
+    await new Promise(resolve => setTimeout(resolve, 1000));
+  }
+  
+  throw new Error(`Server at ${url} did not become ready within ${timeout}ms`);
+}
+
+async function setupTestDatabase(): Promise<void> {
+  // Import Prisma dynamically to avoid issues during setup
+  const { PrismaClient } = await import('@prisma/client');
+  
+  const prisma = new PrismaClient({
+    datasources: {
+      db: {
+        url: process.env.TEST_DATABASE_URL || process.env.DATABASE_URL,
+      },
+    },
+  });
+
+  try {
+    // Clean existing data
+    await prisma.pluginInstallation.deleteMany();
+    await prisma.pluginDependency.deleteMany();
+    await prisma.plugin.deleteMany();
+    await prisma.user.deleteMany();
+
+    // Create test users
+    await prisma.user.create({
+      data: {
+        id: 'visual-test-user',
+        name: 'Visual Test User',
+        email: 'visual.test@example.com',
+        role: 'USER',
+      },
+    });
+
+    await prisma.user.create({
+      data: {
+        id: 'visual-test-admin',
+        name: 'Visual Test Admin',
+        email: 'visual.admin@example.com',
+        role: 'ADMIN',
+      },
+    });
+
+    // Create comprehensive test plugin data for visual testing
+    const testPlugins = [
+      {
+        id: 'visual-api-docs-plugin',
+        name: 'API Documentation Generator',
+        version: '2.1.0',
+        description: 'Automatically generate beautiful API documentation from OpenAPI specifications with interactive examples and testing capabilities.',
+        author: 'Backstage Team',
+        category: 'Documentation',
+        tags: ['api', 'docs', 'openapi', 'swagger', 'documentation'],
+        icon: 'file-text',
+        downloadCount: 15420,
+        rating: 4.8,
+        reviews: 127,
+        compatibility: ['1.20.0', '1.21.0', '1.22.0'],
+        lastUpdated: new Date('2024-01-15T10:00:00Z'),
+        size: '3.2 MB',
+        license: 'Apache-2.0',
+        homepage: 'https://docs.example.com/api-plugin',
+        repository: 'https://github.com/backstage/api-docs-plugin',
+        config: {
+          required: false,
+          schema: {
+            type: 'object',
+            properties: {
+              apiUrl: {
+                type: 'string',
+                format: 'uri',
+                description: 'Base URL for your API',
+              },
+              theme: {
+                type: 'string',
+                enum: ['light', 'dark', 'auto'],
+                default: 'auto',
+              },
+            },
+          },
+        },
+      },
+      {
+        id: 'visual-monitoring-plugin',
+        name: 'System Health Monitor',
+        version: '1.5.3',
+        description: 'Comprehensive monitoring solution with real-time dashboards, alerting, and performance metrics tracking for all your services.',
+        author: 'Monitoring Inc.',
+        category: 'Monitoring',
+        tags: ['monitoring', 'health', 'alerts', 'dashboard', 'metrics'],
+        icon: 'activity',
+        downloadCount: 8932,
+        rating: 4.6,
+        reviews: 89,
+        compatibility: ['1.21.0', '1.22.0'],
+        lastUpdated: new Date('2024-01-10T15:30:00Z'),
+        size: '5.7 MB',
+        license: 'MIT',
+        homepage: 'https://monitor.example.com',
+        repository: 'https://github.com/monitoring-inc/health-plugin',
+      },
+      {
+        id: 'visual-security-scanner',
+        name: 'Security Vulnerability Scanner',
+        version: '3.0.1',
+        description: 'Advanced security scanning plugin that identifies vulnerabilities in your codebase and dependencies with detailed remediation guidance.',
+        author: 'SecureOps',
+        category: 'Security',
+        tags: ['security', 'vulnerability', 'scanning', 'compliance', 'sast'],
+        icon: 'shield',
+        downloadCount: 12456,
+        rating: 4.9,
+        reviews: 203,
+        compatibility: ['1.20.0', '1.21.0', '1.22.0'],
+        lastUpdated: new Date('2024-01-12T09:15:00Z'),
+        size: '8.1 MB',
+        license: 'GPL-3.0',
+        homepage: 'https://secureops.example.com',
+        repository: 'https://github.com/secureops/scanner-plugin',
+        config: {
+          required: true,
+          schema: {
+            type: 'object',
+            properties: {
+              scanDepth: {
+                type: 'string',
+                enum: ['shallow', 'deep', 'comprehensive'],
+                default: 'deep',
+              },
+              excludePatterns: {
+                type: 'array',
+                items: { type: 'string' },
+              },
+            },
+            required: ['scanDepth'],
+          },
+        },
+      },
+      {
+        id: 'visual-ci-cd-plugin',
+        name: 'CI/CD Pipeline Integration',
+        version: '1.8.2',
+        description: 'Seamlessly integrate with popular CI/CD platforms including Jenkins, GitLab CI, GitHub Actions, and Azure DevOps.',
+        author: 'DevOps Solutions',
+        category: 'CI/CD',
+        tags: ['ci', 'cd', 'pipeline', 'jenkins', 'github-actions', 'gitlab'],
+        icon: 'git-branch',
+        downloadCount: 7823,
+        rating: 4.4,
+        reviews: 156,
+        compatibility: ['1.21.0', '1.22.0'],
+        lastUpdated: new Date('2024-01-08T11:45:00Z'),
+        size: '4.5 MB',
+        license: 'BSD-3-Clause',
+        homepage: 'https://devops.example.com/ci-cd',
+        repository: 'https://github.com/devops-solutions/cicd-plugin',
+      },
+      {
+        id: 'visual-database-plugin',
+        name: 'Database Schema Manager',
+        version: '2.3.0',
+        description: 'Visualize and manage database schemas with entity relationship diagrams, migration tracking, and data lineage visualization.',
+        author: 'Data Team',
+        category: 'Database',
+        tags: ['database', 'schema', 'migration', 'erd', 'sql'],
+        icon: 'database',
+        downloadCount: 5634,
+        rating: 4.2,
+        reviews: 67,
+        compatibility: ['1.20.0', '1.21.0'],
+        lastUpdated: new Date('2024-01-05T14:20:00Z'),
+        size: '6.3 MB',
+        license: 'MIT',
+        homepage: 'https://data.example.com/schema',
+        repository: 'https://github.com/data-team/schema-plugin',
+      },
+      {
+        id: 'visual-analytics-plugin',
+        name: 'Advanced Analytics Dashboard',
+        version: '1.2.5',
+        description: 'Create stunning data visualizations and interactive dashboards with support for multiple data sources and real-time updates.',
+        author: 'Analytics Corp',
+        category: 'Analytics',
+        tags: ['analytics', 'dashboard', 'visualization', 'charts', 'reports'],
+        icon: 'bar-chart-3',
+        downloadCount: 9876,
+        rating: 4.7,
+        reviews: 142,
+        compatibility: ['1.21.0', '1.22.0'],
+        lastUpdated: new Date('2024-01-14T16:30:00Z'),
+        size: '7.8 MB',
+        license: 'Commercial',
+        homepage: 'https://analytics.example.com',
+        repository: 'https://github.com/analytics-corp/dashboard-plugin',
+      },
+    ];
+
+    // Create plugins with realistic data
+    for (const plugin of testPlugins) {
+      await prisma.plugin.create({ data: plugin });
+    }
+
+    // Create some plugin installations
+    await prisma.pluginInstallation.createMany({
+      data: [
+        {
+          id: 'visual-install-1',
+          pluginId: 'visual-api-docs-plugin',
+          status: 'installed',
+          version: '2.1.0',
+          installedAt: new Date('2024-01-15T12:00:00Z'),
+          installedBy: 'visual-test-user',
+          config: { apiUrl: 'https://api.example.com', theme: 'auto' },
+          containerId: 'container-api-docs',
+          health: 'healthy',
+          lastHealthCheck: new Date(),
+        },
+        {
+          id: 'visual-install-2',
+          pluginId: 'visual-monitoring-plugin',
+          status: 'installing',
+          version: '1.5.3',
+          installedAt: new Date('2024-01-15T12:30:00Z'),
+          installedBy: 'visual-test-admin',
+          config: {},
+          containerId: 'container-monitoring',
+          health: 'starting',
+          lastHealthCheck: new Date(),
+        },
+      ],
+    });
+
+    // Create plugin dependencies
+    await prisma.pluginDependency.create({
+      data: {
+        id: 'visual-dep-1',
+        pluginId: 'visual-analytics-plugin',
+        dependsOnPluginId: 'visual-database-plugin',
+        versionConstraint: '>=2.0.0',
+        required: true,
+      },
+    });
+
+    console.log('✅ Visual test database setup completed');
+  } catch (error) {
+    console.error('❌ Failed to setup test database:', error);
+    throw error;
+  } finally {
+    await prisma.$disconnect();
+  }
+}
+
+async function ensureScreenshotDirectories(): Promise<void> {
+  const directories = [
+    './tests/visual/screenshots',
+    './tests/visual/screenshots/baseline',
+    './tests/visual/screenshots/actual',
+    './tests/visual/screenshots/diff',
+    './tests/visual/test-results',
+    './tests/visual/playwright-report',
+  ];
+
+  for (const dir of directories) {
+    await fs.mkdir(path.resolve(dir), { recursive: true });
+  }
+}
+
+async function startTestServer(): Promise<void> {
+  if (process.env.SKIP_SERVER_START === 'true') {
+    console.log('⏭️ Skipping server start (SKIP_SERVER_START=true)');
+    return;
+  }
+
+  console.log('🚀 Starting test server for visual regression tests...');
+  
+  // Start the Next.js development server
+  serverProcess = spawn('npm', ['run', 'dev'], {
+    env: {
+      ...process.env,
+      NODE_ENV: 'test',
+      PORT: '3000',
+      DATABASE_URL: process.env.TEST_DATABASE_URL || process.env.DATABASE_URL,
+    },
+    stdio: 'pipe',
+  });
+
+  if (serverProcess.stdout) {
+    serverProcess.stdout.on('data', (data) => {
+      const output = data.toString();
+      if (output.includes('Ready') || output.includes('started server')) {
+        console.log('✅ Test server is ready');
+      }
+    });
+  }
+
+  if (serverProcess.stderr) {
+    serverProcess.stderr.on('data', (data) => {
+      console.error('Server stderr:', data.toString());
+    });
+  }
+
+  serverProcess.on('error', (error) => {
+    console.error('❌ Failed to start server:', error);
+    throw error;
+  });
+
+  // Wait for server to be ready
+  await waitForServer('http://localhost:3000');
+  console.log('✅ Visual test server is running');
+}
+
+async function globalSetup(config: FullConfig): Promise<void> {
+  console.log('🔧 Setting up visual regression test environment...');
+  
+  try {
+    // Ensure screenshot directories exist
+    await ensureScreenshotDirectories();
+    
+    // Setup test database with realistic data
+    await setupTestDatabase();
+    
+    // Start test server
+    await startTestServer();
+    
+    // Warm up the application
+    const browser = await chromium.launch();
+    const context = await browser.newContext();
+    const page = await context.newPage();
+    
+    try {
+      await page.goto('http://localhost:3000');
+      await page.waitForLoadState('networkidle');
+      console.log('✅ Application warmed up successfully');
+    } catch (error) {
+      console.warn('⚠️ Failed to warm up application:', error);
+    } finally {
+      await context.close();
+      await browser.close();
+    }
+    
+    console.log('✅ Visual regression test setup completed');
+  } catch (error) {
+    console.error('❌ Visual test setup failed:', error);
+    
+    // Cleanup on failure
+    if (serverProcess) {
+      serverProcess.kill();
+      serverProcess = null;
+    }
+    
+    throw error;
+  }
+}
+
+// Store server process for cleanup
+(global as any).__SERVER_PROCESS__ = serverProcess;
+
+export default globalSetup;

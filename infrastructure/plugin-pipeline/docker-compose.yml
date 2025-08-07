@@ -1,0 +1,423 @@
+# Plugin Pipeline Orchestrator - Development Environment
+# Complete stack for local development and testing
+
+version: '3.8'
+
+networks:
+  plugin-pipeline:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local
+  jaeger_data:
+    driver: local
+  loki_data:
+    driver: local
+  plugin_cache:
+    driver: local
+
+services:
+  # Core Plugin Pipeline Services
+  plugin-orchestrator:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: development
+    image: plugin-orchestrator:dev
+    container_name: plugin-orchestrator
+    restart: unless-stopped
+    ports:
+      - "8080:8080"  # API server
+      - "8081:8081"  # Health checks
+      - "9090:9090"  # Metrics
+      - "9229:9229"  # Node.js debugging
+    environment:
+      - NODE_ENV=development
+      - LOG_LEVEL=debug
+      - PORT=8080
+      - HEALTH_PORT=8081
+      - METRICS_PORT=9090
+      - DATABASE_URL=postgresql://plugin_user:plugin_pass@postgres:5432/plugin_pipeline
+      - REDIS_URL=redis://:redis_pass@redis:6379/0
+      - KUBERNETES_IN_CLUSTER=false
+      - DOCKER_REGISTRY_URL=localhost:5000
+      - SERVICE_MESH_PROVIDER=none
+      - PROMETHEUS_ENABLED=true
+      - TRACING_ENABLED=true
+      - TRACING_ENDPOINT=http://jaeger:14268/api/traces
+      - SECURITY_TRIVY_ENABLED=true
+      - ENABLE_DEBUG=true
+    volumes:
+      - ./:/app
+      - plugin_cache:/app/cache
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      plugin-pipeline:
+        ipv4_address: 172.20.0.10
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    command: ["npm", "run", "dev"]
+
+  # Database Services
+  postgres:
+    image: postgres:15-alpine
+    container_name: postgres
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_DB=plugin_pipeline
+      - POSTGRES_USER=plugin_user
+      - POSTGRES_PASSWORD=plugin_pass
+      - POSTGRES_INITDB_ARGS=--auth-host=scram-sha-256 --auth-local=scram-sha-256
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql:ro
+    networks:
+      plugin-pipeline:
+        ipv4_address: 172.20.0.20
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U plugin_user -d plugin_pipeline"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    environment:
+      - REDIS_PASSWORD=redis_pass
+    volumes:
+      - redis_data:/data
+      - ./config/redis.conf:/usr/local/etc/redis/redis.conf:ro
+    networks:
+      plugin-pipeline:
+        ipv4_address: 172.20.0.21
+    command: redis-server /usr/local/etc/redis/redis.conf --requirepass redis_pass
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 30s
+
+  # Container Registry for local development
+  registry:
+    image: registry:2
+    container_name: registry
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    environment:
+      - REGISTRY_STORAGE_FILESYSTEM_ROOTDIRECTORY=/var/lib/registry
+      - REGISTRY_HTTP_ADDR=0.0.0.0:5000
+    volumes:
+      - ./data/registry:/var/lib/registry
+    networks:
+      plugin-pipeline:
+        ipv4_address: 172.20.0.30
+
+  # Monitoring Stack
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    restart: unless-stopped
+    ports:
+      - "9091:9090"
+    volumes:
+      - ./config/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./config/rules:/etc/prometheus/rules:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+      - '--web.enable-admin-api'
+    networks:
+      plugin-pipeline:
+        ipv4_address: 172.20.0.40
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:9090/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin123
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_INSTALL_PLUGINS=grafana-clock-panel,grafana-simple-json-datasource
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./config/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./config/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    networks:
+      plugin-pipeline:
+        ipv4_address: 172.20.0.41
+    depends_on:
+      - prometheus
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:3000/api/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Distributed Tracing
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    container_name: jaeger
+    restart: unless-stopped
+    ports:
+      - "16686:16686"  # Jaeger UI
+      - "14250:14250"  # gRPC
+      - "14268:14268"  # HTTP
+      - "6831:6831/udp"    # UDP
+      - "6832:6832/udp"    # UDP
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+      - COLLECTOR_ZIPKIN_HOST_PORT=:9411
+    volumes:
+      - jaeger_data:/tmp
+    networks:
+      plugin-pipeline:
+        ipv4_address: 172.20.0.50
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:14269/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Logging Stack
+  loki:
+    image: grafana/loki:latest
+    container_name: loki
+    restart: unless-stopped
+    ports:
+      - "3100:3100"
+    volumes:
+      - ./config/loki.yml:/etc/loki/local-config.yaml:ro
+      - loki_data:/loki
+    command: -config.file=/etc/loki/local-config.yaml
+    networks:
+      plugin-pipeline:
+        ipv4_address: 172.20.0.60
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3100/ready"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  promtail:
+    image: grafana/promtail:latest
+    container_name: promtail
+    restart: unless-stopped
+    volumes:
+      - ./config/promtail.yml:/etc/promtail/config.yml:ro
+      - /var/log:/var/log:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+    command: -config.file=/etc/promtail/config.yml
+    networks:
+      plugin-pipeline:
+        ipv4_address: 172.20.0.61
+    depends_on:
+      - loki
+
+  # Security Scanning
+  trivy:
+    image: aquasec/trivy:latest
+    container_name: trivy
+    restart: "no"
+    volumes:
+      - ./data/trivy:/root/.cache/trivy
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      plugin-pipeline:
+        ipv4_address: 172.20.0.70
+    command: ["server", "--listen", "0.0.0.0:4954"]
+
+  # Message Queue (optional)
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: rabbitmq
+    restart: unless-stopped
+    ports:
+      - "5672:5672"   # AMQP
+      - "15672:15672" # Management UI
+    environment:
+      - RABBITMQ_DEFAULT_USER=plugin_user
+      - RABBITMQ_DEFAULT_PASS=plugin_pass
+    volumes:
+      - ./data/rabbitmq:/var/lib/rabbitmq
+    networks:
+      plugin-pipeline:
+        ipv4_address: 172.20.0.80
+    healthcheck:
+      test: rabbitmq-diagnostics -q ping
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Elasticsearch (for advanced logging, optional)
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.11.0
+    container_name: elasticsearch
+    restart: unless-stopped
+    ports:
+      - "9200:9200"
+      - "9300:9300"
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=-Xms1g -Xmx1g"
+    volumes:
+      - ./data/elasticsearch:/usr/share/elasticsearch/data
+    networks:
+      plugin-pipeline:
+        ipv4_address: 172.20.0.90
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9200/_cluster/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Kibana (for Elasticsearch visualization, optional)
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.11.0
+    container_name: kibana
+    restart: unless-stopped
+    ports:
+      - "5601:5601"
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+      - xpack.security.enabled=false
+    networks:
+      plugin-pipeline:
+        ipv4_address: 172.20.0.91
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:5601/api/status || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Development Tools
+  maildev:
+    image: maildev/maildev
+    container_name: maildev
+    restart: unless-stopped
+    ports:
+      - "1025:1025"  # SMTP
+      - "1080:1080"  # Web UI
+    networks:
+      plugin-pipeline:
+        ipv4_address: 172.20.0.100
+
+  # API Documentation
+  swagger-ui:
+    image: swaggerapi/swagger-ui
+    container_name: swagger-ui
+    restart: unless-stopped
+    ports:
+      - "8082:8080"
+    environment:
+      - SWAGGER_JSON=/app/swagger.json
+    volumes:
+      - ./docs/api/swagger.json:/app/swagger.json:ro
+    networks:
+      plugin-pipeline:
+        ipv4_address: 172.20.0.110
+
+  # Load Testing
+  k6:
+    image: grafana/k6:latest
+    container_name: k6
+    restart: "no"
+    volumes:
+      - ./tests/load:/scripts:ro
+      - ./data/k6:/results
+    networks:
+      plugin-pipeline:
+        ipv4_address: 172.20.0.120
+    command: ["run", "--out", "json=/results/results.json", "/scripts/load-test.js"]
+    depends_on:
+      - plugin-orchestrator
+
+  # MinIO (S3-compatible storage for testing)
+  minio:
+    image: minio/minio:latest
+    container_name: minio
+    restart: unless-stopped
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      - MINIO_ROOT_USER=minioadmin
+      - MINIO_ROOT_PASSWORD=minioadmin123
+    volumes:
+      - ./data/minio:/data
+    networks:
+      plugin-pipeline:
+        ipv4_address: 172.20.0.130
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Nginx (reverse proxy and load balancer)
+  nginx:
+    image: nginx:alpine
+    container_name: nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./config/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./config/nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./ssl:/etc/nginx/ssl:ro
+    networks:
+      plugin-pipeline:
+        ipv4_address: 172.20.0.140
+    depends_on:
+      - plugin-orchestrator
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3

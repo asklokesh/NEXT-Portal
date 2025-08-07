@@ -1,0 +1,27 @@
+
+environment = "production"
+owner_email = "lokesh@google.com"
+cost_center = "platform-engineering"
+vpc_cidr = "10.0.0.0/16"
+availability_zones = ["us-west-2a", "us-west-2b", "us-west-2c"]
+cluster_name = "developer-portal-prod"
+cluster_version = "1.28"
+rds_instance_class = "db.r6g.xlarge"
+rds_allocated_storage = 200
+rds_max_allocated_storage = 2000
+rds_backup_retention_period = 30
+rds_multi_az = true
+redis_node_type = "cache.r6g.xlarge"
+redis_num_cache_nodes = 3
+redis_automatic_failover_enabled = true
+s3_versioning_enabled = true
+enable_waf = true
+enable_monitoring = true
+enable_backup = true
+backup_schedule = "cron(0 2 * * ? *)"
+backup_retention_days = 30
+domain_name = "your-domain.com"
+enable_vpn_gateway = false
+enable_cdn = true
+route53_zone_id = "YOUR_ROUTE53_ZONE_ID"
+kubernetes_version = "1.28"

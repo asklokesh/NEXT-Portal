@@ -1,0 +1,406 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Primary Database (OLTP)
+  postgres:
+    image: postgres:15-alpine
+    container_name: plugin-postgres-primary
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-plugin_admin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-saas_idp}
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+      PGDATA: /var/lib/postgresql/data/pgdata
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres-primary-data:/var/lib/postgresql/data
+      - ./database/postgres/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+      - ./database/postgres/extensions.sql:/docker-entrypoint-initdb.d/02-extensions.sql:ro
+    networks:
+      - plugin-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-plugin_admin} -d ${POSTGRES_DB:-saas_idp}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 4G
+        reservations:
+          cpus: '1.0'
+          memory: 2G
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+  # PostgreSQL Read Replica
+  postgres-replica:
+    image: postgres:15-alpine
+    container_name: plugin-postgres-replica
+    restart: unless-stopped
+    environment:
+      PGUSER: ${POSTGRES_USER:-plugin_admin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-saas_idp}
+      POSTGRES_MASTER_SERVICE: postgres
+      POSTGRES_REPLICA_USER: replica
+      POSTGRES_REPLICA_PASSWORD: ${POSTGRES_REPLICA_PASSWORD}
+    ports:
+      - "${POSTGRES_REPLICA_PORT:-5433}:5432"
+    volumes:
+      - postgres-replica-data:/var/lib/postgresql/data
+      - ./database/postgres/replica-setup.sh:/docker-entrypoint-initdb.d/setup-replica.sh:ro
+    networks:
+      - plugin-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-plugin_admin}"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: '1.5'
+          memory: 3G
+
+  # TimescaleDB for Analytics
+  timescaledb:
+    image: timescale/timescaledb:latest-pg15
+    container_name: plugin-timescaledb
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${TIMESCALE_USER:-timescale_admin}
+      POSTGRES_PASSWORD: ${TIMESCALE_PASSWORD}
+      POSTGRES_DB: ${TIMESCALE_DB:-plugin_analytics}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    ports:
+      - "${TIMESCALE_PORT:-5434}:5432"
+    volumes:
+      - timescale-data:/var/lib/postgresql/data
+      - ./database/timescaledb/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+      - ./database/timescaledb/hypertables.sql:/docker-entrypoint-initdb.d/02-hypertables.sql:ro
+      - ./database/timescaledb/retention-policies.sql:/docker-entrypoint-initdb.d/03-retention.sql:ro
+    networks:
+      - plugin-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${TIMESCALE_USER:-timescale_admin} -d ${TIMESCALE_DB:-plugin_analytics}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 4G
+        reservations:
+          cpus: '1.0'
+          memory: 2G
+
+  # MongoDB for Document Storage
+  mongodb:
+    image: mongo:7
+    container_name: plugin-mongodb
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_USER:-mongo_admin}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASSWORD}
+      MONGO_INITDB_DATABASE: ${MONGO_DB:-plugin_catalog}
+    ports:
+      - "${MONGO_PORT:-27017}:27017"
+    volumes:
+      - mongodb-data:/data/db
+      - mongodb-config:/data/configdb
+      - ./database/mongodb/init.js:/docker-entrypoint-initdb.d/init.js:ro
+      - ./database/mongodb/indexes.js:/docker-entrypoint-initdb.d/indexes.js:ro
+    networks:
+      - plugin-network
+    command: ["mongod", "--auth", "--bind_ip_all", "--replSet", "rs0"]
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 3G
+        reservations:
+          cpus: '1.0'
+          memory: 1G
+
+  # MongoDB Replica Set Setup
+  mongo-setup:
+    image: mongo:7
+    container_name: plugin-mongo-setup
+    volumes:
+      - ./database/mongodb/replica-setup.js:/scripts/replica-setup.js:ro
+    networks:
+      - plugin-network
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    command: >
+      bash -c "
+        sleep 5;
+        mongosh --host mongodb:27017 -u ${MONGO_USER:-mongo_admin} -p ${MONGO_PASSWORD} --authenticationDatabase admin /scripts/replica-setup.js;
+      "
+    restart: "no"
+
+  # Redis Cluster Node 1
+  redis-1:
+    image: redis:7-alpine
+    container_name: plugin-redis-1
+    restart: unless-stopped
+    ports:
+      - "${REDIS_PORT_1:-7001}:7001"
+      - "${REDIS_BUS_PORT_1:-17001}:17001"
+    volumes:
+      - redis-1-data:/data
+      - ./database/redis/redis-cluster.conf:/usr/local/etc/redis/redis.conf:ro
+    networks:
+      - plugin-network
+    command: redis-server /usr/local/etc/redis/redis.conf --port 7001 --cluster-announce-port 7001 --cluster-announce-bus-port 17001
+    healthcheck:
+      test: ["CMD", "redis-cli", "-p", "7001", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 1G
+
+  # Redis Cluster Node 2
+  redis-2:
+    image: redis:7-alpine
+    container_name: plugin-redis-2
+    restart: unless-stopped
+    ports:
+      - "${REDIS_PORT_2:-7002}:7002"
+      - "${REDIS_BUS_PORT_2:-17002}:17002"
+    volumes:
+      - redis-2-data:/data
+      - ./database/redis/redis-cluster.conf:/usr/local/etc/redis/redis.conf:ro
+    networks:
+      - plugin-network
+    command: redis-server /usr/local/etc/redis/redis.conf --port 7002 --cluster-announce-port 7002 --cluster-announce-bus-port 17002
+    healthcheck:
+      test: ["CMD", "redis-cli", "-p", "7002", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 1G
+
+  # Redis Cluster Node 3
+  redis-3:
+    image: redis:7-alpine
+    container_name: plugin-redis-3
+    restart: unless-stopped
+    ports:
+      - "${REDIS_PORT_3:-7003}:7003"
+      - "${REDIS_BUS_PORT_3:-17003}:17003"
+    volumes:
+      - redis-3-data:/data
+      - ./database/redis/redis-cluster.conf:/usr/local/etc/redis/redis.conf:ro
+    networks:
+      - plugin-network
+    command: redis-server /usr/local/etc/redis/redis.conf --port 7003 --cluster-announce-port 7003 --cluster-announce-bus-port 17003
+    healthcheck:
+      test: ["CMD", "redis-cli", "-p", "7003", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 1G
+
+  # Redis Cluster Setup
+  redis-cluster-setup:
+    image: redis:7-alpine
+    container_name: plugin-redis-cluster-setup
+    networks:
+      - plugin-network
+    depends_on:
+      redis-1:
+        condition: service_healthy
+      redis-2:
+        condition: service_healthy
+      redis-3:
+        condition: service_healthy
+    command: >
+      sh -c "
+        sleep 5;
+        redis-cli --cluster create 
+        redis-1:7001 redis-2:7002 redis-3:7003 
+        --cluster-replicas 0 --cluster-yes
+      "
+    restart: "no"
+
+  # PgBouncer Connection Pool
+  pgbouncer:
+    image: pgbouncer/pgbouncer:latest
+    container_name: plugin-pgbouncer
+    restart: unless-stopped
+    environment:
+      DATABASES_HOST: postgres
+      DATABASES_PORT: 5432
+      DATABASES_USER: ${POSTGRES_USER:-plugin_admin}
+      DATABASES_PASSWORD: ${POSTGRES_PASSWORD}
+      DATABASES_DBNAME: ${POSTGRES_DB:-saas_idp}
+      POOL_MODE: transaction
+      SERVER_RESET_QUERY: DISCARD ALL
+      MAX_CLIENT_CONN: 1000
+      DEFAULT_POOL_SIZE: 50
+    ports:
+      - "${PGBOUNCER_PORT:-6432}:6432"
+    volumes:
+      - ./database/pgbouncer/pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini:ro
+      - ./database/pgbouncer/userlist.txt:/etc/pgbouncer/userlist.txt:ro
+    networks:
+      - plugin-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "psql", "-h", "localhost", "-p", "6432", "-U", "${POSTGRES_USER:-plugin_admin}", "-d", "pgbouncer", "-c", "SHOW POOLS;"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Elasticsearch for Search
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.11.0
+    container_name: plugin-elasticsearch
+    restart: unless-stopped
+    environment:
+      - discovery.type=single-node
+      - "ES_JAVA_OPTS=-Xms2g -Xmx2g"
+      - xpack.security.enabled=true
+      - xpack.security.authc.anonymous.roles=remote_monitoring_collector
+      - ELASTIC_PASSWORD=${ELASTIC_PASSWORD}
+    ports:
+      - "${ELASTICSEARCH_PORT:-9200}:9200"
+      - "${ELASTICSEARCH_TRANSPORT_PORT:-9300}:9300"
+    volumes:
+      - elasticsearch-data:/usr/share/elasticsearch/data
+      - ./database/elasticsearch/elasticsearch.yml:/usr/share/elasticsearch/config/elasticsearch.yml:ro
+      - ./database/elasticsearch/synonyms.txt:/usr/share/elasticsearch/config/analysis/synonyms.txt:ro
+      - ./database/elasticsearch/stopwords.txt:/usr/share/elasticsearch/config/analysis/stopwords.txt:ro
+    networks:
+      - plugin-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9200/_cluster/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 4G
+        reservations:
+          cpus: '1.0'
+          memory: 2G
+
+  # Kibana for Elasticsearch Management
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.11.0
+    container_name: plugin-kibana
+    restart: unless-stopped
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+      - ELASTICSEARCH_USERNAME=kibana_system
+      - ELASTICSEARCH_PASSWORD=${KIBANA_PASSWORD}
+    ports:
+      - "${KIBANA_PORT:-5601}:5601"
+    volumes:
+      - ./database/kibana/kibana.yml:/usr/share/kibana/config/kibana.yml:ro
+    networks:
+      - plugin-network
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:5601/api/status || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # Database Backup Service
+  backup-service:
+    image: alpine:latest
+    container_name: plugin-backup-service
+    restart: unless-stopped
+    environment:
+      - POSTGRES_HOST=postgres
+      - POSTGRES_USER=${POSTGRES_USER:-plugin_admin}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB:-saas_idp}
+      - MONGO_HOST=mongodb
+      - MONGO_USER=${MONGO_USER:-mongo_admin}
+      - MONGO_PASSWORD=${MONGO_PASSWORD}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - S3_BUCKET=${BACKUP_S3_BUCKET}
+      - BACKUP_RETENTION_DAYS=${BACKUP_RETENTION_DAYS:-30}
+    volumes:
+      - backup-temp:/tmp/backups
+      - ./scripts/backup-databases.sh:/usr/local/bin/backup-databases.sh:ro
+    networks:
+      - plugin-network
+    depends_on:
+      - postgres
+      - mongodb
+      - timescaledb
+    command: >
+      sh -c "
+        apk add --no-cache postgresql-client mongodb-tools aws-cli;
+        chmod +x /usr/local/bin/backup-databases.sh;
+        crond -f
+      "
+
+volumes:
+  postgres-primary-data:
+    driver: local
+  postgres-replica-data:
+    driver: local
+  timescale-data:
+    driver: local
+  mongodb-data:
+    driver: local
+  mongodb-config:
+    driver: local
+  redis-1-data:
+    driver: local
+  redis-2-data:
+    driver: local
+  redis-3-data:
+    driver: local
+  elasticsearch-data:
+    driver: local
+  backup-temp:
+    driver: local
+
+networks:
+  plugin-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16

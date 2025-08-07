@@ -1,0 +1,1100 @@
+# Kubernetes deployment for Data Pipeline Orchestration System
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: data-pipelines
+  labels:
+    name: data-pipelines
+
+---
+# ConfigMap for shared configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: data-pipeline-config
+  namespace: data-pipelines
+data:
+  # Airflow configuration
+  airflow.cfg: |
+    [core]
+    dags_folder = /opt/airflow/dags
+    base_log_folder = /opt/airflow/logs
+    executor = KubernetesExecutor
+    plugins_folder = /opt/airflow/plugins
+    sql_alchemy_conn = postgresql+psycopg2://airflow:airflow@postgres:5432/airflow
+    
+    [kubernetes]
+    namespace = data-pipelines
+    airflow_configmap = airflow-config
+    worker_container_repository = apache/airflow
+    worker_container_tag = 2.7.0
+    delete_worker_pods = True
+    
+    [api]
+    auth_backends = airflow.api.auth.backend.basic_auth,airflow.api.auth.backend.session
+    
+    [scheduler]
+    enable_health_check = True
+  
+  # Kafka configuration
+  kafka.properties: |
+    bootstrap.servers=kafka:9092
+    key.serializer=org.apache.kafka.common.serialization.StringSerializer
+    value.serializer=org.apache.kafka.common.serialization.StringSerializer
+    key.deserializer=org.apache.kafka.common.serialization.StringDeserializer
+    value.deserializer=org.apache.kafka.common.serialization.StringDeserializer
+  
+  # Flink configuration
+  flink-conf.yaml: |
+    jobmanager.rpc.address: flink-jobmanager
+    jobmanager.memory.process.size: 1600m
+    taskmanager.memory.process.size: 1728m
+    taskmanager.numberOfTaskSlots: 2
+    parallelism.default: 2
+    state.backend: rocksdb
+    state.checkpoints.dir: s3://data-pipeline-checkpoints/checkpoints
+    state.savepoints.dir: s3://data-pipeline-checkpoints/savepoints
+
+---
+# Secret for sensitive configuration
+apiVersion: v1
+kind: Secret
+metadata:
+  name: data-pipeline-secrets
+  namespace: data-pipelines
+type: Opaque
+data:
+  postgres-password: YWlyZmxvdw==  # airflow base64 encoded
+  postgres-warehouse-password: d2FyZWhvdXNl  # warehouse base64 encoded
+  kafka-sasl-password: a2Fma2E=  # kafka base64 encoded
+  atlas-admin-password: YWRtaW4=  # admin base64 encoded
+
+---
+# PostgreSQL for Airflow metadata
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+  namespace: data-pipelines
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+      - name: postgres
+        image: postgres:14
+        ports:
+        - containerPort: 5432
+        env:
+        - name: POSTGRES_USER
+          value: "airflow"
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: data-pipeline-secrets
+              key: postgres-password
+        - name: POSTGRES_DB
+          value: "airflow"
+        volumeMounts:
+        - name: postgres-storage
+          mountPath: /var/lib/postgresql/data
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+        livenessProbe:
+          exec:
+            command:
+            - pg_isready
+            - -U
+            - airflow
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          exec:
+            command:
+            - pg_isready
+            - -U
+            - airflow
+          initialDelaySeconds: 5
+          periodSeconds: 5
+      volumes:
+      - name: postgres-storage
+        persistentVolumeClaim:
+          claimName: postgres-pvc
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: data-pipelines
+spec:
+  ports:
+  - port: 5432
+    targetPort: 5432
+  selector:
+    app: postgres
+
+---
+# PVC for PostgreSQL
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-pvc
+  namespace: data-pipelines
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+  storageClassName: gp2
+
+---
+# Redis for Airflow Celery (if using CeleryExecutor)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  namespace: data-pipelines
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      containers:
+      - name: redis
+        image: redis:7-alpine
+        ports:
+        - containerPort: 6379
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "200m"
+        livenessProbe:
+          exec:
+            command:
+            - redis-cli
+            - ping
+          initialDelaySeconds: 30
+          periodSeconds: 10
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: data-pipelines
+spec:
+  ports:
+  - port: 6379
+    targetPort: 6379
+  selector:
+    app: redis
+
+---
+# Airflow Webserver
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: airflow-webserver
+  namespace: data-pipelines
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: airflow-webserver
+  template:
+    metadata:
+      labels:
+        app: airflow-webserver
+    spec:
+      serviceAccountName: airflow
+      containers:
+      - name: webserver
+        image: apache/airflow:2.7.0
+        ports:
+        - containerPort: 8080
+        command:
+        - airflow
+        - webserver
+        env:
+        - name: AIRFLOW__CORE__EXECUTOR
+          value: "KubernetesExecutor"
+        - name: AIRFLOW__DATABASE__SQL_ALCHEMY_CONN
+          value: "postgresql+psycopg2://airflow:airflow@postgres:5432/airflow"
+        - name: AIRFLOW__KUBERNETES__NAMESPACE
+          value: "data-pipelines"
+        - name: AIRFLOW__KUBERNETES__AIRFLOW_CONFIGMAP
+          value: "data-pipeline-config"
+        volumeMounts:
+        - name: airflow-config
+          mountPath: /opt/airflow/airflow.cfg
+          subPath: airflow.cfg
+        - name: airflow-dags
+          mountPath: /opt/airflow/dags
+        - name: airflow-logs
+          mountPath: /opt/airflow/logs
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 60
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+      volumes:
+      - name: airflow-config
+        configMap:
+          name: data-pipeline-config
+      - name: airflow-dags
+        persistentVolumeClaim:
+          claimName: airflow-dags-pvc
+      - name: airflow-logs
+        persistentVolumeClaim:
+          claimName: airflow-logs-pvc
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: airflow-webserver
+  namespace: data-pipelines
+spec:
+  type: LoadBalancer
+  ports:
+  - port: 8080
+    targetPort: 8080
+  selector:
+    app: airflow-webserver
+
+---
+# Airflow Scheduler
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: airflow-scheduler
+  namespace: data-pipelines
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: airflow-scheduler
+  template:
+    metadata:
+      labels:
+        app: airflow-scheduler
+    spec:
+      serviceAccountName: airflow
+      containers:
+      - name: scheduler
+        image: apache/airflow:2.7.0
+        command:
+        - airflow
+        - scheduler
+        env:
+        - name: AIRFLOW__CORE__EXECUTOR
+          value: "KubernetesExecutor"
+        - name: AIRFLOW__DATABASE__SQL_ALCHEMY_CONN
+          value: "postgresql+psycopg2://airflow:airflow@postgres:5432/airflow"
+        - name: AIRFLOW__KUBERNETES__NAMESPACE
+          value: "data-pipelines"
+        - name: AIRFLOW__KUBERNETES__AIRFLOW_CONFIGMAP
+          value: "data-pipeline-config"
+        volumeMounts:
+        - name: airflow-config
+          mountPath: /opt/airflow/airflow.cfg
+          subPath: airflow.cfg
+        - name: airflow-dags
+          mountPath: /opt/airflow/dags
+        - name: airflow-logs
+          mountPath: /opt/airflow/logs
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+        livenessProbe:
+          exec:
+            command:
+            - airflow
+            - jobs
+            - check
+            - --job-type
+            - SchedulerJob
+            - --hostname
+            - $(hostname)
+          initialDelaySeconds: 60
+          periodSeconds: 60
+      volumes:
+      - name: airflow-config
+        configMap:
+          name: data-pipeline-config
+      - name: airflow-dags
+        persistentVolumeClaim:
+          claimName: airflow-dags-pvc
+      - name: airflow-logs
+        persistentVolumeClaim:
+          claimName: airflow-logs-pvc
+
+---
+# ServiceAccount for Airflow
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: airflow
+  namespace: data-pipelines
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: airflow-cluster-role
+rules:
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["create", "delete", "get", "list", "patch", "update", "watch"]
+- apiGroups: [""]
+  resources: ["pods/log"]
+  verbs: ["get", "list"]
+- apiGroups: [""]
+  resources: ["pods/exec"]
+  verbs: ["create", "get"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: airflow-cluster-role-binding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: airflow-cluster-role
+subjects:
+- kind: ServiceAccount
+  name: airflow
+  namespace: data-pipelines
+
+---
+# PVCs for Airflow
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: airflow-dags-pvc
+  namespace: data-pipelines
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 5Gi
+  storageClassName: efs
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: airflow-logs-pvc
+  namespace: data-pipelines
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 10Gi
+  storageClassName: efs
+
+---
+# Kafka Deployment
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: kafka
+  namespace: data-pipelines
+spec:
+  serviceName: kafka-headless
+  replicas: 3
+  selector:
+    matchLabels:
+      app: kafka
+  template:
+    metadata:
+      labels:
+        app: kafka
+    spec:
+      containers:
+      - name: kafka
+        image: confluentinc/cp-kafka:7.4.0
+        ports:
+        - containerPort: 9092
+        env:
+        - name: KAFKA_BROKER_ID
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.annotations['statefulset.kubernetes.io/pod-name']
+        - name: KAFKA_ZOOKEEPER_CONNECT
+          value: "zookeeper:2181"
+        - name: KAFKA_LISTENERS
+          value: "PLAINTEXT://0.0.0.0:9092"
+        - name: KAFKA_ADVERTISED_LISTENERS
+          value: "PLAINTEXT://$(hostname).kafka-headless:9092"
+        - name: KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR
+          value: "3"
+        - name: KAFKA_TRANSACTION_STATE_LOG_MIN_ISR
+          value: "2"
+        - name: KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR
+          value: "3"
+        - name: KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS
+          value: "0"
+        - name: KAFKA_AUTO_CREATE_TOPICS_ENABLE
+          value: "true"
+        - name: KAFKA_LOG_RETENTION_HOURS
+          value: "168"
+        volumeMounts:
+        - name: kafka-storage
+          mountPath: /var/lib/kafka/data
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+        livenessProbe:
+          exec:
+            command:
+            - kafka-topics.sh
+            - --bootstrap-server
+            - localhost:9092
+            - --list
+          initialDelaySeconds: 60
+          periodSeconds: 30
+  volumeClaimTemplates:
+  - metadata:
+      name: kafka-storage
+    spec:
+      accessModes:
+        - ReadWriteOnce
+      resources:
+        requests:
+          storage: 20Gi
+      storageClassName: gp2
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kafka-headless
+  namespace: data-pipelines
+spec:
+  clusterIP: None
+  ports:
+  - port: 9092
+    targetPort: 9092
+  selector:
+    app: kafka
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kafka
+  namespace: data-pipelines
+spec:
+  ports:
+  - port: 9092
+    targetPort: 9092
+  selector:
+    app: kafka
+
+---
+# Zookeeper for Kafka
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: zookeeper
+  namespace: data-pipelines
+spec:
+  serviceName: zookeeper-headless
+  replicas: 3
+  selector:
+    matchLabels:
+      app: zookeeper
+  template:
+    metadata:
+      labels:
+        app: zookeeper
+    spec:
+      containers:
+      - name: zookeeper
+        image: confluentinc/cp-zookeeper:7.4.0
+        ports:
+        - containerPort: 2181
+        - containerPort: 2888
+        - containerPort: 3888
+        env:
+        - name: ZOOKEEPER_CLIENT_PORT
+          value: "2181"
+        - name: ZOOKEEPER_TICK_TIME
+          value: "2000"
+        - name: ZOOKEEPER_INIT_LIMIT
+          value: "10"
+        - name: ZOOKEEPER_SYNC_LIMIT
+          value: "5"
+        - name: ZOOKEEPER_SERVER_ID
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.annotations['statefulset.kubernetes.io/pod-name']
+        volumeMounts:
+        - name: zk-storage
+          mountPath: /var/lib/zookeeper/data
+        - name: zk-logs
+          mountPath: /var/lib/zookeeper/log
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+        livenessProbe:
+          exec:
+            command:
+            - bash
+            - -c
+            - echo ruok | nc localhost 2181
+          initialDelaySeconds: 30
+          periodSeconds: 30
+  volumeClaimTemplates:
+  - metadata:
+      name: zk-storage
+    spec:
+      accessModes:
+        - ReadWriteOnce
+      resources:
+        requests:
+          storage: 10Gi
+      storageClassName: gp2
+  - metadata:
+      name: zk-logs
+    spec:
+      accessModes:
+        - ReadWriteOnce
+      resources:
+        requests:
+          storage: 5Gi
+      storageClassName: gp2
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: zookeeper-headless
+  namespace: data-pipelines
+spec:
+  clusterIP: None
+  ports:
+  - name: client
+    port: 2181
+    targetPort: 2181
+  - name: follower
+    port: 2888
+    targetPort: 2888
+  - name: leader
+    port: 3888
+    targetPort: 3888
+  selector:
+    app: zookeeper
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: zookeeper
+  namespace: data-pipelines
+spec:
+  ports:
+  - port: 2181
+    targetPort: 2181
+  selector:
+    app: zookeeper
+
+---
+# Flink JobManager
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: flink-jobmanager
+  namespace: data-pipelines
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: flink-jobmanager
+  template:
+    metadata:
+      labels:
+        app: flink-jobmanager
+    spec:
+      containers:
+      - name: jobmanager
+        image: flink:1.17-java11
+        ports:
+        - containerPort: 8081
+        - containerPort: 6123
+        command:
+        - /opt/flink/bin/jobmanager.sh
+        args:
+        - start-foreground
+        env:
+        - name: FLINK_PROPERTIES
+          value: |
+            jobmanager.rpc.address: flink-jobmanager
+            jobmanager.memory.process.size: 1600m
+            state.backend: rocksdb
+            state.checkpoints.dir: s3://data-pipeline-checkpoints/checkpoints
+            state.savepoints.dir: s3://data-pipeline-checkpoints/savepoints
+        volumeMounts:
+        - name: flink-config
+          mountPath: /opt/flink/conf/flink-conf.yaml
+          subPath: flink-conf.yaml
+        resources:
+          requests:
+            memory: "1600Mi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+        livenessProbe:
+          httpGet:
+            path: /overview
+            port: 8081
+          initialDelaySeconds: 60
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /overview
+            port: 8081
+          initialDelaySeconds: 30
+          periodSeconds: 10
+      volumes:
+      - name: flink-config
+        configMap:
+          name: data-pipeline-config
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: flink-jobmanager
+  namespace: data-pipelines
+spec:
+  type: LoadBalancer
+  ports:
+  - name: web
+    port: 8081
+    targetPort: 8081
+  - name: rpc
+    port: 6123
+    targetPort: 6123
+  selector:
+    app: flink-jobmanager
+
+---
+# Flink TaskManager
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: flink-taskmanager
+  namespace: data-pipelines
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: flink-taskmanager
+  template:
+    metadata:
+      labels:
+        app: flink-taskmanager
+    spec:
+      containers:
+      - name: taskmanager
+        image: flink:1.17-java11
+        command:
+        - /opt/flink/bin/taskmanager.sh
+        args:
+        - start-foreground
+        env:
+        - name: FLINK_PROPERTIES
+          value: |
+            jobmanager.rpc.address: flink-jobmanager
+            taskmanager.memory.process.size: 1728m
+            taskmanager.numberOfTaskSlots: 2
+        volumeMounts:
+        - name: flink-config
+          mountPath: /opt/flink/conf/flink-conf.yaml
+          subPath: flink-conf.yaml
+        resources:
+          requests:
+            memory: "1728Mi"
+            cpu: "1000m"
+          limits:
+            memory: "2Gi"
+            cpu: "1500m"
+      volumes:
+      - name: flink-config
+        configMap:
+          name: data-pipeline-config
+
+---
+# Data Warehouse PostgreSQL
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres-warehouse
+  namespace: data-pipelines
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres-warehouse
+  template:
+    metadata:
+      labels:
+        app: postgres-warehouse
+    spec:
+      containers:
+      - name: postgres
+        image: postgres:14
+        ports:
+        - containerPort: 5432
+        env:
+        - name: POSTGRES_USER
+          value: "warehouse"
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: data-pipeline-secrets
+              key: postgres-warehouse-password
+        - name: POSTGRES_DB
+          value: "warehouse"
+        volumeMounts:
+        - name: warehouse-storage
+          mountPath: /var/lib/postgresql/data
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+        livenessProbe:
+          exec:
+            command:
+            - pg_isready
+            - -U
+            - warehouse
+          initialDelaySeconds: 30
+          periodSeconds: 10
+      volumes:
+      - name: warehouse-storage
+        persistentVolumeClaim:
+          claimName: warehouse-pvc
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-warehouse
+  namespace: data-pipelines
+spec:
+  ports:
+  - port: 5432
+    targetPort: 5432
+  selector:
+    app: postgres-warehouse
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: warehouse-pvc
+  namespace: data-pipelines
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 50Gi
+  storageClassName: gp2
+
+---
+# Prometheus for monitoring
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus
+  namespace: data-pipelines
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: prometheus
+  template:
+    metadata:
+      labels:
+        app: prometheus
+    spec:
+      containers:
+      - name: prometheus
+        image: prom/prometheus:v2.47.0
+        ports:
+        - containerPort: 9090
+        args:
+        - '--config.file=/etc/prometheus/prometheus.yml'
+        - '--storage.tsdb.path=/prometheus'
+        - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+        - '--web.console.templates=/usr/share/prometheus/consoles'
+        - '--web.enable-lifecycle'
+        volumeMounts:
+        - name: prometheus-config
+          mountPath: /etc/prometheus/prometheus.yml
+          subPath: prometheus.yml
+        - name: prometheus-storage
+          mountPath: /prometheus
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+      volumes:
+      - name: prometheus-config
+        configMap:
+          name: monitoring-config
+      - name: prometheus-storage
+        persistentVolumeClaim:
+          claimName: prometheus-pvc
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus
+  namespace: data-pipelines
+spec:
+  ports:
+  - port: 9090
+    targetPort: 9090
+  selector:
+    app: prometheus
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: prometheus-pvc
+  namespace: data-pipelines
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 20Gi
+  storageClassName: gp2
+
+---
+# Grafana for dashboards
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+  namespace: data-pipelines
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: grafana
+  template:
+    metadata:
+      labels:
+        app: grafana
+    spec:
+      containers:
+      - name: grafana
+        image: grafana/grafana:10.1.0
+        ports:
+        - containerPort: 3000
+        env:
+        - name: GF_SECURITY_ADMIN_PASSWORD
+          value: "admin"
+        volumeMounts:
+        - name: grafana-storage
+          mountPath: /var/lib/grafana
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+      volumes:
+      - name: grafana-storage
+        persistentVolumeClaim:
+          claimName: grafana-pvc
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana
+  namespace: data-pipelines
+spec:
+  type: LoadBalancer
+  ports:
+  - port: 3000
+    targetPort: 3000
+  selector:
+    app: grafana
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: grafana-pvc
+  namespace: data-pipelines
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+  storageClassName: gp2
+
+---
+# ConfigMap for monitoring configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: monitoring-config
+  namespace: data-pipelines
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+      evaluation_interval: 15s
+    
+    scrape_configs:
+      - job_name: 'prometheus'
+        static_configs:
+          - targets: ['localhost:9090']
+      
+      - job_name: 'airflow'
+        static_configs:
+          - targets: ['airflow-webserver:8080']
+        metrics_path: /admin/metrics
+      
+      - job_name: 'kafka'
+        static_configs:
+          - targets: ['kafka:9092']
+      
+      - job_name: 'flink-jobmanager'
+        static_configs:
+          - targets: ['flink-jobmanager:8081']
+        metrics_path: /metrics
+      
+      - job_name: 'postgres'
+        static_configs:
+          - targets: ['postgres:5432', 'postgres-warehouse:5432']
+
+---
+# HorizontalPodAutoscaler for Flink TaskManager
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: flink-taskmanager-hpa
+  namespace: data-pipelines
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: flink-taskmanager
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+
+---
+# NetworkPolicy for security
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: data-pipeline-network-policy
+  namespace: data-pipelines
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: data-pipelines
+    - namespaceSelector:
+        matchLabels:
+          name: monitoring
+  egress:
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: data-pipelines
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 53
+    - protocol: UDP
+      port: 53

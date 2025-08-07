@@ -1,0 +1,521 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database for Airflow metadata
+  postgres:
+    image: postgres:14
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    volumes:
+      - postgres_db_volume:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "airflow"]
+      interval: 10s
+      retries: 5
+      start_period: 5s
+    restart: always
+    networks:
+      - data_pipeline_network
+
+  # Redis for Airflow Celery
+  redis:
+    image: redis:7-alpine
+    expose:
+      - 6379
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 30s
+      retries: 50
+      start_period: 30s
+    restart: always
+    networks:
+      - data_pipeline_network
+
+  # Airflow common configuration
+  airflow-common: &airflow-common
+    image: apache/airflow:2.7.0
+    environment: &airflow-common-env
+      AIRFLOW__CORE__EXECUTOR: CeleryExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+      AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://airflow:airflow@postgres/airflow
+      AIRFLOW__CELERY__BROKER_URL: redis://:@redis:6379/0
+      AIRFLOW__CORE__FERNET_KEY: ''
+      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
+      AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+      AIRFLOW__API__AUTH_BACKENDS: 'airflow.api.auth.backend.basic_auth,airflow.api.auth.backend.session'
+      AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: 'true'
+      # Kafka and Flink integration
+      AIRFLOW__CORE__ENABLE_XCOM_PICKLING: 'true'
+      AIRFLOW_CONN_KAFKA_DEFAULT: 'kafka://kafka:9092'
+      AIRFLOW_CONN_FLINK_DEFAULT: 'http://flink-jobmanager:8081'
+      AIRFLOW_CONN_WAREHOUSE_POSTGRES: 'postgresql://warehouse:warehouse@postgres-warehouse:5432/warehouse'
+      # Data pipeline specific configurations
+      _PIP_ADDITIONAL_REQUIREMENTS: |
+        apache-airflow-providers-postgres
+        apache-airflow-providers-http
+        apache-airflow-providers-kafka
+        apache-airflow-providers-flink
+        great-expectations
+        pandas
+        numpy
+        sqlalchemy
+        requests
+    volumes:
+      - ${AIRFLOW_PROJ_DIR:-.}/dags:/opt/airflow/dags
+      - ${AIRFLOW_PROJ_DIR:-.}/logs:/opt/airflow/logs
+      - ${AIRFLOW_PROJ_DIR:-.}/config:/opt/airflow/config
+      - ${AIRFLOW_PROJ_DIR:-.}/plugins:/opt/airflow/plugins
+      - ./data:/opt/airflow/data
+    user: "${AIRFLOW_UID:-50000}:0"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - data_pipeline_network
+
+  # Airflow Webserver
+  airflow-webserver:
+    <<: *airflow-common
+    command: webserver
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: always
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+
+  # Airflow Scheduler
+  airflow-scheduler:
+    <<: *airflow-common
+    command: scheduler
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8974/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: always
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+
+  # Airflow Worker (Celery)
+  airflow-worker:
+    <<: *airflow-common
+    command: celery worker
+    healthcheck:
+      test:
+        - "CMD-SHELL"
+        - 'celery --app airflow.providers.celery.executors.celery_executor.app inspect ping -d "celery@$${HOSTNAME}" || exit 1'
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    environment:
+      <<: *airflow-common-env
+      DUMB_INIT_SETSID: "0"
+    restart: always
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+
+  # Airflow Triggerer
+  airflow-triggerer:
+    <<: *airflow-common
+    command: triggerer
+    healthcheck:
+      test: ["CMD-SHELL", 'airflow jobs check --job-type TriggererJob --hostname "$${HOSTNAME}"']
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: always
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+
+  # Airflow Initialization
+  airflow-init:
+    <<: *airflow-common
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        function ver() {
+          printf "%04d%04d%04d%04d" $${1//./ }
+        }
+        airflow_version=$$(AIRFLOW__LOGGING__LOGGING_LEVEL=INFO && airflow version)
+        airflow_version_comparable=$$(ver $${airflow_version})
+        min_airflow_version=2.2.0
+        min_airflow_version_comparable=$$(ver $${min_airflow_version})
+        if (( airflow_version_comparable < min_airflow_version_comparable )); then
+          echo -e "\033[1;31mERROR!!!: Too old Airflow version $${airflow_version}!\e[0m"
+          echo "The minimum Airflow version supported: $${min_airflow_version}. Only use this or higher!"
+          exit 1
+        fi
+        if [[ -z "${AIRFLOW_UID}" ]]; then
+          echo -e "\033[1;33mWARNING!!!: AIRFLOW_UID not set!\e[0m"
+        fi
+        one_meg=1048576
+        mem_available=$$(($$(getconf _PHYS_PAGES) * $$(getconf PAGE_SIZE) / one_meg))
+        cpus_available=$$(grep -cE 'cpu[0-9]+' /proc/stat)
+        disk_available=$$(df / | tail -1 | awk '{print $$4}')
+        warning_resources="false"
+        if (( mem_available < 4000 )); then
+          echo -e "\033[1;33mWARNING!!!: Not enough memory available for Docker.\e[0m At least 4GB of memory required. You have $$(numfmt --to iec $$((mem_available * one_meg)))"
+          warning_resources="true"
+        fi
+        if (( cpus_available < 2 )); then
+          echo -e "\033[1;33mWARNING!!!: Not enough CPUS available for Docker.\e[0m At least 2 CPUs recommended. You have $${cpus_available}"
+          warning_resources="true"
+        fi
+        if (( disk_available < one_meg )); then
+          echo -e "\033[1;33mWARNING!!!: Not enough Disk space available for Docker.\e[0m At least 1 GiB recommended. You have $$(numfmt --to iec $$((disk_available * 1024 )))"
+          warning_resources="true"
+        fi
+        if [[ $${warning_resources} == "true" ]]; then
+          echo -e "\033[1;33mWARNING!!!: You have not enough resources to run Airflow (see above)!\e[0m"
+        fi
+        mkdir -p /sources/logs /sources/dags /sources/plugins
+        chown -R "${AIRFLOW_UID}:0" /sources/{logs,dags,plugins}
+        exec /entrypoint airflow db init
+        if [[ -n "${_AIRFLOW_WWW_USER_USERNAME:-}" ]]; then
+          exec airflow users create \
+            --username "$${_AIRFLOW_WWW_USER_USERNAME}" \
+            --password "$${_AIRFLOW_WWW_USER_PASSWORD}" \
+            --firstname "$${_AIRFLOW_WWW_USER_FIRSTNAME}" \
+            --lastname "$${_AIRFLOW_WWW_USER_LASTNAME}" \
+            --role "$${_AIRFLOW_WWW_USER_ROLE}" \
+            --email "$${_AIRFLOW_WWW_USER_EMAIL}"
+        fi
+    environment:
+      <<: *airflow-common-env
+      _AIRFLOW_DB_UPGRADE: 'true'
+      _AIRFLOW_WWW_USER_CREATE: 'true'
+      _AIRFLOW_WWW_USER_USERNAME: ${_AIRFLOW_WWW_USER_USERNAME:-airflow}
+      _AIRFLOW_WWW_USER_PASSWORD: ${_AIRFLOW_WWW_USER_PASSWORD:-airflow}
+      _AIRFLOW_WWW_USER_FIRSTNAME: ${_AIRFLOW_WWW_USER_FIRSTNAME:-Airflow}
+      _AIRFLOW_WWW_USER_LASTNAME: ${_AIRFLOW_WWW_USER_LASTNAME:-Admin}
+      _AIRFLOW_WWW_USER_ROLE: ${_AIRFLOW_WWW_USER_ROLE:-Admin}
+      _AIRFLOW_WWW_USER_EMAIL: ${_AIRFLOW_WWW_USER_EMAIL:-admin@example.com}
+    user: "0:0"
+    volumes:
+      - ${AIRFLOW_PROJ_DIR:-.}:/sources
+
+  # Airflow CLI
+  airflow-cli:
+    <<: *airflow-common
+    profiles:
+      - debug
+    environment:
+      <<: *airflow-common-env
+      CONNECTION_CHECK_MAX_COUNT: "0"
+    command:
+      - bash
+      - -c
+      - airflow
+
+  # Kafka Services
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.4.0
+    hostname: zookeeper
+    container_name: zookeeper
+    ports:
+      - "2181:2181"
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    healthcheck:
+      test: ["CMD", "bash", "-c", "echo 'ruok' | nc localhost 2181"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - data_pipeline_network
+
+  kafka:
+    image: confluentinc/cp-kafka:7.4.0
+    hostname: kafka
+    container_name: kafka
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    ports:
+      - "9092:9092"
+      - "9101:9101"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: 'zookeeper:2181'
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_JMX_PORT: 9101
+      KAFKA_JMX_HOSTNAME: localhost
+      # Topic auto-creation
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'
+      KAFKA_NUM_PARTITIONS: 3
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 1
+      # Retention settings
+      KAFKA_LOG_RETENTION_HOURS: 168
+      KAFKA_LOG_SEGMENT_BYTES: 1073741824
+    healthcheck:
+      test: ["CMD", "bash", "-c", "unset JMX_PORT; kafka-topics.sh --bootstrap-server kafka:29092 --list"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    networks:
+      - data_pipeline_network
+
+  # Kafka Schema Registry
+  schema-registry:
+    image: confluentinc/cp-schema-registry:7.4.0
+    hostname: schema-registry
+    container_name: schema-registry
+    depends_on:
+      kafka:
+        condition: service_healthy
+    ports:
+      - "8081:8081"
+    environment:
+      SCHEMA_REGISTRY_HOST_NAME: schema-registry
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: 'kafka:29092'
+      SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8081
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/subjects"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    networks:
+      - data_pipeline_network
+
+  # Apache Flink JobManager
+  flink-jobmanager:
+    image: flink:1.17-java11
+    hostname: flink-jobmanager
+    container_name: flink-jobmanager
+    ports:
+      - "8082:8081"
+    command: jobmanager
+    environment:
+      - FLINK_PROPERTIES=jobmanager.rpc.address=flink-jobmanager
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/overview"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    volumes:
+      - ./flink-checkpoints:/tmp/flink-checkpoints
+      - ./flink-savepoints:/tmp/flink-savepoints
+    networks:
+      - data_pipeline_network
+
+  # Apache Flink TaskManager
+  flink-taskmanager:
+    image: flink:1.17-java11
+    hostname: flink-taskmanager
+    container_name: flink-taskmanager
+    depends_on:
+      - flink-jobmanager
+    command: taskmanager
+    scale: 2
+    environment:
+      - FLINK_PROPERTIES=jobmanager.rpc.address=flink-jobmanager|taskmanager.numberOfTaskSlots=2
+    volumes:
+      - ./flink-checkpoints:/tmp/flink-checkpoints
+      - ./flink-savepoints:/tmp/flink-savepoints
+    networks:
+      - data_pipeline_network
+
+  # Data Warehouse PostgreSQL
+  postgres-warehouse:
+    image: postgres:14
+    container_name: postgres-warehouse
+    ports:
+      - "5433:5432"
+    environment:
+      POSTGRES_USER: warehouse
+      POSTGRES_PASSWORD: warehouse
+      POSTGRES_DB: warehouse
+    volumes:
+      - warehouse_db_volume:/var/lib/postgresql/data
+      - ./sql/warehouse-init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "warehouse"]
+      interval: 10s
+      retries: 5
+      start_period: 5s
+    restart: always
+    networks:
+      - data_pipeline_network
+
+  # Apache Atlas for Data Catalog
+  atlas:
+    image: apache/atlas:2.3.0
+    container_name: atlas
+    ports:
+      - "21000:21000"
+    environment:
+      MANAGE_LOCAL_SOLR: 'true'
+      MANAGE_LOCAL_HBASE: 'true'
+    volumes:
+      - atlas_data:/opt/atlas/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:21000/api/atlas/admin/version"]
+      interval: 60s
+      timeout: 30s
+      retries: 10
+      start_period: 120s
+    networks:
+      - data_pipeline_network
+
+  # Elasticsearch for search and monitoring
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.9.0
+    container_name: elasticsearch
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+    ports:
+      - "9200:9200"
+    volumes:
+      - elasticsearch_data:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9200/_cluster/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    networks:
+      - data_pipeline_network
+
+  # Kibana for data visualization
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.9.0
+    container_name: kibana
+    ports:
+      - "5601:5601"
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+      - xpack.security.enabled=false
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5601/api/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    networks:
+      - data_pipeline_network
+
+  # Prometheus for monitoring
+  prometheus:
+    image: prom/prometheus:v2.47.0
+    container_name: prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+      - '--web.enable-lifecycle'
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:9090/-/healthy"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    networks:
+      - data_pipeline_network
+
+  # Grafana for monitoring dashboards
+  grafana:
+    image: grafana/grafana:10.1.0
+    container_name: grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_INSTALL_PLUGINS=grafana-piechart-panel
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards
+      - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources
+    depends_on:
+      prometheus:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    networks:
+      - data_pipeline_network
+
+  # Jupyter Notebook for data exploration
+  jupyter:
+    image: jupyter/pyspark-notebook:spark-3.4.1
+    container_name: jupyter
+    ports:
+      - "8888:8888"
+    environment:
+      - JUPYTER_ENABLE_LAB=yes
+      - JUPYTER_TOKEN=datapipeline
+    volumes:
+      - ./notebooks:/home/jovyan/work
+      - ./data:/home/jovyan/data
+    networks:
+      - data_pipeline_network
+
+  # Data pipeline testing service
+  pipeline-test:
+    build:
+      context: .
+      dockerfile: Dockerfile.testing
+    container_name: pipeline-test
+    environment:
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
+      - POSTGRES_URL=postgresql://warehouse:warehouse@postgres-warehouse:5432/warehouse
+      - FLINK_JOBMANAGER_URL=http://flink-jobmanager:8081
+    volumes:
+      - ./tests:/app/tests
+      - ./data:/app/data
+    depends_on:
+      kafka:
+        condition: service_healthy
+      postgres-warehouse:
+        condition: service_healthy
+      flink-jobmanager:
+        condition: service_healthy
+    command: python -m pytest /app/tests -v
+    networks:
+      - data_pipeline_network
+
+volumes:
+  postgres_db_volume:
+  warehouse_db_volume:
+  atlas_data:
+  elasticsearch_data:
+  prometheus_data:
+  grafana_data:
+
+networks:
+  data_pipeline_network:
+    driver: bridge

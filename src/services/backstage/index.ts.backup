@@ -1,0 +1,51 @@
+/* eslint-disable @typescript-eslint/no-unused-vars, @typescript-eslint/consistent-type-imports, import/order, @typescript-eslint/no-misused-promises, @typescript-eslint/no-floating-promises, @typescript-eslint/require-await, no-console, no-dupe-else-if, no-return-await, import/no-self-import */
+// Temporarily disabled barrel exports to debug circular dependency issue
+// Main exports for the Backstage integration layer
+
+// API Clients
+// export { catalogClient } from './clients/catalog.client';
+// export { scaffolderClient } from './clients/scaffolder.client';
+// export { techDocsClient } from './clients/techdocs.client';
+// export { authClient } from './clients/auth.client';
+
+// Base API client utilities
+// export { BackstageApiClient, createBackstageClient, BackstageApiError } from './utils/api-client';
+
+// WebSocket utilities
+// export { 
+//   BackstageWebSocketClient, 
+//   createBackstageWebSocket, 
+//   getBackstageWebSocket,
+//   useWebSocketConnection 
+// } from './utils/websocket';
+
+// Error boundaries and handling
+// export {
+//   BackstageErrorBoundary,
+//   QueryErrorBoundary,
+//   ComponentErrorBoundary,
+//   PageErrorBoundary,
+//   BackstageApiError as ApiError,
+//   NetworkError,
+//   AuthenticationError,
+//   AuthorizationError,
+//   NotFoundError,
+//   ValidationError,
+//   RateLimitError,
+//   handleApiError,
+//   isRetryableError,
+//   getRetryDelay,
+//   setupGlobalErrorHandlers,
+//   createQueryClientWithErrorHandling,
+// } from './utils/error-boundary';
+
+// React Hooks
+// export * from './hooks/useCatalog';
+// export * from './hooks/useScaffolder';
+// export * from './hooks/useAuth';
+
+// Type definitions
+// export type * from './types/common';
+// export type * from './types/entities';
+// export type * from './types/templates';
+// export type * from './types/techdocs';

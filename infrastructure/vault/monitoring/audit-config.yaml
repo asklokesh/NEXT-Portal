@@ -1,0 +1,355 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vault-audit-config
+  namespace: vault-system
+data:
+  audit-config.json: |
+    {
+      "enabled": true,
+      "logLevel": "info",
+      "destinations": {
+        "file": {
+          "path": "/vault/audit/audit.log",
+          "maxSize": 104857600,
+          "maxFiles": 10,
+          "compress": true
+        },
+        "elasticsearch": {
+          "host": "elasticsearch.monitoring.svc.cluster.local:9200",
+          "index": "vault-audit-logs",
+          "apiKey": "${ELASTICSEARCH_API_KEY}"
+        },
+        "webhook": {
+          "url": "https://security-siem.company.com/vault-audit",
+          "headers": {
+            "Authorization": "Bearer ${WEBHOOK_TOKEN}",
+            "Content-Type": "application/json"
+          },
+          "timeout": 5000
+        }
+      },
+      "retention": {
+        "days": 2555,
+        "archivePath": "/vault/archive"
+      },
+      "realtime": true,
+      "batchSize": 100,
+      "flushInterval": 5000
+    }
+
+  compliance-rules.json: |
+    {
+      "rules": [
+        {
+          "id": "gdpr-personal-data",
+          "name": "GDPR Personal Data Access",
+          "description": "Monitor all access to personal data under GDPR compliance",
+          "regulation": "GDPR",
+          "enabled": true,
+          "conditions": {
+            "paths": [
+              "/secret/data/users/*",
+              "/secret/data/personal/*",
+              "/secret/data/pii/*"
+            ]
+          },
+          "actions": {
+            "alert": true,
+            "block": false,
+            "log": true,
+            "notify": ["privacy@company.com", "compliance@company.com"]
+          },
+          "severity": "warning"
+        },
+        {
+          "id": "sox-financial-access",
+          "name": "SOX Financial Data Access",
+          "description": "Monitor access to financial data for SOX compliance",
+          "regulation": "SOX",
+          "enabled": true,
+          "conditions": {
+            "paths": [
+              "/secret/data/financial/*",
+              "/database/creds/finance*",
+              "/secret/data/accounting/*"
+            ]
+          },
+          "actions": {
+            "alert": true,
+            "block": false,
+            "log": true,
+            "notify": ["finance-security@company.com"]
+          },
+          "severity": "critical"
+        },
+        {
+          "id": "pci-payment-data",
+          "name": "PCI-DSS Payment Data Access",
+          "description": "Monitor access to payment card industry data",
+          "regulation": "PCI-DSS",
+          "enabled": true,
+          "conditions": {
+            "paths": [
+              "/secret/data/payments/*",
+              "/secret/data/cards/*",
+              "/secret/data/merchant/*"
+            ]
+          },
+          "actions": {
+            "alert": true,
+            "block": false,
+            "log": true,
+            "notify": ["pci-compliance@company.com"]
+          },
+          "severity": "critical"
+        },
+        {
+          "id": "privileged-operations",
+          "name": "Privileged Operations Monitoring",
+          "description": "Monitor all privileged administrative operations",
+          "regulation": "General",
+          "enabled": true,
+          "conditions": {
+            "operations": ["delete", "destroy", "revoke", "unseal"],
+            "policies": ["admin-policy", "root", "vault-admin"]
+          },
+          "actions": {
+            "alert": true,
+            "block": false,
+            "log": true,
+            "notify": ["security-team@company.com"]
+          },
+          "severity": "warning"
+        },
+        {
+          "id": "after-hours-access",
+          "name": "After Hours Access Monitoring",
+          "description": "Monitor access outside business hours",
+          "regulation": "General",
+          "enabled": true,
+          "conditions": {
+            "timeRange": {
+              "start": "18:00",
+              "end": "08:00"
+            }
+          },
+          "actions": {
+            "alert": true,
+            "block": false,
+            "log": true,
+            "notify": ["security-soc@company.com"]
+          },
+          "severity": "info"
+        },
+        {
+          "id": "failed-authentication",
+          "name": "Failed Authentication Attempts",
+          "description": "Monitor repeated failed authentication attempts",
+          "regulation": "Security",
+          "enabled": true,
+          "conditions": {
+            "operations": ["login"],
+            "responseCode": [401, 403],
+            "threshold": 5,
+            "timeWindow": "300s"
+          },
+          "actions": {
+            "alert": true,
+            "block": true,
+            "log": true,
+            "notify": ["security-team@company.com"]
+          },
+          "severity": "critical"
+        }
+      ]
+    }
+
+  log4j2.xml: |
+    <?xml version="1.0" encoding="UTF-8"?>
+    <Configuration status="INFO">
+        <Appenders>
+            <RollingFile name="VaultAuditFile"
+                         fileName="/vault/audit/vault-audit.log"
+                         filePattern="/vault/audit/vault-audit-%d{yyyy-MM-dd}-%i.log.gz">
+                <JsonLayout compact="true" eventEol="true"/>
+                <Policies>
+                    <TimeBasedTriggeringPolicy interval="1" modulate="true"/>
+                    <SizeBasedTriggeringPolicy size="100 MB"/>
+                </Policies>
+                <DefaultRolloverStrategy max="30"/>
+            </RollingFile>
+            
+            <Socket name="SyslogAudit" host="syslog.company.com" port="514" protocol="UDP">
+                <JsonLayout compact="true"/>
+            </Socket>
+            
+            <Console name="Console" target="SYSTEM_OUT">
+                <JsonLayout compact="true" eventEol="true"/>
+            </Console>
+        </Appenders>
+        
+        <Loggers>
+            <Logger name="vault.audit" level="INFO" additivity="false">
+                <AppenderRef ref="VaultAuditFile"/>
+                <AppenderRef ref="SyslogAudit"/>
+                <AppenderRef ref="Console"/>
+            </Logger>
+            
+            <Root level="INFO">
+                <AppenderRef ref="Console"/>
+            </Root>
+        </Loggers>
+    </Configuration>
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vault-audit-collector
+  namespace: vault-system
+spec:
+  selector:
+    app: vault-audit-collector
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+    - name: syslog-udp
+      port: 514
+      targetPort: 514
+      protocol: UDP
+    - name: syslog-tcp
+      port: 514
+      targetPort: 514
+      protocol: TCP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vault-audit-collector
+  namespace: vault-system
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: vault-audit-collector
+  template:
+    metadata:
+      labels:
+        app: vault-audit-collector
+    spec:
+      containers:
+      - name: audit-collector
+        image: fluent/fluent-bit:2.2
+        ports:
+        - containerPort: 8080
+        - containerPort: 514
+        env:
+        - name: ELASTICSEARCH_HOST
+          value: "elasticsearch.monitoring.svc.cluster.local"
+        - name: ELASTICSEARCH_PORT
+          value: "9200"
+        volumeMounts:
+        - name: fluent-bit-config
+          mountPath: /fluent-bit/etc
+        - name: vault-audit-logs
+          mountPath: /vault/audit
+        resources:
+          requests:
+            memory: 128Mi
+            cpu: 100m
+          limits:
+            memory: 256Mi
+            cpu: 200m
+      volumes:
+      - name: fluent-bit-config
+        configMap:
+          name: fluent-bit-config
+      - name: vault-audit-logs
+        persistentVolumeClaim:
+          claimName: vault-audit-pvc
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fluent-bit-config
+  namespace: vault-system
+data:
+  fluent-bit.conf: |
+    [SERVICE]
+        Flush         5
+        Log_Level     info
+        Daemon        off
+        Parsers_File  parsers.conf
+        HTTP_Server   On
+        HTTP_Listen   0.0.0.0
+        HTTP_Port     2020
+
+    [INPUT]
+        Name              tail
+        Path              /vault/audit/*.log
+        Tag               vault.audit.file
+        Parser            vault_json
+        Refresh_Interval  5
+        Mem_Buf_Limit     5MB
+
+    [INPUT]
+        Name              syslog
+        Listen            0.0.0.0
+        Port              514
+        Tag               vault.audit.syslog
+        Parser            vault_syslog
+        Mode              udp
+
+    [FILTER]
+        Name              modify
+        Match             vault.audit.*
+        Add               source vault
+        Add               environment production
+
+    [FILTER]
+        Name              grep
+        Match             vault.audit.*
+        Exclude           type heartbeat
+
+    [OUTPUT]
+        Name              es
+        Match             vault.audit.*
+        Host              ${ELASTICSEARCH_HOST}
+        Port              ${ELASTICSEARCH_PORT}
+        Index             vault-audit-logs
+        Type              _doc
+        Retry_Limit       3
+        Replace_Dots      On
+
+    [OUTPUT]
+        Name              stdout
+        Match             vault.audit.*
+        Format            json
+
+  parsers.conf: |
+    [PARSER]
+        Name        vault_json
+        Format      json
+        Time_Key    time
+        Time_Format %Y-%m-%dT%H:%M:%S.%LZ
+
+    [PARSER]
+        Name        vault_syslog
+        Format      regex
+        Regex       ^(?<time>[^ ]* [^ ]* [^ ]*) (?<host>[^ ]*) (?<ident>[a-zA-Z0-9_\/\.\-]*)(?:\[(?<pid>[0-9]+)\])?(?:[^\:]*\:)? *(?<message>.*)$
+        Time_Key    time
+        Time_Format %b %d %H:%M:%S
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: vault-audit-pvc
+  namespace: vault-system
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 50Gi
+  storageClassName: fast-ssd

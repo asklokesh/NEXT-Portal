@@ -1,0 +1,52 @@
+{
+  "name": "@backstage-idp/sdk",
+  "version": "1.0.0",
+  "description": "Comprehensive SDK suite for Backstage Developer Portal",
+  "private": true,
+  "workspaces": {
+    "packages": [
+      "typescript",
+      "python",
+      "go",
+      "java"
+    ]
+  },
+  "scripts": {
+    "build": "lerna run build",
+    "build:all": "lerna run build --stream",
+    "test": "lerna run test --stream",
+    "lint": "lerna run lint --stream",
+    "clean": "lerna run clean && lerna clean --yes",
+    "generate": "npm run generate:openapi",
+    "generate:openapi": "swagger-codegen-cli generate -i ./specs/backstage-api.yaml -o ./generated",
+    "publish:all": "lerna publish --registry=https://registry.npmjs.org/",
+    "docs": "lerna run docs --stream"
+  },
+  "devDependencies": {
+    "@lerna/project": "^8.1.2",
+    "lerna": "^8.1.2",
+    "@typescript-eslint/eslint-plugin": "^7.0.0",
+    "@typescript-eslint/parser": "^7.0.0",
+    "eslint": "^8.57.0",
+    "eslint-config-prettier": "^9.1.0",
+    "prettier": "^3.2.5",
+    "swagger-codegen-cli": "^2.4.0",
+    "@openapitools/openapi-generator-cli": "^2.13.4"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/backstage/backstage-idp-sdk.git"
+  },
+  "keywords": [
+    "backstage",
+    "developer-portal",
+    "sdk",
+    "api-client",
+    "typescript",
+    "python",
+    "go",
+    "java"
+  ],
+  "author": "Backstage Team",
+  "license": "Apache-2.0"
+}

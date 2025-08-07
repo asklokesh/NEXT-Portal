@@ -1,0 +1,837 @@
+import type { 
+  GraphNode, 
+  GraphEdge, 
+  DependencyGraph, 
+  HealthCheck,
+  Alert,
+} from './types';
+
+export interface HealthMonitorConfig {
+  checkInterval: number; // milliseconds
+  healthThresholds: {
+    healthy: number;
+    degraded: number;
+    unhealthy: number;
+  };
+  alerting: {
+    enabled: boolean;
+    channels: Array<'email' | 'slack' | 'webhook' | 'dashboard'>;
+    cooldownPeriod: number; // milliseconds
+  };
+  metrics: {
+    responseTimeThreshold: number; // ms
+    errorRateThreshold: number; // percentage
+    uptimeThreshold: number; // percentage
+  };
+}
+
+export interface ServiceHealthData {
+  nodeId: string;
+  timestamp: Date;
+  status: 'healthy' | 'degraded' | 'unhealthy' | 'unknown';
+  score: number;
+  metrics: {
+    uptime: number;
+    responseTime: number;
+    errorRate: number;
+    throughput: number;
+    cpuUsage: number;
+    memoryUsage: number;
+    diskUsage: number;
+  };
+  checks: Array<{
+    name: string;
+    status: 'pass' | 'fail' | 'warn';
+    message: string;
+    duration: number;
+  }>;
+  dependencies: Array<{
+    nodeId: string;
+    status: 'healthy' | 'degraded' | 'unhealthy' | 'unknown';
+    latency: number;
+    errorRate: number;
+  }>;
+}
+
+export interface HealthTrend {
+  nodeId: string;
+  timeRange: string;
+  dataPoints: Array<{
+    timestamp: Date;
+    score: number;
+    status: string;
+  }>;
+  trend: 'improving' | 'stable' | 'degrading';
+  changeRate: number;
+}
+
+export interface HealthAlert {
+  id: string;
+  nodeId: string;
+  type: 'health_degradation' | 'dependency_failure' | 'performance_issue' | 'connectivity_loss';
+  severity: 'info' | 'warning' | 'error' | 'critical';
+  title: string;
+  message: string;
+  timestamp: Date;
+  acknowledged: boolean;
+  resolvedAt?: Date;
+  metadata: Record<string, any>;
+}
+
+export class GraphHealthMonitor {
+  private config: HealthMonitorConfig;
+  private healthData = new Map<string, ServiceHealthData>();
+  private healthHistory = new Map<string, ServiceHealthData[]>();
+  private activeAlerts = new Map<string, HealthAlert>();
+  private alertCooldowns = new Map<string, Date>();
+  private monitoringInterval?: NodeJS.Timeout;
+  private eventListeners = new Map<string, Function[]>();
+
+  constructor(config: Partial<HealthMonitorConfig> = {}) {
+    this.config = {
+      checkInterval: 30000, // 30 seconds
+      healthThresholds: {
+        healthy: 90,
+        degraded: 70,
+        unhealthy: 50,
+      },
+      alerting: {
+        enabled: true,
+        channels: ['dashboard'],
+        cooldownPeriod: 300000, // 5 minutes
+      },
+      metrics: {
+        responseTimeThreshold: 1000,
+        errorRateThreshold: 5,
+        uptimeThreshold: 99.5,
+      },
+      ...config,
+    };
+  }
+
+  /**
+   * Start health monitoring for the graph
+   */
+  startMonitoring(graph: DependencyGraph): void {
+    this.stopMonitoring();
+
+    // Perform initial health check
+    this.performHealthCheck(graph);
+
+    // Set up periodic monitoring
+    this.monitoringInterval = setInterval(() => {
+      this.performHealthCheck(graph);
+    }, this.config.checkInterval);
+
+    this.emit('monitoring_started', { graph: graph.metadata });
+  }
+
+  /**
+   * Stop health monitoring
+   */
+  stopMonitoring(): void {
+    if (this.monitoringInterval) {
+      clearInterval(this.monitoringInterval);
+      this.monitoringInterval = undefined;
+    }
+
+    this.emit('monitoring_stopped', {});
+  }
+
+  /**
+   * Perform comprehensive health check on all nodes
+   */
+  async performHealthCheck(graph: DependencyGraph): Promise<void> {
+    const checkPromises = graph.nodes.map(node => this.checkNodeHealth(node, graph));
+    await Promise.all(checkPromises);
+
+    // Analyze overall graph health
+    this.analyzeGraphHealth(graph);
+
+    // Check for cascading failures
+    this.detectCascadingFailures(graph);
+
+    // Generate alerts
+    this.processHealthAlerts(graph);
+
+    this.emit('health_check_completed', {
+      timestamp: new Date(),
+      nodesChecked: graph.nodes.length,
+      healthyNodes: this.getHealthyNodeCount(),
+      degradedNodes: this.getDegradedNodeCount(),
+      unhealthyNodes: this.getUnhealthyNodeCount(),
+    });
+  }
+
+  /**
+   * Check health of individual node
+   */
+  private async checkNodeHealth(node: GraphNode, graph: DependencyGraph): Promise<ServiceHealthData> {
+    const startTime = Date.now();
+    
+    try {
+      // Simulate health check (in real implementation, this would call actual monitoring APIs)
+      const healthData = await this.simulateHealthCheck(node, graph);
+      
+      // Store health data
+      this.healthData.set(node.id, healthData);
+      
+      // Store in history
+      if (!this.healthHistory.has(node.id)) {
+        this.healthHistory.set(node.id, []);
+      }
+      const history = this.healthHistory.get(node.id)!;
+      history.push(healthData);
+      
+      // Keep only last 1000 entries
+      if (history.length > 1000) {
+        history.shift();
+      }
+
+      // Update node health in graph
+      node.health = healthData.score;
+
+      return healthData;
+    } catch (error) {
+      console.error(`Health check failed for node ${node.id}:`, error);
+      
+      // Create error health data
+      const errorHealthData: ServiceHealthData = {
+        nodeId: node.id,
+        timestamp: new Date(),
+        status: 'unknown',
+        score: 0,
+        metrics: {
+          uptime: 0,
+          responseTime: 0,
+          errorRate: 100,
+          throughput: 0,
+          cpuUsage: 0,
+          memoryUsage: 0,
+          diskUsage: 0,
+        },
+        checks: [{
+          name: 'health_check_connectivity',
+          status: 'fail',
+          message: `Health check failed: ${error}`,
+          duration: Date.now() - startTime,
+        }],
+        dependencies: [],
+      };
+
+      this.healthData.set(node.id, errorHealthData);
+      return errorHealthData;
+    }
+  }
+
+  /**
+   * Simulate health check (replace with real implementation)
+   */
+  private async simulateHealthCheck(node: GraphNode, graph: DependencyGraph): Promise<ServiceHealthData> {
+    // Simulate API call delay
+    await new Promise(resolve => setTimeout(resolve, Math.random() * 100));
+
+    // Generate mock metrics based on node properties
+    const baseHealth = Math.max(0, node.health - (Math.random() * 10 - 5));
+    const isUnstable = node.complexityScore > 70 || node.criticalityScore > 80;
+    const hasIssues = Math.random() < (isUnstable ? 0.3 : 0.1);
+
+    const metrics = {
+      uptime: hasIssues ? 95 + Math.random() * 4 : 99 + Math.random(),
+      responseTime: hasIssues ? 800 + Math.random() * 1200 : 50 + Math.random() * 200,
+      errorRate: hasIssues ? 5 + Math.random() * 10 : Math.random() * 2,
+      throughput: 100 + Math.random() * 400,
+      cpuUsage: hasIssues ? 70 + Math.random() * 25 : 20 + Math.random() * 40,
+      memoryUsage: hasIssues ? 75 + Math.random() * 20 : 30 + Math.random() * 40,
+      diskUsage: 40 + Math.random() * 30,
+    };
+
+    // Perform various health checks
+    const checks = [
+      {
+        name: 'http_endpoint',
+        status: (metrics.responseTime < this.config.metrics.responseTimeThreshold ? 'pass' : 'fail') as 'pass' | 'fail' | 'warn',
+        message: `Response time: ${metrics.responseTime.toFixed(0)}ms`,
+        duration: metrics.responseTime,
+      },
+      {
+        name: 'error_rate',
+        status: (metrics.errorRate < this.config.metrics.errorRateThreshold ? 'pass' : 'fail') as 'pass' | 'fail' | 'warn',
+        message: `Error rate: ${metrics.errorRate.toFixed(2)}%`,
+        duration: 50,
+      },
+      {
+        name: 'resource_usage',
+        status: (metrics.cpuUsage < 80 && metrics.memoryUsage < 85 ? 'pass' : 'warn') as 'pass' | 'fail' | 'warn',
+        message: `CPU: ${metrics.cpuUsage.toFixed(0)}%, Memory: ${metrics.memoryUsage.toFixed(0)}%`,
+        duration: 25,
+      },
+    ];
+
+    // Check dependencies
+    const dependencies = node.dependencies.map(depId => {
+      const depNode = graph.nodes.find(n => n.id === depId);
+      const depHealth = this.healthData.get(depId);
+      
+      return {
+        nodeId: depId,
+        status: this.getHealthStatus(depHealth?.score || depNode?.health || 80),
+        latency: 50 + Math.random() * 100,
+        errorRate: Math.random() * 5,
+      };
+    });
+
+    // Calculate overall health score
+    const score = this.calculateHealthScore(metrics, checks);
+    const status = this.getHealthStatus(score);
+
+    return {
+      nodeId: node.id,
+      timestamp: new Date(),
+      status,
+      score,
+      metrics,
+      checks,
+      dependencies,
+    };
+  }
+
+  /**
+   * Calculate health score from metrics and checks
+   */
+  private calculateHealthScore(
+    metrics: ServiceHealthData['metrics'], 
+    checks: ServiceHealthData['checks']
+  ): number {
+    let score = 100;
+
+    // Uptime contribution (40% weight)
+    score = score * 0.6 + (metrics.uptime * 0.4);
+
+    // Response time penalty
+    if (metrics.responseTime > this.config.metrics.responseTimeThreshold) {
+      score -= Math.min(20, (metrics.responseTime - this.config.metrics.responseTimeThreshold) / 100);
+    }
+
+    // Error rate penalty
+    if (metrics.errorRate > this.config.metrics.errorRateThreshold) {
+      score -= Math.min(30, (metrics.errorRate - this.config.metrics.errorRateThreshold) * 2);
+    }
+
+    // Resource usage penalties
+    if (metrics.cpuUsage > 80) {
+      score -= Math.min(15, (metrics.cpuUsage - 80) / 2);
+    }
+
+    if (metrics.memoryUsage > 85) {
+      score -= Math.min(15, (metrics.memoryUsage - 85) / 2);
+    }
+
+    // Check failures penalty
+    const failedChecks = checks.filter(check => check.status === 'fail').length;
+    const warningChecks = checks.filter(check => check.status === 'warn').length;
+    
+    score -= failedChecks * 10;
+    score -= warningChecks * 5;
+
+    return Math.max(0, Math.min(100, score));
+  }
+
+  /**
+   * Get health status from score
+   */
+  private getHealthStatus(score: number): 'healthy' | 'degraded' | 'unhealthy' | 'unknown' {
+    if (score >= this.config.healthThresholds.healthy) return 'healthy';
+    if (score >= this.config.healthThresholds.degraded) return 'degraded';
+    if (score >= this.config.healthThresholds.unhealthy) return 'unhealthy';
+    return 'unknown';
+  }
+
+  /**
+   * Analyze overall graph health
+   */
+  private analyzeGraphHealth(graph: DependencyGraph): void {
+    const healthCounts = {
+      healthy: 0,
+      degraded: 0,
+      unhealthy: 0,
+      unknown: 0,
+    };
+
+    graph.nodes.forEach(node => {
+      const healthData = this.healthData.get(node.id);
+      if (healthData) {
+        healthCounts[healthData.status]++;
+      } else {
+        healthCounts.unknown++;
+      }
+    });
+
+    const totalNodes = graph.nodes.length;
+    const overallHealth = totalNodes > 0 
+      ? (healthCounts.healthy * 100 + healthCounts.degraded * 70 + healthCounts.unhealthy * 30) / totalNodes
+      : 100;
+
+    this.emit('graph_health_updated', {
+      overallHealth,
+      healthCounts,
+      timestamp: new Date(),
+    });
+  }
+
+  /**
+   * Detect cascading failures
+   */
+  private detectCascadingFailures(graph: DependencyGraph): void {
+    const unhealthyNodes = new Set<string>();
+    const cascadeRisks = new Map<string, number>();
+
+    // Identify unhealthy nodes
+    graph.nodes.forEach(node => {
+      const healthData = this.healthData.get(node.id);
+      if (healthData && (healthData.status === 'unhealthy' || healthData.status === 'unknown')) {
+        unhealthyNodes.add(node.id);
+      }
+    });
+
+    // Calculate cascade risk for each node
+    graph.nodes.forEach(node => {
+      let riskScore = 0;
+
+      // Check if dependencies are unhealthy
+      node.dependencies.forEach(depId => {
+        if (unhealthyNodes.has(depId)) {
+          riskScore += 20;
+        }
+      });
+
+      // Check if critical dependencies are degraded
+      node.dependencies.forEach(depId => {
+        const depHealthData = this.healthData.get(depId);
+        const depNode = graph.nodes.find(n => n.id === depId);
+        
+        if (depHealthData?.status === 'degraded' && depNode?.isOnCriticalPath) {
+          riskScore += 15;
+        }
+      });
+
+      // Higher risk for critical nodes
+      if (node.isOnCriticalPath) {
+        riskScore *= 1.5;
+      }
+
+      if (riskScore > 0) {
+        cascadeRisks.set(node.id, riskScore);
+      }
+    });
+
+    // Generate cascade alerts
+    cascadeRisks.forEach((riskScore, nodeId) => {
+      if (riskScore > 30) {
+        this.generateAlert({
+          nodeId,
+          type: 'dependency_failure',
+          severity: riskScore > 50 ? 'critical' : 'error',
+          title: 'Cascade Failure Risk',
+          message: `Node ${nodeId} is at risk of cascade failure due to unhealthy dependencies (risk score: ${riskScore})`,
+          metadata: { riskScore, cascadeType: 'dependency' },
+        });
+      }
+    });
+  }
+
+  /**
+   * Process health alerts
+   */
+  private processHealthAlerts(graph: DependencyGraph): void {
+    graph.nodes.forEach(node => {
+      const healthData = this.healthData.get(node.id);
+      if (!healthData) return;
+
+      const previousHealth = this.getPreviousHealthData(node.id);
+      
+      // Health degradation alerts
+      if (healthData.status === 'unhealthy' && 
+          previousHealth && previousHealth.status !== 'unhealthy') {
+        this.generateAlert({
+          nodeId: node.id,
+          type: 'health_degradation',
+          severity: 'error',
+          title: 'Service Health Degraded',
+          message: `${node.name} has become unhealthy (score: ${healthData.score.toFixed(0)})`,
+          metadata: { 
+            previousScore: previousHealth.score, 
+            currentScore: healthData.score,
+            failedChecks: healthData.checks.filter(c => c.status === 'fail').map(c => c.name),
+          },
+        });
+      }
+
+      // Performance issue alerts
+      if (healthData.metrics.responseTime > this.config.metrics.responseTimeThreshold * 2) {
+        this.generateAlert({
+          nodeId: node.id,
+          type: 'performance_issue',
+          severity: 'warning',
+          title: 'High Response Time',
+          message: `${node.name} response time is ${healthData.metrics.responseTime.toFixed(0)}ms`,
+          metadata: { 
+            responseTime: healthData.metrics.responseTime,
+            threshold: this.config.metrics.responseTimeThreshold,
+          },
+        });
+      }
+
+      // Connectivity loss alerts
+      const connectivityCheck = healthData.checks.find(c => c.name === 'http_endpoint');
+      if (connectivityCheck && connectivityCheck.status === 'fail') {
+        this.generateAlert({
+          nodeId: node.id,
+          type: 'connectivity_loss',
+          severity: 'critical',
+          title: 'Service Connectivity Lost',
+          message: `${node.name} is not responding to health checks`,
+          metadata: { 
+            lastResponseTime: connectivityCheck.duration,
+            checkMessage: connectivityCheck.message,
+          },
+        });
+      }
+    });
+  }
+
+  /**
+   * Generate health alert
+   */
+  private generateAlert(alertData: Omit<HealthAlert, 'id' | 'timestamp' | 'acknowledged' | 'resolvedAt'>): void {
+    const alertId = `${alertData.nodeId}-${alertData.type}-${Date.now()}`;
+    
+    // Check cooldown period
+    const cooldownKey = `${alertData.nodeId}-${alertData.type}`;
+    const lastAlert = this.alertCooldowns.get(cooldownKey);
+    
+    if (lastAlert && Date.now() - lastAlert.getTime() < this.config.alerting.cooldownPeriod) {
+      return; // Skip alert due to cooldown
+    }
+
+    const alert: HealthAlert = {
+      id: alertId,
+      timestamp: new Date(),
+      acknowledged: false,
+      ...alertData,
+    };
+
+    this.activeAlerts.set(alertId, alert);
+    this.alertCooldowns.set(cooldownKey, new Date());
+
+    // Emit alert event
+    this.emit('health_alert', alert);
+
+    // Send to configured channels
+    if (this.config.alerting.enabled) {
+      this.sendAlert(alert);
+    }
+  }
+
+  /**
+   * Send alert to configured channels
+   */
+  private async sendAlert(alert: HealthAlert): Promise<void> {
+    for (const channel of this.config.alerting.channels) {
+      try {
+        switch (channel) {
+          case 'dashboard':
+            // Alert is already stored in activeAlerts for dashboard display
+            break;
+          case 'email':
+            await this.sendEmailAlert(alert);
+            break;
+          case 'slack':
+            await this.sendSlackAlert(alert);
+            break;
+          case 'webhook':
+            await this.sendWebhookAlert(alert);
+            break;
+        }
+      } catch (error) {
+        console.error(`Failed to send alert via ${channel}:`, error);
+      }
+    }
+  }
+
+  /**
+   * Get health trends for a node
+   */
+  getHealthTrends(nodeId: string, timeRange: string = '24h'): HealthTrend | null {
+    const history = this.healthHistory.get(nodeId);
+    if (!history || history.length < 2) return null;
+
+    // Filter by time range
+    const now = new Date();
+    let cutoffTime: Date;
+    
+    switch (timeRange) {
+      case '1h':
+        cutoffTime = new Date(now.getTime() - 60 * 60 * 1000);
+        break;
+      case '24h':
+        cutoffTime = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+        break;
+      case '7d':
+        cutoffTime = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+        break;
+      default:
+        cutoffTime = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+    }
+
+    const filteredHistory = history.filter(h => h.timestamp >= cutoffTime);
+    if (filteredHistory.length < 2) return null;
+
+    const dataPoints = filteredHistory.map(h => ({
+      timestamp: h.timestamp,
+      score: h.score,
+      status: h.status,
+    }));
+
+    // Calculate trend
+    const firstScore = dataPoints[0].score;
+    const lastScore = dataPoints[dataPoints.length - 1].score;
+    const changeRate = ((lastScore - firstScore) / firstScore) * 100;
+
+    let trend: 'improving' | 'stable' | 'degrading';
+    if (Math.abs(changeRate) < 5) {
+      trend = 'stable';
+    } else if (changeRate > 0) {
+      trend = 'improving';
+    } else {
+      trend = 'degrading';
+    }
+
+    return {
+      nodeId,
+      timeRange,
+      dataPoints,
+      trend,
+      changeRate,
+    };
+  }
+
+  /**
+   * Get current health data for a node
+   */
+  getNodeHealth(nodeId: string): ServiceHealthData | null {
+    return this.healthData.get(nodeId) || null;
+  }
+
+  /**
+   * Get all active alerts
+   */
+  getActiveAlerts(): HealthAlert[] {
+    return Array.from(this.activeAlerts.values())
+      .filter(alert => !alert.acknowledged && !alert.resolvedAt)
+      .sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
+  }
+
+  /**
+   * Acknowledge an alert
+   */
+  acknowledgeAlert(alertId: string): boolean {
+    const alert = this.activeAlerts.get(alertId);
+    if (alert && !alert.acknowledged) {
+      alert.acknowledged = true;
+      this.emit('alert_acknowledged', alert);
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * Resolve an alert
+   */
+  resolveAlert(alertId: string): boolean {
+    const alert = this.activeAlerts.get(alertId);
+    if (alert && !alert.resolvedAt) {
+      alert.resolvedAt = new Date();
+      this.emit('alert_resolved', alert);
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * Helper methods
+   */
+  private getPreviousHealthData(nodeId: string): ServiceHealthData | null {
+    const history = this.healthHistory.get(nodeId);
+    if (!history || history.length < 2) return null;
+    return history[history.length - 2];
+  }
+
+  private getHealthyNodeCount(): number {
+    return Array.from(this.healthData.values()).filter(h => h.status === 'healthy').length;
+  }
+
+  private getDegradedNodeCount(): number {
+    return Array.from(this.healthData.values()).filter(h => h.status === 'degraded').length;
+  }
+
+  private getUnhealthyNodeCount(): number {
+    return Array.from(this.healthData.values()).filter(h => h.status === 'unhealthy' || h.status === 'unknown').length;
+  }
+
+  // Mock implementations for alert channels (replace with real implementations)
+  private async sendEmailAlert(alert: HealthAlert): Promise<void> {
+    console.log(`📧 Email alert: ${alert.title} - ${alert.message}`);
+  }
+
+  private async sendSlackAlert(alert: HealthAlert): Promise<void> {
+    console.log(`💬 Slack alert: ${alert.title} - ${alert.message}`);
+  }
+
+  private async sendWebhookAlert(alert: HealthAlert): Promise<void> {
+    console.log(`🔗 Webhook alert: ${alert.title} - ${alert.message}`);
+  }
+
+  /**
+   * Event system
+   */
+  on(event: string, listener: Function): void {
+    if (!this.eventListeners.has(event)) {
+      this.eventListeners.set(event, []);
+    }
+    this.eventListeners.get(event)!.push(listener);
+  }
+
+  off(event: string, listener: Function): void {
+    const listeners = this.eventListeners.get(event);
+    if (listeners) {
+      const index = listeners.indexOf(listener);
+      if (index !== -1) {
+        listeners.splice(index, 1);
+      }
+    }
+  }
+
+  private emit(event: string, data: any): void {
+    const listeners = this.eventListeners.get(event);
+    if (listeners) {
+      listeners.forEach(listener => {
+        try {
+          listener(data);
+        } catch (error) {
+          console.error(`Event listener error for ${event}:`, error);
+        }
+      });
+    }
+  }
+
+  /**
+   * Get health summary for dashboard
+   */
+  getHealthSummary(): {
+    overallScore: number;
+    totalNodes: number;
+    healthCounts: Record<string, number>;
+    criticalAlerts: number;
+    trendingDown: string[];
+    topIssues: Array<{ nodeId: string; issue: string; severity: string }>;
+  } {
+    const allHealthData = Array.from(this.healthData.values());
+    const totalNodes = allHealthData.length;
+
+    if (totalNodes === 0) {
+      return {
+        overallScore: 100,
+        totalNodes: 0,
+        healthCounts: { healthy: 0, degraded: 0, unhealthy: 0, unknown: 0 },
+        criticalAlerts: 0,
+        trendingDown: [],
+        topIssues: [],
+      };
+    }
+
+    // Calculate overall score
+    const totalScore = allHealthData.reduce((sum, data) => sum + data.score, 0);
+    const overallScore = totalScore / totalNodes;
+
+    // Count by status
+    const healthCounts = {
+      healthy: allHealthData.filter(d => d.status === 'healthy').length,
+      degraded: allHealthData.filter(d => d.status === 'degraded').length,
+      unhealthy: allHealthData.filter(d => d.status === 'unhealthy').length,
+      unknown: allHealthData.filter(d => d.status === 'unknown').length,
+    };
+
+    // Count critical alerts
+    const criticalAlerts = this.getActiveAlerts().filter(a => a.severity === 'critical').length;
+
+    // Find trending down services
+    const trendingDown: string[] = [];
+    this.healthData.forEach((data, nodeId) => {
+      const trend = this.getHealthTrends(nodeId, '1h');
+      if (trend && trend.trend === 'degrading' && trend.changeRate < -10) {
+        trendingDown.push(nodeId);
+      }
+    });
+
+    // Top issues
+    const topIssues = this.getActiveAlerts()
+      .slice(0, 5)
+      .map(alert => ({
+        nodeId: alert.nodeId,
+        issue: alert.title,
+        severity: alert.severity,
+      }));
+
+    return {
+      overallScore: Math.round(overallScore * 100) / 100,
+      totalNodes,
+      healthCounts,
+      criticalAlerts,
+      trendingDown,
+      topIssues,
+    };
+  }
+
+  /**
+   * Export health data for analysis
+   */
+  exportHealthData(format: 'json' | 'csv' = 'json'): string {
+    const allData = Array.from(this.healthData.values());
+    
+    if (format === 'csv') {
+      const headers = [
+        'nodeId', 'timestamp', 'status', 'score', 'uptime', 'responseTime', 
+        'errorRate', 'throughput', 'cpuUsage', 'memoryUsage', 'diskUsage'
+      ];
+      
+      let csv = headers.join(',') + '\n';
+      
+      allData.forEach(data => {
+        const row = [
+          data.nodeId,
+          data.timestamp.toISOString(),
+          data.status,
+          data.score,
+          data.metrics.uptime,
+          data.metrics.responseTime,
+          data.metrics.errorRate,
+          data.metrics.throughput,
+          data.metrics.cpuUsage,
+          data.metrics.memoryUsage,
+          data.metrics.diskUsage,
+        ];
+        csv += row.join(',') + '\n';
+      });
+      
+      return csv;
+    }
+
+    return JSON.stringify({
+      exportedAt: new Date().toISOString(),
+      healthData: allData,
+      activeAlerts: this.getActiveAlerts(),
+      summary: this.getHealthSummary(),
+    }, null, 2);
+  }
+}

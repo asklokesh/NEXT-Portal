@@ -1,0 +1,173 @@
+app:
+  title: SaaS IDP Backstage Backend
+  baseUrl: http://localhost:7007
+
+organization:
+  name: SaaS IDP
+
+backend:
+  # Used for enabling authentication, secret management, and more.
+  # Can be set to a secret to enable authentication, metrics, and other features.
+  # For local dev, set to 'development'
+  baseUrl: http://localhost:7007
+  listen:
+    port: 7007
+    host: 0.0.0.0
+
+  csp:
+    connect-src: ["'self'", 'http:', 'https:']
+    # Content Security Policy for the backend.
+
+  cors:
+    origin: http://localhost:3000
+    methods: [GET, HEAD, PATCH, POST, PUT, DELETE]
+    credentials: true
+
+  database:
+    client: pg
+    connection:
+      host: ${POSTGRES_HOST:-localhost}
+      port: ${POSTGRES_PORT:-5432}
+      user: ${POSTGRES_USER:-postgres}
+      password: ${POSTGRES_PASSWORD:-password}
+      database: ${POSTGRES_DB:-backstage}
+      ssl: false
+      # https://node-postgres.com/features/ssl
+      # you can set the sslmode configuration option via the `PGSSLMODE` environment variable
+      # see https://www.postgresql.org/docs/current/libpq-ssl.html Table 33.1. SSL Mode Descriptions (e.g. require)
+      # ssl:
+      #   ca: # if you have a CA file and want to verify it you can uncomment this section
+      #     $file: <file-path>/ca/server.crt
+
+integrations:
+  github:
+    - host: github.com
+      token: ${GITHUB_TOKEN}
+
+proxy:
+  endpoints:
+    '/test':
+      target: 'https://example.com'
+      changeOrigin: true
+
+# Reference documentation http://backstage.io/docs/features/techdocs/configuration
+# Note: After experimenting with basic setup, use CI/CD to generate docs
+# and an external cloud storage when deploying TechDocs for production use-case.
+# https://backstage.io/docs/features/techdocs/how-to-guides#how-to-migrate-from-techdocs-basic-to-recommended-deployment-approach
+techdocs:
+  builder: 'local' # Alternatives - 'external'
+  generator:
+    runIn: 'docker' # Alternatives - 'local'
+  publisher:
+    type: 'local' # Alternatives - 'googleGcs' or 'awsS3'. Read documentation for using alternatives.
+
+auth:
+  # see https://backstage.io/docs/auth/ to learn about auth providers
+  providers:
+    # Guest provider for development only
+    guest:
+      dangerouslyAllowOutsideDevelopment: true
+    
+    # GitHub OAuth provider
+    github:
+      development:
+        clientId: ${AUTH_GITHUB_CLIENT_ID}
+        clientSecret: ${AUTH_GITHUB_CLIENT_SECRET}
+        
+    # Microsoft Azure AD provider  
+    microsoft:
+      development:
+        clientId: ${AUTH_MICROSOFT_CLIENT_ID}
+        clientSecret: ${AUTH_MICROSOFT_CLIENT_SECRET}
+        tenantId: ${AUTH_MICROSOFT_TENANT_ID}
+        
+    # Google OAuth provider
+    google:
+      development:
+        clientId: ${AUTH_GOOGLE_CLIENT_ID}
+        clientSecret: ${AUTH_GOOGLE_CLIENT_SECRET}
+        
+  # Session configuration
+  session:
+    secret: ${AUTH_SESSION_SECRET}
+  
+  # JWT configuration
+  jwt:
+    secret: ${AUTH_JWT_SECRET}
+    algorithm: HS256
+    expiresIn: '1h'
+
+scaffolder:
+  # see https://backstage.io/docs/features/software-templates/configuration for software template options
+
+catalog:
+  import:
+    entityFilename: catalog-info.yaml
+    pullRequestBranchName: backstage-integration
+  rules:
+    - allow: [Component, System, API, Resource, Location, Domain, User, Group]
+  locations:
+    # Local example data, file locations are relative to the backend process, typically `packages/backend`
+    - type: file
+      target: ../../examples/entities.yaml
+
+    # Local example template
+    - type: file
+      target: ../../examples/template/template.yaml
+      rules:
+        - allow: [Template]
+
+    # Local example organizational data
+    - type: file
+      target: ../../examples/org.yaml
+      rules:
+        - allow: [User, Group]
+
+    ## Uncomment these lines to add more example data
+    # - type: url
+    #   target: https://github.com/backstage/backstage/blob/master/packages/catalog-model/examples/all.yaml
+
+    ## Uncomment these lines to add an example org
+    # - type: url
+    #   target: https://github.com/backstage/backstage/blob/master/packages/catalog-model/examples/acme-corp.yaml
+    #   rules:
+    #     - allow: [User, Group]
+
+kubernetes:
+  serviceLocatorMethod:
+    type: 'multiTenant'
+  clusterLocatorMethods:
+    - type: 'config'
+      clusters: []
+
+permission:
+  enabled: true
+  
+  # Permission policy configuration
+  policy:
+    # Allow all by default for development
+    # In production, implement proper RBAC policies
+    defaultPolicy: 'allow'
+    
+  # Role-based access control
+  rbac:
+    enabled: true
+    adminUsers:
+      - user:default/admin
+      - user:default/platform-admin
+    
+    policies:
+      # Catalog permissions
+      - permission: catalog-entity
+        policy: allow
+        resourceType: catalog-entity
+        
+      # Template permissions
+      - permission: scaffolder-template
+        policy: allow
+        resourceType: template
+        
+      # TechDocs permissions  
+      - permission: techdocs-document
+        policy: allow
+        resourceType: techdocs-document

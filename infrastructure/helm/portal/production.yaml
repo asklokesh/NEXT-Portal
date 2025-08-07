@@ -1,0 +1,70 @@
+
+# Production overrides for portal
+
+global:
+  imageRegistry: "your-docker-registry"
+
+frontend:
+  replicaCount: 3
+  image:
+    repository: "your-docker-registry/portal-frontend"
+    tag: "1.0.0"
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 2Gi
+    requests:
+      cpu: 500m
+      memory: 1Gi
+
+backend:
+  replicaCount: 3
+  image:
+    repository: "your-docker-registry/backstage-backend"
+    tag: "1.0.0"
+  resources:
+    limits:
+      cpu: 2000m
+      memory: 4Gi
+    requests:
+      cpu: 1000m
+      memory: 2Gi
+
+ingress:
+  enabled: true
+  className: "nginx"
+  annotations:
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+  hosts:
+    - host: "portal.your-domain.com"
+      paths:
+        - path: /
+          pathType: Prefix
+          service:
+            name: portal-frontend
+            port: 4400
+    - host: "api.your-domain.com"
+      paths:
+        - path: /
+          pathType: Prefix
+          service:
+            name: backstage-backend
+            port: 7007
+  tls:
+    - secretName: portal-tls-secret
+      hosts:
+        - "portal.your-domain.com"
+        - "api.your-domain.com"
+
+serviceAccount:
+  annotations:
+    eks.amazonaws.com/role-arn: "arn:aws:iam::YOUR_AWS_ACCOUNT_ID:role/portal-service-role-production"
+
+postgresql:
+  enabled: false
+
+redis:
+  enabled: false
+
+monitoring:
+  enabled: true

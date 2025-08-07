@@ -1,0 +1,37 @@
+apiVersion: v2
+name: developer-portal
+description: Production-grade Backstage Developer Portal with Next.js frontend
+type: application
+version: 1.0.0
+appVersion: "1.0.0"
+home: https://github.com/example/developer-portal
+sources:
+  - https://github.com/example/developer-portal
+maintainers:
+  - name: Platform Team
+    email: platform-team@example.com
+keywords:
+  - backstage
+  - developer-portal
+  - idp
+  - platform-engineering
+  - kubernetes
+dependencies:
+  - name: postgresql
+    version: "13.2.24"
+    repository: "https://charts.bitnami.com/bitnami"
+    condition: postgresql.enabled
+  - name: redis
+    version: "18.6.1"
+    repository: "https://charts.bitnami.com/bitnami"
+    condition: redis.enabled
+  - name: elasticsearch
+    version: "8.5.1"
+    repository: "https://helm.elastic.co"
+    condition: elasticsearch.enabled
+annotations:
+  artifacthub.io/category: "integration-delivery"
+  artifacthub.io/license: "Apache-2.0"
+  artifacthub.io/signKey: |
+    fingerprint: 1234567890ABCDEF
+    url: https://keybase.io/platformteam

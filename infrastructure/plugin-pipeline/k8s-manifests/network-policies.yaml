@@ -1,0 +1,290 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: plugin-pipeline-orchestrator-netpol
+  namespace: plugin-pipeline
+  labels:
+    app.kubernetes.io/name: plugin-pipeline-orchestrator-netpol
+    app.kubernetes.io/component: security
+    app.kubernetes.io/part-of: plugin-pipeline
+  annotations:
+    plugin-pipeline/description: "Network policy for plugin pipeline orchestrator"
+spec:
+  podSelector:
+    matchLabels:
+      app: plugin-pipeline-orchestrator
+  policyTypes:
+    - Ingress
+    - Egress
+  
+  ingress:
+    # Allow ingress from monitoring systems
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: monitoring
+        - namespaceSelector:
+            matchLabels:
+              name: istio-system
+      ports:
+        - protocol: TCP
+          port: 9090  # Metrics
+        - protocol: TCP
+          port: 8081  # Health checks
+    
+    # Allow ingress from API Gateway/Load Balancer
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: ingress-nginx
+        - namespaceSelector:
+            matchLabels:
+              name: istio-system
+      ports:
+        - protocol: TCP
+          port: 8080  # API
+    
+    # Allow ingress from plugins namespace for webhooks
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              plugin-pipeline/type: "plugin-namespace"
+      ports:
+        - protocol: TCP
+          port: 8080
+  
+  egress:
+    # Allow DNS resolution
+    - to: []
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    
+    # Allow HTTPS outbound (for registry access, security scanners, etc.)
+    - to: []
+      ports:
+        - protocol: TCP
+          port: 443
+    
+    # Allow HTTP outbound (for internal services)
+    - to: []
+      ports:
+        - protocol: TCP
+          port: 80
+    
+    # Allow database access
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              name: database
+      ports:
+        - protocol: TCP
+          port: 5432
+    
+    # Allow Redis access
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              name: cache
+      ports:
+        - protocol: TCP
+          port: 6379
+    
+    # Allow Kubernetes API server access
+    - to: []
+      ports:
+        - protocol: TCP
+          port: 6443
+        - protocol: TCP
+          port: 443
+    
+    # Allow Docker registry access
+    - to: []
+      ports:
+        - protocol: TCP
+          port: 5000
+    
+    # Allow monitoring and tracing
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              name: monitoring
+        - namespaceSelector:
+            matchLabels:
+              name: istio-system
+      ports:
+        - protocol: TCP
+          port: 9090  # Prometheus
+        - protocol: TCP
+          port: 3100  # Loki
+        - protocol: TCP
+          port: 14268 # Jaeger
+        - protocol: TCP
+          port: 9411  # Zipkin
+    
+    # Allow access to plugin namespaces
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              plugin-pipeline/type: "plugin-namespace"
+      ports:
+        - protocol: TCP
+          port: 80
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 8080
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: plugin-default-netpol
+  namespace: plugins
+  labels:
+    app.kubernetes.io/name: plugin-default-netpol
+    app.kubernetes.io/component: security
+    app.kubernetes.io/part-of: plugin-pipeline
+  annotations:
+    plugin-pipeline/description: "Default network policy for plugin runtime"
+spec:
+  podSelector: {} # Apply to all pods in the namespace
+  policyTypes:
+    - Ingress
+    - Egress
+  
+  ingress:
+    # Allow ingress from service mesh sidecars
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: istio-system
+    
+    # Allow ingress from monitoring
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: monitoring
+      ports:
+        - protocol: TCP
+          port: 9090  # Metrics
+    
+    # Allow ingress from plugin pipeline orchestrator
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: plugin-pipeline
+      ports:
+        - protocol: TCP
+          port: 80
+        - protocol: TCP
+          port: 8080
+        - protocol: TCP
+          port: 9090
+    
+    # Allow ingress from other plugins in the same namespace
+    - from:
+        - podSelector: {}
+    
+    # Allow ingress from developer portal
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: developer-portal
+  
+  egress:
+    # Allow DNS resolution
+    - to: []
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    
+    # Allow HTTPS outbound for external APIs
+    - to: []
+      ports:
+        - protocol: TCP
+          port: 443
+    
+    # Allow HTTP outbound for external APIs
+    - to: []
+      ports:
+        - protocol: TCP
+          port: 80
+    
+    # Allow database access (plugins might need DB access)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              name: database
+      ports:
+        - protocol: TCP
+          port: 5432
+        - protocol: TCP
+          port: 3306
+        - protocol: TCP
+          port: 27017
+    
+    # Allow Redis access
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              name: cache
+      ports:
+        - protocol: TCP
+          port: 6379
+    
+    # Allow communication with developer portal backend
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              name: developer-portal
+      ports:
+        - protocol: TCP
+          port: 7007
+    
+    # Allow communication between plugins
+    - to:
+        - podSelector: {}
+    
+    # Allow communication to service mesh control plane
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              name: istio-system
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: deny-all-default
+  namespace: plugins
+  labels:
+    app.kubernetes.io/name: deny-all-default
+    app.kubernetes.io/component: security
+    app.kubernetes.io/part-of: plugin-pipeline
+  annotations:
+    plugin-pipeline/description: "Default deny-all network policy (lowest priority)"
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: plugin-pipeline-deny-all-default
+  namespace: plugin-pipeline
+  labels:
+    app.kubernetes.io/name: plugin-pipeline-deny-all-default
+    app.kubernetes.io/component: security
+    app.kubernetes.io/part-of: plugin-pipeline
+  annotations:
+    plugin-pipeline/description: "Default deny-all network policy for pipeline namespace"
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress

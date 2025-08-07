@@ -1,0 +1,122 @@
+version: '3.8'
+
+services:
+  # Elasticsearch Node - Single node for development, can be scaled for production
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.12.0
+    container_name: idp-elasticsearch
+    environment:
+      - node.name=elasticsearch-01
+      - cluster.name=idp-search-cluster
+      - discovery.type=single-node
+      - bootstrap.memory_lock=true
+      - "ES_JAVA_OPTS=-Xms2g -Xmx2g"
+      - xpack.security.enabled=false
+      - xpack.security.enrollment.enabled=false
+      - xpack.security.http.ssl.enabled=false
+      - xpack.security.transport.ssl.enabled=false
+      - cluster.routing.allocation.disk.threshold_enabled=false
+      - indices.lifecycle.history_index_enabled=false
+      - action.destructive_requires_name=false
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+    volumes:
+      - elasticsearch_data:/usr/share/elasticsearch/data
+      - ./config/elasticsearch/synonyms.txt:/usr/share/elasticsearch/config/synonyms.txt:ro
+      - ./config/elasticsearch/stopwords.txt:/usr/share/elasticsearch/config/stopwords.txt:ro
+    ports:
+      - '9200:9200'
+      - '9300:9300'
+    networks:
+      - idp-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9200/_cluster/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+        reservations:
+          memory: 2G
+
+  # Kibana for Elasticsearch management and debugging (optional for development)
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.12.0
+    container_name: idp-kibana
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+      - ELASTICSEARCH_USERNAME=kibana_system
+      - ELASTICSEARCH_PASSWORD=changeme
+      - xpack.security.enabled=false
+      - telemetry.enabled=false
+      - telemetry.optIn=false
+    ports:
+      - '5601:5601'
+    networks:
+      - idp-network
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:5601/api/status || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  # Logstash for data pipeline (optional - for advanced ETL)
+  logstash:
+    image: docker.elastic.co/logstash/logstash:8.12.0
+    container_name: idp-logstash
+    environment:
+      - xpack.monitoring.enabled=false
+      - "LS_JAVA_OPTS=-Xmx1g -Xms1g"
+    volumes:
+      - ./config/logstash/pipeline:/usr/share/logstash/pipeline:ro
+      - ./config/logstash/config/logstash.yml:/usr/share/logstash/config/logstash.yml:ro
+    ports:
+      - '5000:5000/tcp'
+      - '5000:5000/udp'
+      - '9600:9600'
+    networks:
+      - idp-network
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+
+  # Elasticsearch Exporter for Prometheus metrics
+  elasticsearch-exporter:
+    image: quay.io/prometheuscommunity/elasticsearch-exporter:latest
+    container_name: idp-elasticsearch-exporter
+    command:
+      - '--es.uri=http://elasticsearch:9200'
+      - '--es.all'
+      - '--es.indices'
+      - '--es.cluster_settings'
+      - '--es.indices_settings'
+      - '--es.shards'
+      - '--es.snapshots'
+    ports:
+      - '9114:9114'
+    networks:
+      - idp-network
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  elasticsearch_data:
+    driver: local
+
+networks:
+  idp-network:
+    external: true

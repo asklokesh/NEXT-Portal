@@ -1,0 +1,99 @@
+version: '3.8'
+
+services:
+ # PostgreSQL database for both Backstage and UI wrapper
+ postgres:
+ image: postgres:16-alpine
+ environment:
+ POSTGRES_USER: postgres
+ POSTGRES_PASSWORD: password
+ POSTGRES_DB: backstage
+ ports:
+ - "5432:5432"
+ volumes:
+ - postgres_data:/var/lib/postgresql/data
+ healthcheck:
+ test: ["CMD-SHELL", "pg_isready -U postgres"]
+ interval: 5s
+ timeout: 5s
+ retries: 5
+
+ # Redis for caching
+ redis:
+ image: redis:7-alpine
+ ports:
+ - "6379:6379"
+ healthcheck:
+ test: ["CMD", "redis-cli", "ping"]
+ interval: 5s
+ timeout: 5s
+ retries: 5
+
+ # Backstage backend
+ backstage:
+ build:
+ context: ./backstage
+ dockerfile: packages/backend/Dockerfile
+ ports:
+ - "7007:7007"
+ environment:
+ POSTGRES_HOST: postgres
+ POSTGRES_PORT: 5432
+ POSTGRES_USER: postgres
+ POSTGRES_PASSWORD: password
+ APP_CONFIG_app_title: "Backstage with UI Wrapper"
+ APP_CONFIG_app_baseUrl: http://localhost:3000
+ APP_CONFIG_backend_baseUrl: http://localhost:7007
+ APP_CONFIG_backend_cors_origin: http://localhost:3000
+ APP_CONFIG_backend_database_client: pg
+ APP_CONFIG_backend_database_connection_host: postgres
+ APP_CONFIG_backend_database_connection_port: 5432
+ APP_CONFIG_backend_database_connection_user: postgres
+ APP_CONFIG_backend_database_connection_password: password
+ APP_CONFIG_backend_database_connection_database: backstage
+ APP_CONFIG_auth_providers_guest_dangerouslyAllowOutsideDevelopment: "true"
+ NODE_ENV: development
+ depends_on:
+ postgres:
+ condition: service_healthy
+ healthcheck:
+ test: ["CMD", "curl", "-f", "http://localhost:7007/api/catalog/entities"]
+ interval: 10s
+ timeout: 5s
+ retries: 5
+
+ # UI Wrapper
+ ui-wrapper:
+ build:
+ context: .
+ dockerfile: Dockerfile
+ target: development
+ ports:
+ - "3000:3000"
+ environment:
+ NEXT_PUBLIC_BACKSTAGE_URL: http://localhost:7007
+ NEXT_PUBLIC_BACKSTAGE_API_URL: http://localhost:7007/api
+ BACKSTAGE_API_URL: http://backstage:7007/api
+ DATABASE_URL: postgresql://postgres:password@postgres:5432/idp
+ REDIS_URL: redis://redis:6379
+ NEXT_PUBLIC_DEMO_MODE: "false"
+ NODE_ENV: development
+ volumes:
+ - ./src:/app/src
+ - ./public:/app/public
+ - ./prisma:/app/prisma
+ depends_on:
+ postgres:
+ condition: service_healthy
+ redis:
+ condition: service_healthy
+ backstage:
+ condition: service_healthy
+ command: yarn dev
+
+volumes:
+ postgres_data:
+
+networks:
+ default:
+ name: backstage-network

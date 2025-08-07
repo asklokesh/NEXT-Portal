@@ -1,0 +1,276 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: monitoring
+  labels:
+    name: monitoring
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+  namespace: monitoring
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 30s
+      evaluation_interval: 30s
+      external_labels:
+        cluster: 'developer-portal'
+        environment: 'production'
+    
+    alerting:
+      alertmanagers:
+        - static_configs:
+            - targets:
+                - alertmanager:9093
+    
+    rule_files:
+      - /etc/prometheus/rules/*.yml
+    
+    scrape_configs:
+      - job_name: 'prometheus'
+        static_configs:
+          - targets: ['localhost:9090']
+      
+      - job_name: 'portal-frontend'
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces:
+              names:
+                - developer-portal
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_label_app]
+            action: keep
+            regex: portal-frontend
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+            action: keep
+            regex: true
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+            action: replace
+            target_label: __metrics_path__
+            regex: (.+)
+          - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+            action: replace
+            regex: ([^:]+)(?::\d+)?;(\d+)
+            replacement: $1:$2
+            target_label: __address__
+          - action: labelmap
+            regex: __meta_kubernetes_pod_label_(.+)
+          - source_labels: [__meta_kubernetes_namespace]
+            action: replace
+            target_label: kubernetes_namespace
+          - source_labels: [__meta_kubernetes_pod_name]
+            action: replace
+            target_label: kubernetes_pod_name
+      
+      - job_name: 'backstage-backend'
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces:
+              names:
+                - developer-portal
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_label_app]
+            action: keep
+            regex: backstage-backend
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+            action: keep
+            regex: true
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+            action: replace
+            target_label: __metrics_path__
+            regex: (.+)
+          - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+            action: replace
+            regex: ([^:]+)(?::\d+)?;(\d+)
+            replacement: $1:$2
+            target_label: __address__
+          - action: labelmap
+            regex: __meta_kubernetes_pod_label_(.+)
+          - source_labels: [__meta_kubernetes_namespace]
+            action: replace
+            target_label: kubernetes_namespace
+          - source_labels: [__meta_kubernetes_pod_name]
+            action: replace
+            target_label: kubernetes_pod_name
+      
+      - job_name: 'kubernetes-apiservers'
+        kubernetes_sd_configs:
+          - role: endpoints
+        scheme: https
+        tls_config:
+          ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_namespace, __meta_kubernetes_service_name, __meta_kubernetes_endpoint_port_name]
+            action: keep
+            regex: default;kubernetes;https
+      
+      - job_name: 'kubernetes-nodes'
+        kubernetes_sd_configs:
+          - role: node
+        scheme: https
+        tls_config:
+          ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+        relabel_configs:
+          - action: labelmap
+            regex: __meta_kubernetes_node_label_(.+)
+      
+      - job_name: 'kubernetes-cadvisor'
+        kubernetes_sd_configs:
+          - role: node
+        scheme: https
+        tls_config:
+          ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+        relabel_configs:
+          - action: labelmap
+            regex: __meta_kubernetes_node_label_(.+)
+          - target_label: __address__
+            replacement: kubernetes.default.svc:443
+          - source_labels: [__meta_kubernetes_node_name]
+            regex: (.+)
+            target_label: __metrics_path__
+            replacement: /api/v1/nodes/${1}/proxy/metrics/cadvisor
+      
+      - job_name: 'kubernetes-service-endpoints'
+        kubernetes_sd_configs:
+          - role: endpoints
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_service_annotation_prometheus_io_scrape]
+            action: keep
+            regex: true
+          - source_labels: [__meta_kubernetes_service_annotation_prometheus_io_scheme]
+            action: replace
+            target_label: __scheme__
+            regex: (https?)
+          - source_labels: [__meta_kubernetes_service_annotation_prometheus_io_path]
+            action: replace
+            target_label: __metrics_path__
+            regex: (.+)
+          - source_labels: [__address__, __meta_kubernetes_service_annotation_prometheus_io_port]
+            action: replace
+            target_label: __address__
+            regex: ([^:]+)(?::\d+)?;(\d+)
+            replacement: $1:$2
+          - action: labelmap
+            regex: __meta_kubernetes_service_label_(.+)
+          - source_labels: [__meta_kubernetes_namespace]
+            action: replace
+            target_label: kubernetes_namespace
+          - source_labels: [__meta_kubernetes_service_name]
+            action: replace
+            target_label: kubernetes_name
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-rules
+  namespace: monitoring
+data:
+  portal-alerts.yml: |
+    groups:
+      - name: portal_alerts
+        interval: 30s
+        rules:
+          - alert: HighErrorRate
+            expr: rate(http_requests_total{status=~"5.."}[5m]) > 0.05
+            for: 5m
+            labels:
+              severity: critical
+              component: portal
+            annotations:
+              summary: "High error rate detected"
+              description: "Error rate is above 5% for {{ $labels.job }} (current value: {{ $value }})"
+          
+          - alert: HighResponseTime
+            expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m])) > 2
+            for: 5m
+            labels:
+              severity: warning
+              component: portal
+            annotations:
+              summary: "High response time detected"
+              description: "95th percentile response time is above 2s for {{ $labels.job }} (current value: {{ $value }}s)"
+          
+          - alert: PodMemoryUsage
+            expr: container_memory_usage_bytes{pod=~"portal-.*|backstage-.*"} / container_spec_memory_limit_bytes > 0.9
+            for: 5m
+            labels:
+              severity: warning
+              component: portal
+            annotations:
+              summary: "High memory usage"
+              description: "Pod {{ $labels.pod }} memory usage is above 90% (current value: {{ $value }})"
+          
+          - alert: PodCPUUsage
+            expr: rate(container_cpu_usage_seconds_total{pod=~"portal-.*|backstage-.*"}[5m]) > 0.9
+            for: 5m
+            labels:
+              severity: warning
+              component: portal
+            annotations:
+              summary: "High CPU usage"
+              description: "Pod {{ $labels.pod }} CPU usage is above 90% (current value: {{ $value }})"
+          
+          - alert: PodRestartingTooOften
+            expr: rate(kube_pod_container_status_restarts_total{namespace="developer-portal"}[15m]) > 0
+            for: 5m
+            labels:
+              severity: warning
+              component: portal
+            annotations:
+              summary: "Pod restarting frequently"
+              description: "Pod {{ $labels.pod }} has restarted {{ $value }} times in the last 15 minutes"
+          
+          - alert: DatabaseConnectionPoolExhausted
+            expr: pg_stat_database_numbackends{datname="developer_portal"} / pg_settings_max_connections > 0.8
+            for: 5m
+            labels:
+              severity: critical
+              component: database
+            annotations:
+              summary: "Database connection pool nearly exhausted"
+              description: "Database connection pool usage is above 80% (current value: {{ $value }})"
+          
+          - alert: RedisMemoryUsage
+            expr: redis_memory_used_bytes / redis_memory_max_bytes > 0.9
+            for: 5m
+            labels:
+              severity: warning
+              component: cache
+            annotations:
+              summary: "Redis memory usage high"
+              description: "Redis memory usage is above 90% (current value: {{ $value }})"
+          
+          - alert: ServiceDown
+            expr: up{job=~"portal-frontend|backstage-backend"} == 0
+            for: 1m
+            labels:
+              severity: critical
+              component: portal
+            annotations:
+              summary: "Service is down"
+              description: "{{ $labels.job }} is down"
+          
+          - alert: HighDiskUsage
+            expr: (node_filesystem_size_bytes - node_filesystem_free_bytes) / node_filesystem_size_bytes > 0.85
+            for: 5m
+            labels:
+              severity: warning
+              component: infrastructure
+            annotations:
+              summary: "High disk usage"
+              description: "Disk usage is above 85% on {{ $labels.instance }} (current value: {{ $value }})"
+          
+          - alert: CertificateExpiringSoon
+            expr: certmanager_certificate_expiration_timestamp_seconds - time() < 7 * 24 * 3600
+            for: 1h
+            labels:
+              severity: warning
+              component: infrastructure
+            annotations:
+              summary: "Certificate expiring soon"
+              description: "Certificate {{ $labels.name }} will expire in less than 7 days"

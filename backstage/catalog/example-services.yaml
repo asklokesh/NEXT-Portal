@@ -1,0 +1,87 @@
+apiVersion: backstage.io/v1alpha1
+kind: Location
+metadata:
+ name: example-services
+ description: Example services for UI wrapper integration
+spec:
+ targets:
+ - ./components/*.yaml
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+ name: example-frontend
+ description: Example frontend service
+ tags:
+ - frontend
+ - react
+ annotations:
+ backstage.io/techdocs-ref: dir:.
+spec:
+ type: website
+ lifecycle: production
+ owner: team-a
+ system: example-system
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+ name: example-backend
+ description: Example backend service
+ tags:
+ - backend
+ - nodejs
+ links:
+ - url: https://example.com
+ title: Production URL
+ - url: https://github.com/example/backend
+ title: GitHub Repository
+spec:
+ type: service
+ lifecycle: production
+ owner: team-a
+ system: example-system
+ dependsOn:
+ - component:example-database
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+ name: example-database
+ description: Example database
+ tags:
+ - database
+ - postgresql
+spec:
+ type: database
+ lifecycle: production
+ owner: team-a
+ system: example-system
+---
+apiVersion: backstage.io/v1alpha1
+kind: System
+metadata:
+ name: example-system
+ description: Example system showing service relationships
+ tags:
+ - example
+spec:
+ owner: team-a
+---
+apiVersion: backstage.io/v1alpha1
+kind: Group
+metadata:
+ name: team-a
+ description: Example Team A
+spec:
+ type: team
+ children: []
+ members:
+ - guest
+---
+apiVersion: backstage.io/v1alpha1
+kind: User
+metadata:
+ name: guest
+spec:
+ memberOf: [team-a]

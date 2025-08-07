@@ -1,0 +1,37 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: plugin-pipeline
+  labels:
+    name: plugin-pipeline
+    managed-by: plugin-pipeline-orchestrator
+    app.kubernetes.io/name: plugin-pipeline
+    app.kubernetes.io/version: v1.0.0
+    app.kubernetes.io/component: infrastructure
+    app.kubernetes.io/part-of: developer-portal
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted  
+    pod-security.kubernetes.io/warn: restricted
+  annotations:
+    plugin-pipeline/description: "Plugin installation pipeline infrastructure namespace"
+    plugin-pipeline/created-by: "plugin-pipeline-orchestrator"
+    plugin-pipeline/version: "1.0.0"
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: plugins
+  labels:
+    name: plugins
+    managed-by: plugin-pipeline-orchestrator
+    plugin-pipeline/type: "plugin-namespace"
+    app.kubernetes.io/name: plugins
+    app.kubernetes.io/component: runtime
+    app.kubernetes.io/part-of: developer-portal
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+  annotations:
+    plugin-pipeline/description: "Default namespace for plugin deployments"
+    plugin-pipeline/isolation: "enabled"
+    plugin-pipeline/monitoring: "enabled"

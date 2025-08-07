@@ -1,0 +1,234 @@
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: plugin-pipeline-quota
+  namespace: plugin-pipeline
+  labels:
+    app.kubernetes.io/name: plugin-pipeline-quota
+    app.kubernetes.io/component: resource-management
+    app.kubernetes.io/part-of: plugin-pipeline
+  annotations:
+    plugin-pipeline/description: "Resource quota for plugin pipeline infrastructure"
+spec:
+  hard:
+    # Pod limits
+    pods: "20"
+    
+    # CPU limits
+    requests.cpu: "4"
+    limits.cpu: "8"
+    
+    # Memory limits
+    requests.memory: "8Gi"
+    limits.memory: "16Gi"
+    
+    # Storage limits
+    requests.storage: "100Gi"
+    persistentvolumeclaims: "10"
+    
+    # Service limits
+    services: "10"
+    services.loadbalancers: "2"
+    services.nodeports: "5"
+    
+    # ConfigMap and Secret limits
+    configmaps: "20"
+    secrets: "20"
+    
+    # Extended resource limits
+    count/deployments.apps: "10"
+    count/jobs.batch: "50"
+    count/cronjobs.batch: "10"
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: plugins-default-quota
+  namespace: plugins
+  labels:
+    app.kubernetes.io/name: plugins-default-quota
+    app.kubernetes.io/component: resource-management
+    app.kubernetes.io/part-of: plugin-pipeline
+  annotations:
+    plugin-pipeline/description: "Default resource quota for plugin runtime namespace"
+spec:
+  hard:
+    # Pod limits - allow for many plugin instances
+    pods: "100"
+    
+    # CPU limits - generous allocation for plugins
+    requests.cpu: "20"
+    limits.cpu: "50"
+    
+    # Memory limits - sufficient for plugin workloads
+    requests.memory: "40Gi" 
+    limits.memory: "100Gi"
+    
+    # Storage limits
+    requests.storage: "500Gi"
+    persistentvolumeclaims: "50"
+    
+    # Service limits
+    services: "50"
+    services.loadbalancers: "0" # Plugins should not create LoadBalancers
+    services.nodeports: "0"     # Plugins should not create NodePorts
+    
+    # ConfigMap and Secret limits
+    configmaps: "100"
+    secrets: "100"
+    
+    # Extended resource limits
+    count/deployments.apps: "50"
+    count/replicasets.apps: "100"
+    count/horizontalpodautoscalers.autoscaling: "50"
+    count/ingresses.networking.k8s.io: "25"
+    count/networkpolicies.networking.k8s.io: "25"
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: plugin-pipeline-limits
+  namespace: plugin-pipeline
+  labels:
+    app.kubernetes.io/name: plugin-pipeline-limits
+    app.kubernetes.io/component: resource-management
+    app.kubernetes.io/part-of: plugin-pipeline
+  annotations:
+    plugin-pipeline/description: "Resource limits for plugin pipeline infrastructure"
+spec:
+  limits:
+    # Container limits
+    - type: Container
+      default:
+        cpu: "1"
+        memory: "2Gi"
+        ephemeral-storage: "5Gi"
+      defaultRequest:
+        cpu: "100m"
+        memory: "128Mi"
+        ephemeral-storage: "1Gi"
+      max:
+        cpu: "4"
+        memory: "8Gi"
+        ephemeral-storage: "20Gi"
+      min:
+        cpu: "50m"
+        memory: "64Mi"
+        ephemeral-storage: "100Mi"
+    
+    # Pod limits
+    - type: Pod
+      max:
+        cpu: "4"
+        memory: "8Gi"
+      min:
+        cpu: "50m"
+        memory: "64Mi"
+    
+    # PVC limits
+    - type: PersistentVolumeClaim
+      max:
+        storage: "50Gi"
+      min:
+        storage: "1Gi"
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: plugins-default-limits
+  namespace: plugins
+  labels:
+    app.kubernetes.io/name: plugins-default-limits
+    app.kubernetes.io/component: resource-management
+    app.kubernetes.io/part-of: plugin-pipeline
+  annotations:
+    plugin-pipeline/description: "Default resource limits for plugin runtime"
+spec:
+  limits:
+    # Container limits - more restrictive for plugins
+    - type: Container
+      default:
+        cpu: "500m"
+        memory: "1Gi"
+        ephemeral-storage: "2Gi"
+      defaultRequest:
+        cpu: "50m"
+        memory: "64Mi"
+        ephemeral-storage: "500Mi"
+      max:
+        cpu: "2"
+        memory: "4Gi"
+        ephemeral-storage: "10Gi"
+      min:
+        cpu: "10m"
+        memory: "32Mi"
+        ephemeral-storage: "100Mi"
+    
+    # Pod limits
+    - type: Pod
+      max:
+        cpu: "2"
+        memory: "4Gi"
+      min:
+        cpu: "10m"
+        memory: "32Mi"
+    
+    # PVC limits
+    - type: PersistentVolumeClaim
+      max:
+        storage: "20Gi"
+      min:
+        storage: "100Mi"
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: plugin-pipeline-orchestrator-pdb
+  namespace: plugin-pipeline
+  labels:
+    app.kubernetes.io/name: plugin-pipeline-orchestrator-pdb
+    app.kubernetes.io/component: availability
+    app.kubernetes.io/part-of: plugin-pipeline
+  annotations:
+    plugin-pipeline/description: "Pod disruption budget for plugin pipeline orchestrator"
+spec:
+  selector:
+    matchLabels:
+      app: plugin-pipeline-orchestrator
+  minAvailable: 1
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: plugin-pipeline-priority-quota
+  namespace: plugin-pipeline
+  labels:
+    app.kubernetes.io/name: plugin-pipeline-priority-quota
+    app.kubernetes.io/component: resource-management
+    app.kubernetes.io/part-of: plugin-pipeline
+  annotations:
+    plugin-pipeline/description: "Priority-based resource quota for plugin pipeline"
+spec:
+  hard:
+    # High priority pods (critical infrastructure)
+    count/pods.high-priority: "10"
+    requests.cpu.high-priority: "2"
+    requests.memory.high-priority: "4Gi"
+    
+    # Medium priority pods (normal operations)
+    count/pods.medium-priority: "20"
+    requests.cpu.medium-priority: "4"
+    requests.memory.medium-priority: "8Gi"
+    
+    # Low priority pods (background tasks)
+    count/pods.low-priority: "10"
+    requests.cpu.low-priority: "1"
+    requests.memory.low-priority: "2Gi"
+  scopeSelector:
+    matchExpressions:
+      - operator: In
+        scopeName: PriorityClass
+        values:
+          - high-priority
+          - medium-priority  
+          - low-priority

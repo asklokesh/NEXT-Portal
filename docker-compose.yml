@@ -1,0 +1,75 @@
+version: '3.8'
+
+services:
+  # Main IDP Platform Application
+  idp-platform:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runner
+      args:
+        NEXT_PUBLIC_BACKSTAGE_API_URL: ${NEXT_PUBLIC_BACKSTAGE_API_URL:-http://backstage-backend:4402}
+        NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:-http://localhost:4400}
+    ports:
+      - '4400:4400'
+    environment:
+      - NODE_ENV=production
+      - PORT=4400
+      - BACKSTAGE_API_URL=${BACKSTAGE_API_URL:-http://backstage-backend:4402}
+      - DATABASE_URL=${DATABASE_URL:-postgresql://postgres:postgres@db:5432/idp_wrapper}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379}
+    depends_on:
+      - db
+      - redis
+    networks:
+      - idp-network
+    restart: unless-stopped
+    healthcheck:
+      test: ['CMD', 'wget', '--quiet', '--tries=1', '--spider', 'http://localhost:4400/api/health']
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # PostgreSQL Database
+  db:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: idp_wrapper
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - '5432:5432'
+    networks:
+      - idp-network
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U postgres']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    ports:
+      - '6379:6379'
+    networks:
+      - idp-network
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+networks:
+  idp-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:

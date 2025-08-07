@@ -1,0 +1,461 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: backup-orchestrator-config
+  namespace: developer-portal
+  labels:
+    app: backup-orchestrator
+    component: disaster-recovery
+data:
+  backup-config.yaml: |
+    # Comprehensive Backup Orchestration Configuration
+    apiVersion: backup.portal.dev/v1
+    kind: BackupConfiguration
+    metadata:
+      name: plugin-ecosystem-backup
+      version: "2.0"
+      created: "2025-01-07T10:00:00Z"
+    
+    # Multi-tier storage strategy
+    storage:
+      tiers:
+        hot:
+          type: "local-ssd"
+          path: "/var/backups/hot"
+          retention: "24h"
+          encryption: "AES-256-GCM"
+          compression: "lz4"
+          access_pattern: "immediate"
+          cost_tier: "high"
+          
+        warm:
+          type: "s3-standard-ia"
+          bucket: "portal-backups-warm"
+          region: "us-west-2"
+          retention: "7d"
+          encryption: "SSE-S3"
+          compression: "gzip"
+          lifecycle_transition: "1d"
+          access_pattern: "frequent"
+          cost_tier: "medium"
+          
+        cold:
+          type: "s3-glacier"
+          bucket: "portal-backups-cold"
+          region: "us-west-2"
+          retention: "90d"
+          encryption: "SSE-KMS"
+          compression: "bzip2"
+          lifecycle_transition: "7d"
+          access_pattern: "infrequent"
+          cost_tier: "low"
+          
+        archive:
+          type: "s3-deep-archive"
+          bucket: "portal-backups-archive"
+          region: "us-west-2"
+          retention: "7y"
+          encryption: "SSE-KMS"
+          compression: "xz"
+          lifecycle_transition: "90d"
+          access_pattern: "rare"
+          cost_tier: "minimal"
+      
+      # Geographic redundancy
+      replication:
+        enabled: true
+        regions:
+          primary: "us-west-2"
+          secondary: "us-east-1"
+          tertiary: "eu-west-1"
+        sync_mode: "async"
+        consistency: "eventual"
+        
+    # Backup strategies
+    strategies:
+      full_backup:
+        schedule: "0 2 * * 0"  # Weekly Sunday 2 AM
+        retention: "4 weeks"
+        compression: "gzip -9"
+        encryption: true
+        parallel_jobs: 4
+        timeout: "6h"
+        priority: "high"
+        
+      incremental_backup:
+        schedule: "0 */4 * * *"  # Every 4 hours
+        retention: "48h"
+        compression: "lz4"
+        encryption: true
+        parallel_jobs: 2
+        timeout: "2h"
+        priority: "medium"
+        base_backup: "latest_full"
+        
+      differential_backup:
+        schedule: "0 2 * * 1-6"  # Daily except Sunday
+        retention: "7d"
+        compression: "gzip -6"
+        encryption: true
+        parallel_jobs: 3
+        timeout: "4h"
+        priority: "medium"
+        base_backup: "latest_full"
+        
+      continuous_backup:
+        enabled: true
+        log_shipping: true
+        wal_archive: true
+        replication_slot: "portal_backup_slot"
+        max_lag: "5min"
+        priority: "critical"
+    
+    # Plugin-specific backup configurations
+    plugins:
+      configurations:
+        include_patterns:
+          - "*.yaml"
+          - "*.json"
+          - "*.env"
+          - "config/**/*"
+        exclude_patterns:
+          - "*.tmp"
+          - "*.log"
+          - "node_modules/**"
+          - ".git/**"
+        backup_method: "rsync"
+        deduplication: true
+        
+      data:
+        database_tables:
+          - "plugin_instances"
+          - "plugin_configurations" 
+          - "plugin_metadata"
+          - "plugin_dependencies"
+          - "plugin_templates"
+        backup_method: "pg_dump"
+        consistency: "transactional"
+        
+      artifacts:
+        docker_images:
+          registry: "portal.local:5000"
+          backup_method: "image_export"
+          compression: "gzip"
+          include_manifests: true
+        helm_charts:
+          repository: "portal-charts"
+          backup_method: "chart_export"
+          include_values: true
+        
+      state:
+        kubernetes_resources:
+          namespaces:
+            - "developer-portal"
+            - "plugin-*"
+          resources:
+            - "deployments"
+            - "services"
+            - "configmaps"
+            - "secrets"
+            - "persistentvolumeclaims"
+          backup_method: "kubectl_export"
+        
+    # Recovery Point Objectives (RPO) by service tier
+    rpo_targets:
+      critical:
+        plugins: ["auth", "security", "core-services"]
+        rpo: "5min"
+        backup_frequency: "continuous"
+        
+      high:
+        plugins: ["catalog", "workflows", "notifications"]
+        rpo: "15min"
+        backup_frequency: "every_15min"
+        
+      medium:
+        plugins: ["documentation", "monitoring", "analytics"]
+        rpo: "1h"
+        backup_frequency: "hourly"
+        
+      low:
+        plugins: ["experimental", "development", "testing"]
+        rpo: "4h"
+        backup_frequency: "every_4h"
+    
+    # Backup validation and verification
+    validation:
+      integrity_checks:
+        enabled: true
+        method: "sha256_checksum"
+        frequency: "every_backup"
+        
+      restore_testing:
+        enabled: true
+        frequency: "weekly"
+        test_environment: "dr-test"
+        automated: true
+        rollback_on_failure: true
+        
+      consistency_checks:
+        database:
+          enabled: true
+          method: "pg_verify"
+          frequency: "daily"
+        
+        files:
+          enabled: true
+          method: "rsync_checksum"
+          frequency: "daily"
+          
+        kubernetes:
+          enabled: true
+          method: "kubectl_diff"
+          frequency: "daily"
+    
+    # Monitoring and alerting
+    monitoring:
+      metrics:
+        backup_duration: true
+        backup_size: true
+        backup_success_rate: true
+        storage_utilization: true
+        recovery_time: true
+        
+      alerts:
+        backup_failed:
+          severity: "critical"
+          channels: ["pagerduty", "slack", "email"]
+          escalation_time: "15min"
+          
+        backup_delayed:
+          severity: "warning"
+          threshold: "30min"
+          channels: ["slack", "email"]
+          
+        storage_full:
+          severity: "critical"
+          threshold: "90%"
+          channels: ["pagerduty", "slack"]
+          
+        restore_test_failed:
+          severity: "high"
+          channels: ["slack", "email"]
+          
+        rpo_exceeded:
+          severity: "critical"
+          channels: ["pagerduty", "slack", "email"]
+          escalation_time: "5min"
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backup-orchestrator
+  namespace: developer-portal
+  labels:
+    app: backup-orchestrator
+    component: disaster-recovery
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: backup-orchestrator
+  template:
+    metadata:
+      labels:
+        app: backup-orchestrator
+        component: disaster-recovery
+    spec:
+      serviceAccountName: backup-orchestrator
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      containers:
+        - name: orchestrator
+          image: portal.local:5000/backup-orchestrator:v2.0
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8080
+              name: http
+            - containerPort: 8081
+              name: metrics
+          env:
+            - name: LOG_LEVEL
+              value: "INFO"
+            - name: BACKUP_CONFIG_PATH
+              value: "/config/backup-config.yaml"
+            - name: STORAGE_CONFIG_PATH
+              value: "/config/storage-config.yaml"
+            - name: POSTGRES_HOST
+              valueFrom:
+                secretKeyRef:
+                  name: portal-secrets
+                  key: POSTGRES_HOST
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: portal-secrets
+                  key: POSTGRES_PASSWORD
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: aws-credentials
+                  key: access-key-id
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: aws-credentials
+                  key: secret-access-key
+          resources:
+            requests:
+              memory: "1Gi"
+              cpu: "500m"
+            limits:
+              memory: "2Gi"
+              cpu: "1000m"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          volumeMounts:
+            - name: config
+              mountPath: /config
+              readOnly: true
+            - name: backup-storage
+              mountPath: /var/backups
+            - name: aws-credentials
+              mountPath: /root/.aws
+              readOnly: true
+            - name: kube-config
+              mountPath: /root/.kube
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: backup-orchestrator-config
+        - name: backup-storage
+          persistentVolumeClaim:
+            claimName: backup-storage-pvc
+        - name: aws-credentials
+          secret:
+            secretName: aws-credentials
+        - name: kube-config
+          secret:
+            secretName: kube-config
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backup-orchestrator
+  namespace: developer-portal
+  labels:
+    app: backup-orchestrator
+    component: disaster-recovery
+spec:
+  type: ClusterIP
+  ports:
+    - port: 8080
+      targetPort: http
+      name: http
+    - port: 8081
+      targetPort: metrics
+      name: metrics
+  selector:
+    app: backup-orchestrator
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: backup-orchestrator
+  namespace: developer-portal
+  labels:
+    app: backup-orchestrator
+    component: disaster-recovery
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: backup-orchestrator
+  labels:
+    app: backup-orchestrator
+    component: disaster-recovery
+rules:
+  - apiGroups: [""]
+    resources: ["*"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apps"]
+    resources: ["*"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["extensions"]
+    resources: ["*"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["batch"]
+    resources: ["*"]
+    verbs: ["*"]
+  - apiGroups: ["backup.portal.dev"]
+    resources: ["*"]
+    verbs: ["*"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: backup-orchestrator
+  labels:
+    app: backup-orchestrator
+    component: disaster-recovery
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: backup-orchestrator
+subjects:
+  - kind: ServiceAccount
+    name: backup-orchestrator
+    namespace: developer-portal
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: backup-storage-pvc
+  namespace: developer-portal
+  labels:
+    app: backup-orchestrator
+    component: disaster-recovery
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: "500Gi"
+  storageClassName: "fast-ssd"
+
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: backup-orchestrator
+  namespace: developer-portal
+  labels:
+    app: backup-orchestrator
+    component: disaster-recovery
+spec:
+  selector:
+    matchLabels:
+      app: backup-orchestrator
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: 30s

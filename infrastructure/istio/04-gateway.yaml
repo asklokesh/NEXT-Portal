@@ -1,0 +1,96 @@
+apiVersion: networking.istio.io/v1beta1
+kind: Gateway
+metadata:
+  name: backstage-gateway
+  namespace: developer-portal
+spec:
+  selector:
+    istio: ingressgateway
+  servers:
+  - port:
+      number: 80
+      name: http
+      protocol: HTTP
+    hosts:
+    - backstage.local
+    - "*.backstage.local"
+    tls:
+      httpsRedirect: true
+  - port:
+      number: 443
+      name: https
+      protocol: HTTPS
+    hosts:
+    - backstage.local
+    - "*.backstage.local"
+    tls:
+      mode: SIMPLE
+      credentialName: backstage-tls
+---
+apiVersion: networking.istio.io/v1beta1
+kind: Gateway
+metadata:
+  name: backstage-gateway-staging
+  namespace: developer-portal-staging
+spec:
+  selector:
+    istio: ingressgateway
+  servers:
+  - port:
+      number: 80
+      name: http
+      protocol: HTTP
+    hosts:
+    - staging.backstage.local
+    - "*.staging.backstage.local"
+    tls:
+      httpsRedirect: true
+  - port:
+      number: 443
+      name: https
+      protocol: HTTPS
+    hosts:
+    - staging.backstage.local
+    - "*.staging.backstage.local"
+    tls:
+      mode: SIMPLE
+      credentialName: backstage-staging-tls
+---
+# East-West Gateway for multi-cluster communication
+apiVersion: networking.istio.io/v1beta1
+kind: Gateway
+metadata:
+  name: cross-network-gateway
+  namespace: istio-system
+spec:
+  selector:
+    istio: eastwestgateway
+  servers:
+  - port:
+      number: 15443
+      name: tls
+      protocol: TLS
+    hosts:
+    - cross-network.local
+    tls:
+      mode: ISTIO_MUTUAL
+---
+# Admin Gateway for management interfaces
+apiVersion: networking.istio.io/v1beta1
+kind: Gateway
+metadata:
+  name: admin-gateway
+  namespace: istio-system
+spec:
+  selector:
+    istio: ingressgateway
+  servers:
+  - port:
+      number: 443
+      name: https
+      protocol: HTTPS
+    hosts:
+    - admin.backstage.local
+    tls:
+      mode: SIMPLE
+      credentialName: admin-backstage-tls
