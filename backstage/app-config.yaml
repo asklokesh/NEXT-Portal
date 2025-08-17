@@ -1,14 +1,97 @@
 app:
-  title: Backstage
-  baseUrl: http://localhost:3000
+  title: SaaS IDP Portal
+  baseUrl: http://localhost:4400
+
+organization:
+  name: SaaS IDP
+
 backend:
+  # Note that the baseUrl should be the URL that the browser and other clients
+  # should use when communicating with the backend, i.e. it needs to be
+  # reachable not just from within the backend host, but from all of your
+  # callers. When its value is "http://localhost:7007", it's strictly private
+  # and can't be reached by a web browser.
   baseUrl: http://localhost:7007
+  # The listener can also be expressed as a single string
+  # listen: ':7007'
+  listen:
+    port: 7007
+    host: 0.0.0.0
+  csp:
+    connect-src: ["'self'", 'http:', 'https:']
+    # Content-Security-Policy directives follow the Helmet format: https://helmetjs.github.io/#reference
+    # Default Helmet Content-Security-Policy values can be removed by setting the key to false
+  cors:
+    origin: http://localhost:4400
+    methods: [GET, HEAD, PATCH, POST, PUT, DELETE]
+    credentials: true
+  # This is for local development only, it is not recommended to use this in production
+  # The production database configuration is done via environment variables (see below)
+  database:
+    client: pg
+    connection:
+      host: ${POSTGRES_HOST}
+      port: ${POSTGRES_PORT}
+      user: ${POSTGRES_USER}
+      password: ${POSTGRES_PASSWORD}
+      database: ${POSTGRES_DB}
+      ssl: false # Disable SSL for development
+
 integrations:
   github:
     - host: github.com
-      apiBaseUrl: https://api.github.com
+      # This is a Personal Access Token or App token that allows Backstage to access the GitHub API.
+      # The token will be used to read content from the GitHub repositories.
+      # You can create a token in the GitHub settings at https://github.com/settings/tokens
+      # Give it the following scopes: repo, workflow
+      token: ${GITHUB_TOKEN}
+
+auth:
+  # see https://backstage.io/docs/auth/ to learn about auth providers
+  providers:
+    github:
+      development:
+        clientId: ${AUTH_GITHUB_CLIENT_ID}
+        clientSecret: ${AUTH_GITHUB_CLIENT_SECRET}
+        ## uncomment if using GitHub Enterprise
+        # enterpriseInstanceUrl: ${AUTH_GITHUB_ENTERPRISE_INSTANCE_URL}
+
+scaffolder:
+  # see https://backstage.io/docs/features/software-templates/configuration for software template options
+
 catalog:
-  locations: []
+  import:
+    entityFilename: catalog-info.yaml
+    pullRequestBranchName: backstage-integration
+  rules:
+    - allow: [Component, System, API, Resource, Location]
+  locations:
+    # Local example data, file locations are relative to the backend process, typically the workspace root
+    - type: file
+      target: ../../examples/entities.yaml
+
+    # Local example template
+    - type: file
+      target: ../../examples/template/template.yaml
+      rules:
+        - allow: [Template]
+
+    # Local example organizational data
+    - type: file
+      target: ../../examples/org.yaml
+      rules:
+        - allow: [User, Group]
+
+    ## Uncomment these lines to add more example data
+    # - type: url
+    #   target: https://github.com/backstage/backstage/blob/master/packages/catalog-model/examples/all.yaml
+
+    ## Uncomment these lines to add an example org
+    # - type: url
+    #   target: https://github.com/backstage/backstage/blob/master/packages/catalog-model/examples/acme-corp.yaml
+    #   rules:
+    #     - allow: [User, Group]
+
 kubernetes:
   serviceLocatorMethod:
     type: multiTenant
@@ -16,6 +99,57 @@ kubernetes:
     - type: config
       clusters:
         - url: https://kubernetes.default.svc
-          name: default
+          name: local-cluster
           authProvider: serviceAccount
           skipTLSVerify: false
+          skipMetricsLookup: true
+
+permission:
+  # see https://backstage.io/docs/permissions/getting-started for more on the permission system
+  enabled: true
+
+# Reference documentation http://backstage.io/docs/features/techdocs/configuration
+# Note: After experimenting with basic setup, use CI/CD to generate docs
+# and an external cloud storage when deploying TechDocs for production use-case.
+# https://backstage.io/docs/features/techdocs/how-to-guides#how-to-migrate-from-techdocs-basic-to-recommended-deployment-approach
+techdocs:
+  builder: 'local' # Alternatives - 'external'
+  generator:
+    runIn: 'docker' # Alternatives - 'local'
+  publisher:
+    type: 'local' # Alternatives - 'googleGcs' or 'awsS3'. Read documentation for using alternatives.
+
+search:
+  pg:
+    highlightOptions:
+      useHighlight: true # Used to enable to disable the highlight feature. The default value is true
+      maxWord: 35 # Used to set the maximum words to highlight. The default value is 35.
+      minWord: 15 # Used to set the minimum words to highlight. The default value is 15.
+      shortWord: 3 # Used to set the minimum word length to highlight. The default value is 3.
+      highlightAll: false # Used to enable or disable highlighting all terms. The default value is false.
+      maxFragments: 30 # Used to set the maximum number of fragments to highlight. The default value is 30.
+      fragmentDelimiter: ' ... ' # Used to set the delimiter between fragments. The default value is ' ... '.
+
+proxy:
+  ### Example for how to add a proxy endpoint for the frontend.
+  ### A typical reason to do this is to handle HTTPS and CORS for internal services.
+  # '/test':
+  #   target: 'https://example.com'
+  #   changeOrigin: true
+
+# Notification settings
+notifications:
+  processors:
+    email:
+      transportConfig:
+        transport: smtp
+        hostname: ${SMTP_HOST}
+        port: ${SMTP_PORT}
+        secure: ${SMTP_SECURE}
+        username: ${SMTP_USERNAME}
+        password: ${SMTP_PASSWORD}
+      broadcastConfig:
+        sender: noreply@your-domain.com
+      concurrency: 3
+
+signInPage: github

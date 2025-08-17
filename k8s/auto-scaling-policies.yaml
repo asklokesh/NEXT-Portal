@@ -1,0 +1,797 @@
+# Auto-Scaling Configuration for Enterprise SaaS IDP Platform
+# HPA, VPA, Cluster Autoscaler, and Queue-based scaling
+
+---
+# Horizontal Pod Autoscaler for Main Application
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: saas-idp-app-hpa
+  namespace: saas-idp-production
+  labels:
+    app: saas-idp
+    component: hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: saas-idp-app
+  minReplicas: 10
+  maxReplicas: 1000
+  targetCPUUtilizationPercentage: 70
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+  - type: Pods
+    pods:
+      metric:
+        name: http_requests_per_second
+      target:
+        type: AverageValue
+        averageValue: "1000"
+  - type: Object
+    object:
+      metric:
+        name: nginx_ingress_controller_requests
+      target:
+        type: AverageValue
+        averageValue: "500"
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Percent
+        value: 10
+        periodSeconds: 60
+      - type: Pods
+        value: 5
+        periodSeconds: 60
+      selectPolicy: Min
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+      - type: Percent
+        value: 50
+        periodSeconds: 30
+      - type: Pods
+        value: 10
+        periodSeconds: 30
+      selectPolicy: Max
+
+---
+# HPA for Background Job Processors
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: job-processor-hpa
+  namespace: saas-idp-production
+  labels:
+    app: saas-idp
+    component: job-processor-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: job-processor
+  minReplicas: 5
+  maxReplicas: 200
+  metrics:
+  - type: External
+    external:
+      metric:
+        name: redis_queue_length
+        selector:
+          matchLabels:
+            queue: "background-jobs"
+      target:
+        type: AverageValue
+        averageValue: "10"
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 80
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 600  # 10 minutes
+      policies:
+      - type: Percent
+        value: 20
+        periodSeconds: 60
+    scaleUp:
+      stabilizationWindowSeconds: 30
+      policies:
+      - type: Percent
+        value: 100
+        periodSeconds: 30
+      - type: Pods
+        value: 20
+        periodSeconds: 30
+
+---
+# HPA for Plugin Installation Workers
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: plugin-installer-hpa
+  namespace: saas-idp-production
+  labels:
+    app: saas-idp
+    component: plugin-installer-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: plugin-installer
+  minReplicas: 3
+  maxReplicas: 50
+  metrics:
+  - type: External
+    external:
+      metric:
+        name: kafka_consumer_lag
+        selector:
+          matchLabels:
+            topic: "plugin-installation-requests"
+            consumer_group: "plugin-installers"
+      target:
+        type: AverageValue
+        averageValue: "5"
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 75
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Pods
+        value: 1
+        periodSeconds: 60
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+      - type: Pods
+        value: 5
+        periodSeconds: 30
+
+---
+# Vertical Pod Autoscaler for Main Application
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: saas-idp-app-vpa
+  namespace: saas-idp-production
+  labels:
+    app: saas-idp
+    component: vpa
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: saas-idp-app
+  updatePolicy:
+    updateMode: "Auto"
+    minReplicas: 10
+  resourcePolicy:
+    containerPolicies:
+    - containerName: saas-idp
+      minAllowed:
+        cpu: "200m"
+        memory: "256Mi"
+      maxAllowed:
+        cpu: "4"
+        memory: "8Gi"
+      controlledResources: ["cpu", "memory"]
+      controlledValues: RequestsAndLimits
+    - containerName: logging-agent
+      mode: "Off"  # Don't auto-scale sidecar containers
+
+---
+# VPA for Database Connection Pooler
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: pgbouncer-vpa
+  namespace: saas-idp-production
+  labels:
+    app: saas-idp
+    component: pgbouncer-vpa
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: pgbouncer
+  updatePolicy:
+    updateMode: "Auto"
+  resourcePolicy:
+    containerPolicies:
+    - containerName: pgbouncer
+      minAllowed:
+        cpu: "100m"
+        memory: "128Mi"
+      maxAllowed:
+        cpu: "1"
+        memory: "2Gi"
+      controlledResources: ["cpu", "memory"]
+
+---
+# Cluster Autoscaler Configuration
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cluster-autoscaler
+  namespace: kube-system
+  labels:
+    app: cluster-autoscaler
+spec:
+  selector:
+    matchLabels:
+      app: cluster-autoscaler
+  template:
+    metadata:
+      labels:
+        app: cluster-autoscaler
+      annotations:
+        prometheus.io/scrape: 'true'
+        prometheus.io/port: '8085'
+    spec:
+      serviceAccountName: cluster-autoscaler
+      containers:
+      - image: k8s.gcr.io/autoscaling/cluster-autoscaler:v1.27.3
+        name: cluster-autoscaler
+        resources:
+          limits:
+            cpu: 100m
+            memory: 600Mi
+          requests:
+            cpu: 100m
+            memory: 600Mi
+        command:
+        - ./cluster-autoscaler
+        - --v=4
+        - --stderrthreshold=info
+        - --cloud-provider=aws
+        - --skip-nodes-with-local-storage=false
+        - --expander=least-waste
+        - --node-group-auto-discovery=asg:tag=k8s.io/cluster-autoscaler/enabled,k8s.io/cluster-autoscaler/saas-idp-cluster
+        - --balance-similar-node-groups
+        - --skip-nodes-with-system-pods=false
+        - --scale-down-enabled=true
+        - --scale-down-delay-after-add=10m
+        - --scale-down-unneeded-time=10m
+        - --scale-down-utilization-threshold=0.5
+        - --max-node-provision-time=15m
+        - --scan-interval=10s
+        - --max-nodes-total=1000
+        - --cores-total=0:50000
+        - --memory-total=0:500000
+        - --max-autoprovisioned-node-group-count=20
+        env:
+        - name: AWS_REGION
+          value: us-east-1
+        volumeMounts:
+        - name: ssl-certs
+          mountPath: /etc/ssl/certs/ca-certificates.crt
+          readOnly: true
+        imagePullPolicy: "Always"
+      volumes:
+      - name: ssl-certs
+        hostPath:
+          path: "/etc/ssl/certs/ca-bundle.crt"
+
+---
+# Node Pool Configurations for Different Workloads
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: node-pool-config
+  namespace: saas-idp-production
+  labels:
+    app: saas-idp
+    component: node-pools
+data:
+  # Compute-optimized node pool for application workloads
+  compute-optimized.yaml: |
+    nodePool:
+      name: compute-optimized
+      instanceTypes:
+        - c5.large
+        - c5.xlarge
+        - c5.2xlarge
+        - c5.4xlarge
+      minSize: 10
+      maxSize: 500
+      desiredSize: 20
+      labels:
+        node-type: compute
+        workload-class: application
+      taints:
+        - key: "workload-class"
+          value: "application"
+          effect: "NoSchedule"
+      nodeClassRef:
+        name: compute-optimized-nodeclass
+      requirements:
+        - key: "karpenter.sh/capacity-type"
+          operator: In
+          values: ["on-demand", "spot"]
+        - key: "node.kubernetes.io/instance-type"
+          operator: In
+          values: ["c5.large", "c5.xlarge", "c5.2xlarge", "c5.4xlarge"]
+      limits:
+        cpu: "10000"
+        memory: "40000Gi"
+      
+  # Memory-optimized node pool for database and caching workloads  
+  memory-optimized.yaml: |
+    nodePool:
+      name: memory-optimized
+      instanceTypes:
+        - r5.large
+        - r5.xlarge
+        - r5.2xlarge
+        - r5.4xlarge
+      minSize: 5
+      maxSize: 100
+      desiredSize: 10
+      labels:
+        node-type: memory
+        workload-class: database
+      taints:
+        - key: "workload-class"
+          value: "database"
+          effect: "NoSchedule"
+      requirements:
+        - key: "karpenter.sh/capacity-type"
+          operator: In
+          values: ["on-demand"]  # Database workloads need stability
+        - key: "node.kubernetes.io/instance-type"
+          operator: In
+          values: ["r5.large", "r5.xlarge", "r5.2xlarge", "r5.4xlarge"]
+      limits:
+        cpu: "2000"
+        memory: "16000Gi"
+        
+  # GPU node pool for ML workloads
+  gpu-optimized.yaml: |
+    nodePool:
+      name: gpu-optimized
+      instanceTypes:
+        - p3.2xlarge
+        - p3.8xlarge
+        - g4dn.xlarge
+        - g4dn.2xlarge
+      minSize: 0
+      maxSize: 20
+      desiredSize: 0
+      labels:
+        node-type: gpu
+        workload-class: ml
+      taints:
+        - key: "workload-class"
+          value: "ml"
+          effect: "NoSchedule"
+        - key: "nvidia.com/gpu"
+          value: "present"
+          effect: "NoSchedule"
+      requirements:
+        - key: "karpenter.sh/capacity-type"
+          operator: In
+          values: ["spot", "on-demand"]
+        - key: "node.kubernetes.io/instance-type"
+          operator: In
+          values: ["p3.2xlarge", "p3.8xlarge", "g4dn.xlarge", "g4dn.2xlarge"]
+
+---
+# KEDA ScaledObjects for Queue-based Autoscaling
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: redis-queue-scaler
+  namespace: saas-idp-production
+  labels:
+    app: saas-idp
+    component: keda-scaler
+spec:
+  scaleTargetRef:
+    name: queue-processor
+  minReplicaCount: 2
+  maxReplicaCount: 100
+  pollingInterval: 10
+  cooldownPeriod: 300
+  idleReplicaCount: 2
+  triggers:
+  - type: redis
+    metadata:
+      address: redis-master:6379
+      listName: background_jobs
+      listLength: '10'
+      enableTLS: 'false'
+    authenticationRef:
+      name: redis-auth
+
+---
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: kafka-consumer-scaler
+  namespace: saas-idp-production
+  labels:
+    app: saas-idp
+    component: keda-kafka-scaler
+spec:
+  scaleTargetRef:
+    name: kafka-consumer
+  minReplicaCount: 3
+  maxReplicaCount: 50
+  pollingInterval: 15
+  triggers:
+  - type: kafka
+    metadata:
+      bootstrapServers: kafka:9092
+      consumerGroup: plugin-events-consumer
+      topic: plugin-events
+      lagThreshold: '5'
+      offsetResetPolicy: earliest
+    authenticationRef:
+      name: kafka-auth
+
+---
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: prometheus-metrics-scaler
+  namespace: saas-idp-production
+  labels:
+    app: saas-idp
+    component: keda-prometheus-scaler
+spec:
+  scaleTargetRef:
+    name: api-server
+  minReplicaCount: 10
+  maxReplicaCount: 200
+  pollingInterval: 10
+  triggers:
+  - type: prometheus
+    metadata:
+      serverAddress: http://prometheus:9090
+      metricName: http_requests_per_second
+      threshold: '1000'
+      query: sum(rate(http_requests_total{service="saas-idp-app"}[2m]))
+
+---
+# Database Connection Pool Autoscaler
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: pgbouncer-connection-scaler
+  namespace: saas-idp-production
+  labels:
+    app: saas-idp
+    component: keda-pgbouncer-scaler
+spec:
+  scaleTargetRef:
+    name: pgbouncer
+  minReplicaCount: 3
+  maxReplicaCount: 20
+  pollingInterval: 30
+  triggers:
+  - type: postgresql
+    metadata:
+      connection: postgresql://pgbouncer:password@pgbouncer:5432/pgbouncer
+      query: "SELECT CASE WHEN active_connections > max_connections * 0.8 THEN 1 ELSE 0 END FROM pg_stat_activity"
+      targetQueryValue: '0'
+
+---
+# Custom Resource for Application-Aware Scaling
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: intelligentscalers.scaling.saas-idp.com
+spec:
+  group: scaling.saas-idp.com
+  versions:
+  - name: v1
+    served: true
+    storage: true
+    schema:
+      openAPIV3Schema:
+        type: object
+        properties:
+          spec:
+            type: object
+            properties:
+              targetRef:
+                type: object
+                properties:
+                  apiVersion:
+                    type: string
+                  kind:
+                    type: string
+                  name:
+                    type: string
+              metrics:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    type:
+                      type: string
+                      enum: ["business", "technical", "predictive"]
+                    name:
+                      type: string
+                    threshold:
+                      type: number
+                    weight:
+                      type: number
+              scalingPolicy:
+                type: object
+                properties:
+                  scaleUp:
+                    type: object
+                    properties:
+                      stabilizationWindowSeconds:
+                        type: integer
+                      threshold:
+                        type: number
+                  scaleDown:
+                    type: object
+                    properties:
+                      stabilizationWindowSeconds:
+                        type: integer
+                      threshold:
+                        type: number
+          status:
+            type: object
+            properties:
+              currentReplicas:
+                type: integer
+              desiredReplicas:
+                type: integer
+              lastScaleTime:
+                type: string
+  scope: Namespaced
+  names:
+    plural: intelligentscalers
+    singular: intelligentscaler
+    kind: IntelligentScaler
+
+---
+# Intelligent Scaler Instance
+apiVersion: scaling.saas-idp.com/v1
+kind: IntelligentScaler
+metadata:
+  name: saas-idp-intelligent-scaler
+  namespace: saas-idp-production
+  labels:
+    app: saas-idp
+    component: intelligent-scaler
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: saas-idp-app
+  metrics:
+  - type: business
+    name: active_users_per_pod
+    threshold: 1000
+    weight: 0.4
+  - type: business
+    name: plugin_installations_per_minute
+    threshold: 50
+    weight: 0.3
+  - type: technical
+    name: response_time_p95
+    threshold: 200
+    weight: 0.2
+  - type: predictive
+    name: predicted_load_next_hour
+    threshold: 5000
+    weight: 0.1
+  scalingPolicy:
+    scaleUp:
+      stabilizationWindowSeconds: 120
+      threshold: 0.7
+    scaleDown:
+      stabilizationWindowSeconds: 600
+      threshold: 0.4
+
+---
+# Intelligent Scaling Controller
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: intelligent-scaling-controller
+  namespace: saas-idp-production
+  labels:
+    app: saas-idp
+    component: intelligent-scaling-controller
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: saas-idp
+      component: intelligent-scaling-controller
+  template:
+    metadata:
+      labels:
+        app: saas-idp
+        component: intelligent-scaling-controller
+    spec:
+      serviceAccountName: intelligent-scaling-sa
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        fsGroup: 1001
+      containers:
+      - name: controller
+        image: saas-idp/intelligent-scaling-controller:latest
+        ports:
+        - name: metrics
+          containerPort: 8080
+        - name: health
+          containerPort: 8081
+        env:
+        - name: PROMETHEUS_URL
+          value: "http://prometheus:9090"
+        - name: GRAFANA_URL
+          value: "http://grafana:3000"
+        - name: BUSINESS_METRICS_ENDPOINT
+          value: "http://saas-idp-app:4400/api/metrics/business"
+        - name: ML_PREDICTION_ENDPOINT
+          value: "http://ml-predictor:8080/predict"
+        - name: SCALING_INTERVAL
+          value: "60s"
+        - name: METRICS_WINDOW
+          value: "300s"
+        envFrom:
+        - configMapRef:
+            name: intelligent-scaling-config
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "200m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: health
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: health
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: intelligent-scaling-config
+  namespace: saas-idp-production
+  labels:
+    app: saas-idp
+    component: intelligent-scaling-config
+data:
+  config.yaml: |
+    scaling:
+      business_metrics:
+        - name: "active_users_per_pod"
+          query: "sum(active_user_sessions) / sum(kube_deployment_status_replicas{deployment='saas-idp-app'})"
+          optimal_value: 1000
+          weight: 0.4
+        - name: "plugin_installations_per_minute"
+          query: "rate(plugin_installations_total[1m]) * 60"
+          optimal_value: 50
+          weight: 0.3
+        - name: "api_requests_per_pod"
+          query: "sum(rate(http_requests_total[5m])) / sum(kube_deployment_status_replicas{deployment='saas-idp-app'})"
+          optimal_value: 100
+          weight: 0.2
+      
+      technical_metrics:
+        - name: "response_time_p95"
+          query: "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[5m])) by (le))"
+          threshold: 0.2
+          weight: 0.3
+        - name: "error_rate"
+          query: "sum(rate(http_requests_total{status=~'5..'}[5m])) / sum(rate(http_requests_total[5m]))"
+          threshold: 0.01
+          weight: 0.2
+        - name: "database_connections"
+          query: "sum(pg_stat_activity_count)"
+          threshold: 800
+          weight: 0.1
+      
+      predictive_metrics:
+        - name: "predicted_load_next_hour"
+          endpoint: "/ml/predict/load"
+          method: "POST"
+          weight: 0.1
+        - name: "seasonal_adjustment"
+          endpoint: "/ml/predict/seasonal"
+          method: "POST"
+          weight: 0.05
+      
+      scaling_rules:
+        scale_up_threshold: 0.7
+        scale_down_threshold: 0.4
+        max_scale_up_percent: 100
+        max_scale_down_percent: 20
+        stabilization_window_up: 120
+        stabilization_window_down: 600
+        min_replicas: 10
+        max_replicas: 1000
+
+---
+# Service Account and RBAC for Intelligent Scaling
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: intelligent-scaling-sa
+  namespace: saas-idp-production
+  labels:
+    app: saas-idp
+    component: intelligent-scaling
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: intelligent-scaling-controller
+rules:
+- apiGroups: ["apps"]
+  resources: ["deployments", "replicasets"]
+  verbs: ["get", "list", "watch", "update", "patch"]
+- apiGroups: ["autoscaling"]
+  resources: ["horizontalpodautoscalers"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: ["scaling.saas-idp.com"]
+  resources: ["intelligentscalers"]
+  verbs: ["get", "list", "watch", "update", "patch"]
+- apiGroups: [""]
+  resources: ["pods", "nodes"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["metrics.k8s.io"]
+  resources: ["pods", "nodes"]
+  verbs: ["get", "list"]
+- apiGroups: ["custom.metrics.k8s.io"]
+  resources: ["*"]
+  verbs: ["get", "list"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: intelligent-scaling-controller
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: intelligent-scaling-controller
+subjects:
+- kind: ServiceAccount
+  name: intelligent-scaling-sa
+  namespace: saas-idp-production

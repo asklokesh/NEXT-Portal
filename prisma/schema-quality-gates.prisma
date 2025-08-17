@@ -1,0 +1,559 @@
+// ============================================
+// PLUGIN QUALITY GATE SYSTEM
+// Soundcheck-style quality assessment and scoring
+// ============================================
+
+// Plugin Quality Scores - Overall quality assessment with A-F grading
+model PluginQualityScore {
+  id              String   @id @default(cuid())
+  pluginId        String
+  tenantId        String? // Multi-tenant support
+  
+  // Overall Quality Metrics
+  overallScore    Float    @default(0)    // 0-100 score
+  overallGrade    QualityGrade @default(F) // A-F grade
+  
+  // Category Scores (0-100 each)
+  securityScore        Float @default(0)
+  performanceScore     Float @default(0)
+  maintainabilityScore Float @default(0)
+  reliabilityScore     Float @default(0)
+  documentationScore   Float @default(0)
+  
+  // Category Grades (A-F each)
+  securityGrade        QualityGrade @default(F)
+  performanceGrade     QualityGrade @default(F)
+  maintainabilityGrade QualityGrade @default(F)
+  reliabilityGrade     QualityGrade @default(F)
+  documentationGrade   QualityGrade @default(F)
+  
+  // Metadata
+  evaluatedAt          DateTime  @default(now())
+  evaluationEngine     String    @default("v1.0") // Version of scoring algorithm
+  confidenceLevel      Float     @default(0)      // 0-100 confidence in score
+  dataQualityScore     Float     @default(0)      // Quality of data used for scoring
+  
+  // Weights used for calculation (allows for customization)
+  securityWeight       Float @default(0.25)
+  performanceWeight    Float @default(0.20)
+  maintainabilityWeight Float @default(0.20)
+  reliabilityWeight    Float @default(0.20)
+  documentationWeight  Float @default(0.15)
+  
+  // Trend Analysis
+  scoreImprovement     Float?    // Change from previous score
+  trendDirection       TrendDirection @default(STABLE)
+  
+  // Compliance and Governance
+  passesMinimumStandards Boolean @default(false)
+  complianceFlags        String[] @default([])
+  governanceExceptions   Json?    // Any approved exceptions
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  
+  // Relationships
+  plugin          Plugin              @relation(fields: [pluginId], references: [id], onDelete: Cascade)
+  checks          PluginQualityCheck[]
+  issues          PluginQualityIssue[]
+  history         PluginQualityHistory[]
+  
+  @@unique([pluginId, tenantId])
+  @@index([pluginId, overallScore])
+  @@index([tenantId, overallGrade])
+  @@index([overallScore, evaluatedAt])
+  @@index([passesMinimumStandards, overallGrade])
+  @@map("plugin_quality_scores")
+}
+
+// Quality Checks - Individual checks that contribute to quality scores
+model PluginQualityCheck {
+  id                String   @id @default(cuid())
+  qualityScoreId    String
+  pluginId          String   // Denormalized for performance
+  tenantId          String?  // Multi-tenant support
+  
+  // Check Information
+  checkType         QualityCheckType
+  checkName         String   // Human-readable name
+  checkId           String   // Unique identifier for the check
+  category          QualityCategory
+  
+  // Check Results
+  status            QualityCheckStatus @default(PENDING)
+  passed            Boolean            @default(false)
+  score             Float              @default(0)    // 0-100 for this specific check
+  weight            Float              @default(1.0)  // Weight of this check in category
+  
+  // Check Details
+  description       String?  // What this check validates
+  rationale         String?  // Why this check is important
+  recommendation    String?  // How to improve if failed
+  documentation     String?  // Link to docs about this check
+  
+  // Execution Details
+  executedAt        DateTime @default(now())
+  duration          Int?     // Execution time in milliseconds
+  executionEngine   String   @default("v1.0")
+  
+  // Results and Evidence
+  evidence          Json?    // Evidence supporting the check result
+  metrics           Json?    // Raw metrics collected during check
+  errorDetails      String?  // Error details if check failed to run
+  
+  // Severity and Impact
+  severity          CheckSeverity @default(MEDIUM)
+  impact            String?       // Business impact description
+  
+  // Metadata
+  metadata          Json?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  
+  // Relationships
+  qualityScore      PluginQualityScore @relation(fields: [qualityScoreId], references: [id], onDelete: Cascade)
+  plugin            Plugin             @relation(fields: [pluginId], references: [id], onDelete: Cascade)
+  
+  @@index([pluginId, category, status])
+  @@index([tenantId, checkType])
+  @@index([status, severity])
+  @@index([category, passed])
+  @@index([executedAt, checkType])
+  @@map("plugin_quality_checks")
+}
+
+// Quality History - Track quality changes over time
+model PluginQualityHistory {
+  id                String   @id @default(cuid())
+  qualityScoreId    String
+  pluginId          String   // Denormalized for performance
+  tenantId          String?  // Multi-tenant support
+  
+  // Historical Scores
+  overallScore      Float
+  overallGrade      QualityGrade
+  securityScore     Float
+  performanceScore  Float
+  maintainabilityScore Float
+  reliabilityScore  Float
+  documentationScore Float
+  
+  // Change Tracking
+  scoreChange       Float    // Change from previous measurement
+  changeReason      String?  // What caused the change
+  triggerEvent      HistoryTrigger // What triggered this measurement
+  
+  // Context
+  pluginVersion     String?  // Plugin version when measured
+  evaluationEngine  String   @default("v1.0")
+  
+  // Metadata
+  snapshot          Json?    // Full snapshot of quality data
+  metadata          Json?
+  recordedAt        DateTime @default(now())
+  
+  // Relationships
+  qualityScore      PluginQualityScore @relation(fields: [qualityScoreId], references: [id], onDelete: Cascade)
+  plugin            Plugin             @relation(fields: [pluginId], references: [id], onDelete: Cascade)
+  
+  @@index([pluginId, recordedAt])
+  @@index([tenantId, overallGrade, recordedAt])
+  @@index([triggerEvent, recordedAt])
+  @@index([overallScore, recordedAt])
+  @@map("plugin_quality_history")
+}
+
+// Quality Issues - Identified problems that impact quality
+model PluginQualityIssue {
+  id                String   @id @default(cuid())
+  qualityScoreId    String
+  pluginId          String   // Denormalized for performance
+  tenantId          String?  // Multi-tenant support
+  
+  // Issue Information
+  issueType         IssueType
+  category          QualityCategory
+  severity          IssueSeverity
+  title             String
+  description       String
+  
+  // Issue Details
+  affectedChecks    String[] @default([]) // IDs of checks that identify this issue
+  impact            String?  // Business impact description
+  resolution        String?  // How to resolve this issue
+  workaround        String?  // Temporary workaround if available
+  
+  // Status and Lifecycle
+  status            IssueStatus @default(OPEN)
+  priority          IssuePriority @default(MEDIUM)
+  assignedTo        String?  // User responsible for resolution
+  
+  // Resolution Details
+  resolvedAt        DateTime?
+  resolvedBy        String?
+  resolutionNotes   String?
+  resolutionMethod  ResolutionMethod?
+  
+  // SLA and Tracking
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  slaDeadline       DateTime? // When this must be resolved
+  escalatedAt       DateTime?
+  escalationLevel   Int      @default(0)
+  
+  // Evidence and Context
+  evidence          Json?    // Evidence of the issue
+  reproductionSteps String?  // How to reproduce the issue
+  affectedVersions  String[] @default([]) // Plugin versions affected
+  environment       String?  // Environment where issue was found
+  
+  // External References
+  ticketId          String?  // External ticket system ID
+  references        String[] @default([]) // URLs or references
+  
+  // Metadata
+  metadata          Json?
+  
+  // Relationships
+  qualityScore      PluginQualityScore @relation(fields: [qualityScoreId], references: [id], onDelete: Cascade)
+  plugin            Plugin             @relation(fields: [pluginId], references: [id], onDelete: Cascade)
+  comments          PluginQualityIssueComment[]
+  
+  @@index([pluginId, status, severity])
+  @@index([tenantId, category, status])
+  @@index([assignedTo, status])
+  @@index([severity, createdAt])
+  @@index([slaDeadline, status])
+  @@index([status, priority])
+  @@map("plugin_quality_issues")
+}
+
+// Quality Issue Comments - Comments and updates on quality issues
+model PluginQualityIssueComment {
+  id        String   @id @default(cuid())
+  issueId   String
+  userId    String
+  comment   String
+  isInternal Boolean @default(false) // Internal comments not visible to plugin authors
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  // Relationships
+  issue     PluginQualityIssue @relation(fields: [issueId], references: [id], onDelete: Cascade)
+  
+  @@index([issueId, createdAt])
+  @@map("plugin_quality_issue_comments")
+}
+
+// Quality Gate Configuration - Define quality standards and thresholds
+model QualityGateConfig {
+  id              String   @id @default(cuid())
+  name            String   @unique
+  displayName     String
+  description     String?
+  tenantId        String?  // Multi-tenant support
+  
+  // Grade Thresholds (0-100 scores map to A-F grades)
+  gradeAThreshold Float    @default(90)
+  gradeBThreshold Float    @default(80)
+  gradeCThreshold Float    @default(70)
+  gradeDThreshold Float    @default(60)
+  // Below gradeDThreshold = F grade
+  
+  // Category Weights
+  securityWeight       Float @default(0.25)
+  performanceWeight    Float @default(0.20)
+  maintainabilityWeight Float @default(0.20)
+  reliabilityWeight    Float @default(0.20)
+  documentationWeight  Float @default(0.15)
+  
+  // Minimum Standards
+  minimumOverallScore  Float  @default(70)    // Minimum score to pass
+  minimumSecurityScore Float  @default(80)    // Security is critical
+  blockingIssues       String[] @default([])  // Issue types that block deployment
+  
+  // Check Configuration
+  enabledChecks        Json   // Configuration of which checks to run
+  checkWeights         Json   // Custom weights for specific checks
+  customChecks         Json?  // Custom check definitions
+  
+  // Policies
+  allowExceptions      Boolean @default(true)
+  requireApproval      Boolean @default(false)
+  autoRemediation      Boolean @default(false)
+  
+  // Lifecycle
+  isActive            Boolean  @default(true)
+  isDefault           Boolean  @default(false)
+  version             String   @default("1.0")
+  effectiveFrom       DateTime @default(now())
+  effectiveUntil      DateTime?
+  
+  // Ownership
+  ownedBy             String
+  approvers           String[] @default([])
+  
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+  
+  @@index([tenantId, isActive])
+  @@index([isDefault, isActive])
+  @@map("quality_gate_configs")
+}
+
+// Quality Evaluation Jobs - Track background quality evaluation tasks
+model QualityEvaluationJob {
+  id              String   @id @default(cuid())
+  pluginId        String
+  tenantId        String?
+  
+  // Job Information
+  jobType         EvaluationJobType
+  status          EvaluationJobStatus @default(PENDING)
+  priority        Int                 @default(5) // 1-10, 1 is highest
+  
+  // Execution Details
+  startedAt       DateTime?
+  completedAt     DateTime?
+  duration        Int?     // Duration in milliseconds
+  attempts        Int      @default(0)
+  maxAttempts     Int      @default(3)
+  
+  // Configuration
+  config          Json?    // Job-specific configuration
+  checksToRun     String[] @default([]) // Specific checks to run
+  triggerReason   String?  // What triggered this evaluation
+  
+  // Results
+  result          Json?    // Evaluation results
+  error           String?  // Error message if failed
+  warnings        String[] @default([]) // Non-fatal warnings
+  
+  // Progress Tracking
+  progress        Int      @default(0)    // 0-100 completion percentage
+  currentStep     String?  // Current step being executed
+  totalSteps      Int      @default(1)
+  
+  // Scheduling
+  scheduledAt     DateTime?
+  cronExpression  String?  // For recurring evaluations
+  
+  // Metadata
+  metadata        Json?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  
+  // Relationships
+  plugin          Plugin   @relation(fields: [pluginId], references: [id], onDelete: Cascade)
+  
+  @@index([pluginId, status])
+  @@index([tenantId, jobType, status])
+  @@index([priority, createdAt])
+  @@index([scheduledAt, status])
+  @@map("quality_evaluation_jobs")
+}
+
+// Add relationships to existing Plugin model
+// This extends the existing Plugin model with quality relationships
+// Add these to the existing Plugin model in schema.prisma:
+//
+// qualityScore       PluginQualityScore?
+// qualityChecks      PluginQualityCheck[]
+// qualityIssues      PluginQualityIssue[]
+// qualityHistory     PluginQualityHistory[]
+// evaluationJobs     QualityEvaluationJob[]
+
+// Quality Gate Enums
+enum QualityGrade {
+  A  // 90-100: Excellent
+  B  // 80-89:  Good
+  C  // 70-79:  Fair
+  D  // 60-69:  Poor
+  F  // 0-59:   Fail
+}
+
+enum QualityCategory {
+  SECURITY
+  PERFORMANCE
+  MAINTAINABILITY
+  RELIABILITY
+  DOCUMENTATION
+  COMPLIANCE
+  USABILITY
+  TESTABILITY
+}
+
+enum QualityCheckType {
+  // Security Checks
+  VULNERABILITY_SCAN
+  DEPENDENCY_AUDIT
+  SECRETS_DETECTION
+  PERMISSION_ANALYSIS
+  SECURITY_POLICY_COMPLIANCE
+  
+  // Performance Checks
+  BUNDLE_SIZE_ANALYSIS
+  LOAD_TIME_ANALYSIS
+  MEMORY_USAGE_CHECK
+  CPU_USAGE_CHECK
+  DATABASE_QUERY_ANALYSIS
+  
+  // Maintainability Checks
+  CODE_COMPLEXITY
+  CODE_COVERAGE
+  TECHNICAL_DEBT
+  CODE_DUPLICATION
+  CODING_STANDARDS
+  
+  // Reliability Checks
+  ERROR_RATE_ANALYSIS
+  UPTIME_MONITORING
+  DEPENDENCY_HEALTH
+  API_RELIABILITY
+  FAILURE_RECOVERY
+  
+  // Documentation Checks
+  README_QUALITY
+  API_DOCUMENTATION
+  CODE_COMMENTS
+  CHANGELOG_QUALITY
+  SETUP_INSTRUCTIONS
+  
+  // Compliance Checks
+  LICENSE_COMPLIANCE
+  POLICY_COMPLIANCE
+  REGULATORY_COMPLIANCE
+  ACCESSIBILITY_COMPLIANCE
+  
+  // Custom Checks
+  CUSTOM_RULE
+  COMPOSITE_CHECK
+}
+
+enum QualityCheckStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+  SKIPPED
+  TIMEOUT
+  ERROR
+}
+
+enum CheckSeverity {
+  CRITICAL  // Must fix to pass
+  HIGH      // Should fix soon
+  MEDIUM    // Should fix eventually
+  LOW       // Nice to fix
+  INFO      // Informational only
+}
+
+enum TrendDirection {
+  IMPROVING
+  STABLE
+  DECLINING
+  UNKNOWN
+}
+
+enum HistoryTrigger {
+  SCHEDULED_EVALUATION
+  MANUAL_EVALUATION
+  PLUGIN_UPDATE
+  CONFIG_CHANGE
+  DEPENDENCY_CHANGE
+  SECURITY_SCAN
+  PERFORMANCE_CHANGE
+  ISSUE_RESOLUTION
+}
+
+enum IssueType {
+  SECURITY_VULNERABILITY
+  PERFORMANCE_ISSUE
+  MAINTAINABILITY_DEBT
+  RELIABILITY_CONCERN
+  DOCUMENTATION_GAP
+  COMPLIANCE_VIOLATION
+  POLICY_VIOLATION
+  DEPENDENCY_ISSUE
+  CONFIGURATION_ERROR
+  OTHER
+}
+
+enum IssueSeverity {
+  CRITICAL  // System at risk, immediate action required
+  HIGH      // Significant impact, urgent attention needed
+  MEDIUM    // Moderate impact, should be addressed
+  LOW       // Minor impact, can be addressed later
+  INFO      // Informational, no immediate action needed
+}
+
+enum IssueStatus {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+  DEFERRED
+  WONT_FIX
+  DUPLICATE
+  FALSE_POSITIVE
+}
+
+enum IssuePriority {
+  URGENT
+  HIGH
+  MEDIUM
+  LOW
+  BACKLOG
+}
+
+enum ResolutionMethod {
+  FIXED
+  CONFIGURATION_CHANGE
+  DEPENDENCY_UPDATE
+  DOCUMENTATION_UPDATE
+  POLICY_EXCEPTION
+  WORKAROUND_APPLIED
+  NOT_REPRODUCIBLE
+  BY_DESIGN
+}
+
+enum EvaluationJobType {
+  FULL_EVALUATION
+  INCREMENTAL_EVALUATION
+  SECURITY_SCAN_ONLY
+  PERFORMANCE_CHECK_ONLY
+  COMPLIANCE_CHECK
+  SCHEDULED_EVALUATION
+  TRIGGERED_EVALUATION
+  CUSTOM_EVALUATION
+}
+
+enum EvaluationJobStatus {
+  PENDING
+  QUEUED
+  RUNNING
+  COMPLETED
+  FAILED
+  CANCELLED
+  TIMEOUT
+  RETRY
+}
+
+// Additional indexes for performance optimization
+// These should be created as separate migration scripts
+
+// Composite indexes for common query patterns
+// CREATE INDEX CONCURRENTLY idx_quality_scores_tenant_grade_score ON plugin_quality_scores (tenant_id, overall_grade, overall_score DESC);
+// CREATE INDEX CONCURRENTLY idx_quality_checks_plugin_category_status ON plugin_quality_checks (plugin_id, category, status, executed_at DESC);
+// CREATE INDEX CONCURRENTLY idx_quality_issues_tenant_severity_status ON plugin_quality_issues (tenant_id, severity, status, created_at DESC);
+// CREATE INDEX CONCURRENTLY idx_quality_history_plugin_trend ON plugin_quality_history (plugin_id, recorded_at DESC, overall_score);
+// CREATE INDEX CONCURRENTLY idx_evaluation_jobs_status_priority ON quality_evaluation_jobs (status, priority, created_at);
+
+// Partial indexes for performance
+// CREATE INDEX CONCURRENTLY idx_quality_scores_failing ON plugin_quality_scores (plugin_id, overall_score) WHERE overall_grade IN ('D', 'F');
+// CREATE INDEX CONCURRENTLY idx_quality_issues_open_critical ON plugin_quality_issues (plugin_id, created_at DESC) WHERE status = 'OPEN' AND severity = 'CRITICAL';
+// CREATE INDEX CONCURRENTLY idx_quality_checks_failed ON plugin_quality_checks (plugin_id, category) WHERE passed = false;
+
+// Time-series indexes for analytics
+// CREATE INDEX CONCURRENTLY idx_quality_history_timeseries ON plugin_quality_history (recorded_at DESC, plugin_id, overall_score);
+// CREATE INDEX CONCURRENTLY idx_quality_scores_evaluation_time ON plugin_quality_scores (evaluated_at DESC, tenant_id, overall_grade);

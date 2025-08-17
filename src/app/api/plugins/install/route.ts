@@ -8,11 +8,13 @@ import { backstageIntegration } from '../../../../lib/plugins/BackstageIntegrati
 import { pluginValidator } from '../../../../lib/plugins/PluginValidator';
 import { pluginInstaller } from '../../../../lib/plugins/plugin-installer';
 import { dockerPluginInstaller } from '../../../../lib/plugins/docker-plugin-installer';
+import { enhancedLocalInstaller } from '../../../../services/enhancedLocalPluginInstaller';
+import { securityValidationMiddleware } from '../../../../services/plugin-security/SecurityValidationMiddleware';
 
 interface InstallationTask {
   id: string;
   pluginId: string;
-  status: 'pending' | 'validating' | 'installing' | 'configuring' | 'completed' | 'failed';
+  status: 'pending' | 'validating' | 'security_scanning' | 'installing' | 'configuring' | 'completed' | 'failed';
   progress: number;
   message: string;
   startTime: Date;
@@ -20,6 +22,7 @@ interface InstallationTask {
   error?: string;
   validationResult?: any;
   installationResult?: any;
+  securityResult?: any;
 }
 
 // In-memory task storage - in production, use Redis or database
@@ -33,6 +36,7 @@ export async function POST(request: NextRequest) {
       version, 
       configuration = {}, 
       validateFirst = true,
+      enableSecurityValidation = true,
       environment = 'production' // 'production' | 'staging' | 'test'
     } = body;
 
@@ -57,7 +61,7 @@ export async function POST(request: NextRequest) {
     installationTasks.set(taskId, task);
 
     // Start asynchronous installation process
-    processInstallation(taskId, pluginId, version, configuration, validateFirst, environment)
+    processInstallation(taskId, pluginId, version, configuration, validateFirst, enableSecurityValidation, environment)
       .catch(error => {
         console.error(`Installation failed for task ${taskId}:`, error);
         const failedTask = installationTasks.get(taskId);
@@ -142,6 +146,7 @@ async function processInstallation(
   version?: string,
   configuration: any = {},
   validateFirst: boolean = true,
+  enableSecurityValidation: boolean = true,
   environment: string = 'production'
 ): Promise<void> {
   const task = installationTasks.get(taskId);
@@ -170,7 +175,85 @@ async function processInstallation(
       }
     }
 
-    // Step 2: Installation
+    // Step 2: Security Validation (if enabled)
+    if (enableSecurityValidation) {
+      updateTask(taskId, {
+        status: 'security_scanning',
+        progress: 20,
+        message: 'Performing security validation and scanning'
+      });
+
+      try {
+        // Get package metadata for security validation
+        const packageInfo = await fetchPackageInfo(pluginId, version);
+        
+        const securityValidation = await securityValidationMiddleware.validatePluginForInstallation({
+          pluginId,
+          version: version || 'latest',
+          tarballUrl: packageInfo.tarballUrl,
+          publishedBy: packageInfo.author || 'unknown',
+          publishedAt: new Date(packageInfo.publishedAt || Date.now()),
+          shasum: packageInfo.shasum,
+          integrity: packageInfo.integrity,
+          signature: packageInfo.signature,
+          publicKey: packageInfo.publicKey
+        });
+
+        task.securityResult = securityValidation;
+
+        // Check if installation should be blocked
+        if (!securityValidation.isValid) {
+          const errorMessage = `Security validation failed: ${securityValidation.blockers.join(', ')}`;
+          
+          // Log security event
+          console.warn(`Plugin ${pluginId} failed security validation:`, {
+            blockers: securityValidation.blockers,
+            warnings: securityValidation.warnings,
+            riskLevel: securityValidation.securityResult.riskLevel,
+            trustScore: securityValidation.securityResult.trustScore
+          });
+
+          // For critical security issues, block installation
+          if (securityValidation.securityResult.riskLevel === 'critical') {
+            throw new Error(`Installation blocked due to critical security issues: ${errorMessage}`);
+          }
+
+          // For high risk, require explicit approval (in production)
+          if (securityValidation.securityResult.riskLevel === 'high' && environment === 'production') {
+            updateTask(taskId, {
+              status: 'failed',
+              error: `Installation requires security approval: ${errorMessage}`,
+              message: 'Plugin requires security team approval before installation'
+            });
+            return;
+          }
+
+          // For medium/low risk, proceed with warnings
+          updateTask(taskId, {
+            message: `Security warnings detected but proceeding: ${securityValidation.warnings.join(', ')}`
+          });
+        } else {
+          updateTask(taskId, {
+            message: `Security validation passed (Trust Score: ${securityValidation.securityResult.trustScore}/100)`
+          });
+        }
+
+      } catch (securityError) {
+        console.error('Security validation error:', securityError);
+        
+        // In production, fail on security validation errors
+        if (environment === 'production') {
+          throw new Error(`Security validation failed: ${securityError instanceof Error ? securityError.message : 'Unknown security error'}`);
+        } else {
+          // In non-production, log warning and continue
+          updateTask(taskId, {
+            message: `Security validation warning: ${securityError instanceof Error ? securityError.message : 'Security check failed'}`
+          });
+        }
+      }
+    }
+
+    // Step 3: Installation
     updateTask(taskId, {
       status: 'installing',
       progress: 30,
@@ -179,7 +262,31 @@ async function processInstallation(
 
     let installResult;
     
-    if (environment === 'production') {
+    // Check if we're in development mode and should use enhanced local installer
+    const isDevelopment = process.env.NODE_ENV === 'development' || environment === 'development';
+    const useEnhancedInstaller = isDevelopment && process.env.USE_ENHANCED_INSTALLER !== 'false';
+    
+    if (useEnhancedInstaller) {
+      // Use enhanced local installer for full automation in dev mode
+      console.log('Using enhanced local installer for automated plugin installation');
+      
+      // Set up progress reporting
+      enhancedLocalInstaller.onProgress((progress) => {
+        updateTask(taskId, {
+          progress: Math.min(30 + (progress.progress * 0.5), 80),
+          message: progress.message
+        });
+      });
+      
+      installResult = await enhancedLocalInstaller.installPlugin({
+        pluginId,
+        version,
+        configuration,
+        autoRestart: true,
+        updateCode: true
+      });
+      
+    } else if (environment === 'production') {
       // Use Backstage integration for production
       try {
         const installData = await backstageIntegration.installPlugin(pluginId, version, configuration);
@@ -315,4 +422,57 @@ function updateTask(taskId: string, updates: Partial<InstallationTask>): void {
  */
 function generateTaskId(): string {
   return `install_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+}
+
+/**
+ * Fetch package information from NPM registry
+ */
+async function fetchPackageInfo(packageName: string, version?: string): Promise<any> {
+  try {
+    const registryUrl = version 
+      ? `https://registry.npmjs.org/${packageName}/${version}`
+      : `https://registry.npmjs.org/${packageName}/latest`;
+    
+    const response = await fetch(registryUrl, {
+      headers: {
+        'Accept': 'application/json',
+        'User-Agent': 'PluginSecurityService/1.0.0'
+      }
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to fetch package info: ${response.status} ${response.statusText}`);
+    }
+
+    const packageData = await response.json();
+    
+    // Extract security-relevant metadata
+    return {
+      name: packageData.name,
+      version: packageData.version,
+      tarballUrl: packageData.dist?.tarball,
+      shasum: packageData.dist?.shasum,
+      integrity: packageData.dist?.integrity,
+      publishedAt: packageData.time?.[packageData.version],
+      author: packageData.author?.name || packageData.maintainers?.[0]?.name,
+      maintainers: packageData.maintainers,
+      repository: packageData.repository?.url,
+      homepage: packageData.homepage,
+      license: packageData.license,
+      keywords: packageData.keywords || [],
+      // These would be populated if the package includes security metadata
+      signature: packageData.dist?.signature,
+      publicKey: packageData.dist?.publicKey
+    };
+  } catch (error) {
+    console.error('Failed to fetch package info:', error);
+    // Return minimal info to allow security validation to proceed
+    return {
+      name: packageName,
+      version: version || 'latest',
+      tarballUrl: `https://registry.npmjs.org/${packageName}/-/${packageName}-${version || 'latest'}.tgz`,
+      publishedAt: new Date().toISOString(),
+      author: 'unknown'
+    };
+  }
 }

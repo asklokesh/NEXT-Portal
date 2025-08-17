@@ -1,0 +1,481 @@
+# Production Backstage Configuration
+# Enterprise-grade configuration for real backend integration
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: backstage-production-config
+  namespace: saas-idp-production
+data:
+  app-config.yaml: |
+    app:
+      title: Enterprise SaaS IDP Platform
+      baseUrl: https://app.saas-idp.company.com
+      support:
+        url: https://support.saas-idp.company.com
+        items:
+          - title: Issues
+            icon: github
+            links:
+              - url: https://github.com/company/saas-idp/issues
+                title: GitHub Issues
+          - title: Slack Chatroom
+            icon: chat
+            links:
+              - url: https://company.slack.com/channels/platform-support
+                title: '#platform-support'
+    
+    organization:
+      name: Enterprise SaaS IDP
+
+    backend:
+      baseUrl: https://api.saas-idp.company.com
+      listen:
+        port: 7007
+        host: 0.0.0.0
+      csp:
+        connect-src: ["'self'", 'http:', 'https:']
+        upgrade-insecure-requests: false
+      cors:
+        origin: https://app.saas-idp.company.com
+        methods: [GET, HEAD, PATCH, POST, PUT, DELETE]
+        credentials: true
+      database:
+        client: pg
+        connection:
+          host: ${POSTGRES_HOST}
+          port: ${POSTGRES_PORT}
+          user: ${POSTGRES_USER}
+          password: ${POSTGRES_PASSWORD}
+          database: ${POSTGRES_DB}
+          ssl:
+            rejectUnauthorized: false
+        plugin:
+          auth:
+            connection:
+              database: ${POSTGRES_AUTH_DB}
+          scaffolder:
+            connection:
+              database: ${POSTGRES_SCAFFOLDER_DB}
+          catalog:
+            connection:
+              database: ${POSTGRES_CATALOG_DB}
+      cache:
+        store: redis
+        connection: ${REDIS_URL}
+      workingDirectory: /tmp
+      reading:
+        allow:
+          - host: '*.github.com'
+          - host: '*.gitlab.com'
+          - host: '*.bitbucket.org'
+
+    integrations:
+      github:
+        - host: github.com
+          token: ${GITHUB_TOKEN}
+          apps:
+            - $include: github-app-credentials.yaml
+      gitlab:
+        - host: gitlab.com
+          token: ${GITLAB_TOKEN}
+      bitbucket:
+        - host: bitbucket.org
+          username: ${BITBUCKET_USERNAME}
+          appPassword: ${BITBUCKET_APP_PASSWORD}
+
+    proxy:
+      endpoints:
+        '/prometheus/api':
+          target: 'http://prometheus.monitoring.svc.cluster.local:9090/api'
+          headers:
+            Authorization: Bearer ${PROMETHEUS_TOKEN}
+        '/grafana/api':
+          target: 'https://grafana.company.com'
+          headers:
+            Authorization: Bearer ${GRAFANA_TOKEN}
+        '/sonarqube':
+          target: 'https://sonarqube.company.com'
+          headers:
+            Authorization: Bearer ${SONARQUBE_TOKEN}
+        '/snyk/api':
+          target: 'https://api.snyk.io'
+          headers:
+            Authorization: token ${SNYK_TOKEN}
+
+    techdocs:
+      builder: 'local'
+      generator:
+        runIn: 'local'
+      publisher:
+        type: 'awsS3'
+        awsS3:
+          bucketName: ${TECHDOCS_S3_BUCKET_NAME}
+          region: ${AWS_REGION}
+          credentials:
+            accessKeyId: ${AWS_ACCESS_KEY_ID}
+            secretAccessKey: ${AWS_SECRET_ACCESS_KEY}
+
+    lighthouse:
+      baseUrl: https://lighthouse-audit.company.com
+
+    search:
+      pg:
+        highlightOptions:
+          useHighlight: true
+          maxWord: 35
+          minWord: 15
+          shortWord: 3
+          highlightAll: true
+          maxFragments: 30
+          fragmentDelimiter: ' ... '
+
+    auth:
+      environment: production
+      providers:
+        github:
+          production:
+            clientId: ${GITHUB_CLIENT_ID}
+            clientSecret: ${GITHUB_CLIENT_SECRET}
+        google:
+          production:
+            clientId: ${GOOGLE_CLIENT_ID}
+            clientSecret: ${GOOGLE_CLIENT_SECRET}
+        microsoft:
+          production:
+            clientId: ${MICROSOFT_CLIENT_ID}
+            clientSecret: ${MICROSOFT_CLIENT_SECRET}
+            tenantId: ${MICROSOFT_TENANT_ID}
+        oauth2:
+          production:
+            clientId: ${OAUTH2_CLIENT_ID}
+            clientSecret: ${OAUTH2_CLIENT_SECRET}
+            authorizationUrl: ${OAUTH2_AUTH_URL}
+            tokenUrl: ${OAUTH2_TOKEN_URL}
+
+    scaffolder:
+      defaultAuthor:
+        name: SaaS IDP Platform
+        email: platform@company.com
+      defaultCommitMessage: 'Initial commit from SaaS IDP template'
+
+    catalog:
+      import:
+        entityFilename: catalog-info.yaml
+        pullRequestBranchName: backstage-integration
+      rules:
+        - allow: [Component, System, API, Resource, Location, Template, Group, User, Domain]
+      locations:
+        - type: file
+          target: /etc/catalog/catalog-info.yaml
+        - type: url
+          target: https://github.com/company/software-templates/blob/main/all-templates.yaml
+        - type: url
+          target: https://github.com/company/backstage-catalog/blob/main/catalog-info.yaml
+      providers:
+        github:
+          production:
+            organization: 'company'
+            catalogPath: '/catalog-info.yaml'
+            filters:
+              branch: 'main'
+              repository: '.*'
+        gitlab:
+          production:
+            host: gitlab.com
+            group: 'company'
+            projectPattern: '[\s\S]*'
+        bitbucket:
+          production:
+            host: bitbucket.org
+            workspace: company
+        ldap:
+          production:
+            target: ldap://ldap.company.com
+            bind:
+              dn: ${LDAP_BIND_DN}
+              secret: ${LDAP_BIND_PASSWORD}
+            users:
+              dn: 'ou=people,dc=company,dc=com'
+              options:
+                filter: '(objectClass=person)'
+            groups:
+              dn: 'ou=groups,dc=company,dc=com'
+              options:
+                filter: '(objectClass=groupOfNames)'
+
+    kubernetes:
+      serviceLocatorMethod:
+        type: 'multiTenant'
+      clusterLocatorMethods:
+        - type: 'config'
+          clusters:
+            - url: https://kubernetes.company.com
+              name: production
+              authProvider: 'serviceAccount'
+              serviceAccountToken: ${K8S_SERVICE_ACCOUNT_TOKEN}
+              dashboardUrl: https://kubernetes-dashboard.company.com
+              dashboardApp: standard
+            - url: https://staging-kubernetes.company.com
+              name: staging
+              authProvider: 'serviceAccount'
+              serviceAccountToken: ${K8S_STAGING_TOKEN}
+
+    permission:
+      enabled: true
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backstage-backend
+  namespace: saas-idp-production
+  labels:
+    app: backstage-backend
+    component: backend
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: backstage-backend
+  template:
+    metadata:
+      labels:
+        app: backstage-backend
+        component: backend
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "7007"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: backstage-service-account
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      containers:
+      - name: backstage-backend
+        image: registry.company.com/backstage-backend:latest
+        imagePullPolicy: Always
+        ports:
+        - name: http
+          containerPort: 7007
+          protocol: TCP
+        env:
+        - name: NODE_ENV
+          value: "production"
+        - name: LOG_LEVEL
+          value: "info"
+        - name: POSTGRES_HOST
+          value: "postgresql-primary.database.svc.cluster.local"
+        - name: POSTGRES_PORT
+          value: "5432"
+        - name: POSTGRES_USER
+          valueFrom:
+            secretKeyRef:
+              name: postgresql-credentials
+              key: username
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: postgresql-credentials
+              key: password
+        - name: POSTGRES_DB
+          value: "backstage"
+        - name: POSTGRES_AUTH_DB
+          value: "backstage_auth"
+        - name: POSTGRES_SCAFFOLDER_DB
+          value: "backstage_scaffolder"
+        - name: POSTGRES_CATALOG_DB
+          value: "backstage_catalog"
+        - name: REDIS_URL
+          value: "redis://redis-master.cache.svc.cluster.local:6379"
+        - name: GITHUB_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: github-credentials
+              key: token
+        - name: GITLAB_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: gitlab-credentials
+              key: token
+        - name: GITHUB_CLIENT_ID
+          valueFrom:
+            secretKeyRef:
+              name: auth-credentials
+              key: github-client-id
+        - name: GITHUB_CLIENT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: auth-credentials
+              key: github-client-secret
+        - name: GOOGLE_CLIENT_ID
+          valueFrom:
+            secretKeyRef:
+              name: auth-credentials
+              key: google-client-id
+        - name: GOOGLE_CLIENT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: auth-credentials
+              key: google-client-secret
+        - name: AWS_ACCESS_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: aws-credentials
+              key: access-key-id
+        - name: AWS_SECRET_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: aws-credentials
+              key: secret-access-key
+        - name: AWS_REGION
+          value: "us-east-1"
+        - name: TECHDOCS_S3_BUCKET_NAME
+          value: "company-techdocs"
+        resources:
+          requests:
+            memory: "2Gi"
+            cpu: "1000m"
+          limits:
+            memory: "4Gi"
+            cpu: "2000m"
+        livenessProbe:
+          httpGet:
+            path: /healthcheck
+            port: 7007
+          initialDelaySeconds: 60
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /healthcheck
+            port: 7007
+          initialDelaySeconds: 30
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+        volumeMounts:
+        - name: app-config
+          mountPath: /app/app-config.yaml
+          subPath: app-config.yaml
+        - name: github-app-credentials
+          mountPath: /app/github-app-credentials.yaml
+          subPath: github-app-credentials.yaml
+        - name: catalog-files
+          mountPath: /etc/catalog
+        - name: tmp-dir
+          mountPath: /tmp
+      volumes:
+      - name: app-config
+        configMap:
+          name: backstage-production-config
+      - name: github-app-credentials
+        secret:
+          secretName: github-app-credentials
+      - name: catalog-files
+        configMap:
+          name: catalog-files
+      - name: tmp-dir
+        emptyDir: {}
+      imagePullSecrets:
+      - name: registry-credentials
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backstage-backend
+  namespace: saas-idp-production
+  labels:
+    app: backstage-backend
+spec:
+  type: ClusterIP
+  ports:
+  - port: 80
+    targetPort: 7007
+    protocol: TCP
+    name: http
+  selector:
+    app: backstage-backend
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: backstage-service-account
+  namespace: saas-idp-production
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT_ID:role/backstage-service-account-role
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: backstage-read-only
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - pods
+  - services
+  - configmaps
+  - limitranges
+  - resourcequotas
+  - namespaces
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - apps
+  resources:
+  - deployments
+  - replicasets
+  - statefulsets
+  - daemonsets
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - autoscaling
+  resources:
+  - horizontalpodautoscalers
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - networking.k8s.io
+  resources:
+  - networkpolicies
+  - ingresses
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - metrics.k8s.io
+  resources:
+  - pods
+  - nodes
+  verbs:
+  - get
+  - list
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: backstage-read-only-binding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: backstage-read-only
+subjects:
+- kind: ServiceAccount
+  name: backstage-service-account
+  namespace: saas-idp-production

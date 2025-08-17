@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useEffect, useState, useCallback, useRef } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
 import {
  Activity,
  AlertCircle,
@@ -18,6 +19,18 @@ import {
  ArrowUpRight,
  ArrowDownRight,
  Loader2,
+ Home,
+ Star,
+ PlayCircle,
+ BookOpen,
+ Settings,
+ Bell,
+ Search,
+ Plus,
+ Brain,
+ GraduationCap,
+ Lock,
+ ExternalLink
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 
@@ -72,11 +85,114 @@ interface ServiceEntity {
  };
 }
 
+interface QuickAction {
+ id: string;
+ title: string;
+ description: string;
+ icon: React.ComponentType<any>;
+ color: string;
+ href: string;
+ isNew?: boolean;
+}
+
+interface PremiumPlugin {
+ id: string;
+ name: string;
+ description: string;
+ icon: React.ComponentType<any>;
+ color: string;
+ href: string;
+ isPopular?: boolean;
+}
+
+const quickActions: QuickAction[] = [
+ {
+ id: 'create-service',
+ title: 'Create Service',
+ description: 'Bootstrap a new service from templates',
+ icon: Plus,
+ color: 'primary',
+ href: '/create'
+ },
+ {
+ id: 'software-catalog',
+ title: 'Software Catalog',
+ description: 'Browse all services and components',
+ icon: Database,
+ color: 'blue',
+ href: '/catalog'
+ },
+ {
+ id: 'tech-docs',
+ title: 'TechDocs',
+ description: 'View technical documentation',
+ icon: BookOpen,
+ color: 'green',
+ href: '/docs'
+ },
+ {
+ id: 'templates',
+ title: 'Templates',
+ description: 'Explore scaffolding templates',
+ icon: GitBranch,
+ color: 'purple',
+ href: '/templates'
+ }
+];
+
+const premiumPlugins: PremiumPlugin[] = [
+ {
+ id: 'soundcheck',
+ name: 'Soundcheck',
+ description: 'Tech health management and standards enforcement',
+ icon: Shield,
+ color: 'red',
+ href: '/soundcheck',
+ isPopular: true
+ },
+ {
+ id: 'aika',
+ name: 'AiKA',
+ description: 'AI Knowledge Assistant for your organization',
+ icon: Brain,
+ color: 'purple',
+ href: '/aika'
+ },
+ {
+ id: 'skill-exchange',
+ name: 'Skill Exchange',
+ description: 'Internal learning marketplace',
+ icon: GraduationCap,
+ color: 'green',
+ href: '/skill-exchange'
+ },
+ {
+ id: 'insights',
+ name: 'Insights',
+ description: 'Portal usage analytics and metrics',
+ icon: BarChart3,
+ color: 'blue',
+ href: '/insights'
+ },
+ {
+ id: 'rbac',
+ name: 'RBAC',
+ description: 'Role-based access control',
+ icon: Lock,
+ color: 'orange',
+ href: '/rbac'
+ }
+];
+
 function MetricCard({ title, value, change, icon, bgColor, iconColor, loading = false }: MetricCardProps) {
  return (
- <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
+ <motion.div
+ initial={{ opacity: 0, y: 20 }}
+ animate={{ opacity: 1, y: 0 }}
+ className="spotify-card p-6"
+ >
  <div className="flex items-center justify-between mb-4">
- <div className={`p-3 rounded-lg ${bgColor}`}>
+ <div className={`p-3 rounded-xl ${bgColor}`}>
  <div className={iconColor}>{loading ? <Loader2 className="w-6 h-6 animate-spin" /> : icon}</div>
  </div>
  {change && !loading && (
@@ -87,12 +203,12 @@ function MetricCard({ title, value, change, icon, bgColor, iconColor, loading = 
  )}
  </div>
  {loading ? (
- <div className="h-8 bg-gray-200 dark:bg-gray-700 rounded animate-pulse mb-2" />
+ <div className="h-8 bg-muted rounded animate-pulse mb-2" />
  ) : (
- <h3 className="text-2xl font-bold text-gray-900 dark:text-gray-100">{value}</h3>
+ <h3 className="text-2xl font-bold text-foreground">{value}</h3>
  )}
- <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">{title}</p>
- </div>
+ <p className="text-sm text-muted-foreground mt-1">{title}</p>
+ </motion.div>
  );
 }
 
@@ -277,32 +393,86 @@ export default function DashboardPage() {
  };
 
  return (
- <div className="space-y-6">
- {/* Header */}
- <div className="flex items-center justify-between">
+ <div className="spotify-layout min-h-screen">
+ <div className="spotify-main-content">
+ {/* Hero Section */}
+ <motion.div
+ initial={{ opacity: 0, y: 20 }}
+ animate={{ opacity: 1, y: 0 }}
+ className="mb-12"
+ >
+ <div className="flex items-center justify-between mb-8">
  <div>
- <h1 className="text-3xl font-bold text-gray-900 dark:text-gray-100">Dashboard</h1>
- <p className="text-gray-600 dark:text-gray-400 mt-1">
- Welcome back! Here's what's happening with your platform.
+ <div className="flex items-center gap-3 mb-3">
+ <Home className="h-8 w-8 text-primary" />
+ <h1 className="text-4xl font-bold spotify-gradient-text">Good morning</h1>
+ </div>
+ <p className="text-xl text-muted-foreground">
+ Welcome back to your development portal
  </p>
  </div>
- <button
- onClick={() => router.push('/create')}
- className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
- >
- Create Service
+ <div className="flex items-center gap-3">
+ <button className="p-3 rounded-xl bg-muted hover:bg-muted/80 transition-colors">
+ <Bell className="h-5 w-5 text-muted-foreground" />
  </button>
+ <button className="p-3 rounded-xl bg-muted hover:bg-muted/80 transition-colors">
+ <Settings className="h-5 w-5 text-muted-foreground" />
+ </button>
+ </div>
+ </div>
+ </motion.div>
+
+ {/* Quick Actions */}
+ <div className="mb-12">
+ <h2 className="text-2xl font-bold text-foreground mb-6">Quick Actions</h2>
+ <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
+ {quickActions.map((action, index) => {
+ const ActionIcon = action.icon;
+ return (
+ <motion.button
+ key={action.id}
+ initial={{ opacity: 0, y: 20 }}
+ animate={{ opacity: 1, y: 0 }}
+ transition={{ delay: index * 0.1 }}
+ onClick={() => router.push(action.href)}
+ className="spotify-plugin-card group text-left"
+ >
+ <div className="flex items-center gap-4 mb-4">
+ <div className={`p-4 rounded-xl ${
+                  action.color === 'primary' ? 'bg-primary/10' :
+                  action.color === 'blue' ? 'bg-blue-500/10' :
+                  action.color === 'green' ? 'bg-green-500/10' :
+                  action.color === 'purple' ? 'bg-purple-500/10' :
+                  'bg-muted'
+                }`}>
+ <ActionIcon className={`h-8 w-8 ${
+                  action.color === 'primary' ? 'text-primary' :
+                  action.color === 'blue' ? 'text-blue-600' :
+                  action.color === 'green' ? 'text-green-600' :
+                  action.color === 'purple' ? 'text-purple-600' :
+                  'text-foreground'
+                }`} />
+ </div>
+ </div>
+ <h3 className="text-lg font-bold text-foreground mb-2">{action.title}</h3>
+ <p className="text-sm text-muted-foreground">{action.description}</p>
+ </motion.button>
+ );
+ })}
+ </div>
  </div>
 
  {/* Key Metrics */}
+ <div className="mb-12">
+ <h2 className="text-2xl font-bold text-foreground mb-6">Platform Overview</h2>
  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
  <MetricCard
  title="Total Services"
  value={metrics?.totalServices ?? 0}
  change={metrics ? { value: 5.2, trend: 'up' } : undefined}
  icon={<Package className="w-6 h-6" />}
- bgColor="bg-blue-100 dark:bg-blue-900/20"
- iconColor="text-blue-600 dark:text-blue-400"
+ bgColor="bg-blue-500/10"
+ iconColor="text-blue-600"
  loading={loading.metrics}
  />
  <MetricCard
@@ -310,8 +480,8 @@ export default function DashboardPage() {
  value={metrics ? `${metrics.healthyServices}/${metrics.totalServices}` : '0/0'}
  change={metrics ? { value: 2.1, trend: 'up' } : undefined}
  icon={<CheckCircle className="w-6 h-6" />}
- bgColor="bg-green-100 dark:bg-green-900/20"
- iconColor="text-green-600 dark:text-green-400"
+ bgColor="bg-green-500/10"
+ iconColor="text-green-600"
  loading={loading.metrics}
  />
  <MetricCard
@@ -319,8 +489,8 @@ export default function DashboardPage() {
  value={metrics?.deploymentsToday ?? 0}
  change={metrics ? { value: 15.3, trend: 'up' } : undefined}
  icon={<GitBranch className="w-6 h-6" />}
- bgColor="bg-purple-100 dark:bg-purple-900/20"
- iconColor="text-purple-600 dark:text-purple-400"
+ bgColor="bg-purple-500/10"
+ iconColor="text-purple-600"
  loading={loading.metrics}
  />
  <MetricCard
@@ -328,51 +498,122 @@ export default function DashboardPage() {
  value={metrics?.activeIncidents ?? 0}
  change={metrics ? { value: 33.3, trend: 'down' } : undefined}
  icon={<AlertCircle className="w-6 h-6" />}
- bgColor="bg-red-100 dark:bg-red-900/20"
- iconColor="text-red-600 dark:text-red-400"
+ bgColor="bg-red-500/10"
+ iconColor="text-red-600"
  loading={loading.metrics}
  />
  </div>
+ </div>
 
- {/* Platform Overview */}
- <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+ {/* Premium Features */}
+ <div className="mb-12">
+ <div className="flex items-center justify-between mb-6">
+ <h2 className="text-2xl font-bold text-foreground">Premium Features</h2>
+ <button
+ onClick={() => router.push('/plugins')}
+ className="spotify-button-secondary px-4 py-2 rounded-lg text-sm font-semibold flex items-center gap-2"
+ >
+ View All
+ <ExternalLink className="h-4 w-4" />
+ </button>
+ </div>
+ <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+ {premiumPlugins.map((plugin, index) => {
+ const PluginIcon = plugin.icon;
+ return (
+ <motion.div
+ key={plugin.id}
+ initial={{ opacity: 0, y: 20 }}
+ animate={{ opacity: 1, y: 0 }}
+ transition={{ delay: index * 0.1 }}
+ onClick={() => router.push(plugin.href)}
+ className="spotify-plugin-card group cursor-pointer relative"
+ >
+ {plugin.isPopular && (
+ <div className="absolute top-4 right-4">
+ <div className="bg-gradient-to-r from-primary to-accent text-primary-foreground px-2 py-1 rounded-full text-xs font-semibold flex items-center gap-1">
+ <Star className="h-3 w-3" />
+ Popular
+ </div>
+ </div>
+ )}
+ <div className="flex items-center gap-4 mb-4">
+ <div className={`p-4 rounded-xl bg-${plugin.color}-500/10`}>
+ <PluginIcon className={`h-8 w-8 text-${plugin.color}-600`} />
+ </div>
+ <div className="flex-1">
+ <h3 className="text-lg font-bold text-foreground">{plugin.name}</h3>
+ <span className="bg-gradient-to-r from-primary to-accent text-primary-foreground px-2 py-1 rounded-full text-xs font-semibold">
+ Premium
+ </span>
+ </div>
+ </div>
+ <p className="text-sm text-muted-foreground mb-4">{plugin.description}</p>
+ <div className="flex items-center justify-between">
+ <button className="spotify-button-primary py-2 px-4 rounded-lg text-sm font-semibold flex items-center gap-2">
+ <PlayCircle className="h-4 w-4" />
+ Launch
+ </button>
+ <ExternalLink className="h-4 w-4 text-muted-foreground" />
+ </div>
+ </motion.div>
+ );
+ })}
+ </div>
+ </div>
+
+ {/* Recent Activity & Platform Stats */}
+ <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 mb-12">
  {/* Recent Activity */}
- <div className="lg:col-span-2 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
- <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100 mb-4">Recent Activity</h2>
+ <motion.div
+ initial={{ opacity: 0, y: 20 }}
+ animate={{ opacity: 1, y: 0 }}
+ transition={{ delay: 0.3 }}
+ className="lg:col-span-2 spotify-card p-6"
+ >
+ <div className="flex items-center justify-between mb-6">
+ <h2 className="text-xl font-bold text-foreground">Recent Activity</h2>
+ <button
+ onClick={() => router.push('/activity')}
+ className="text-sm text-primary hover:text-primary/80 font-medium"
+ >
+ View all
+ </button>
+ </div>
  {loading.activity ? (
  <div className="space-y-4">
  {[...Array(4)].map((_, i) => (
  <div key={i} className="flex items-start gap-3">
- <div className="w-8 h-8 bg-gray-200 dark:bg-gray-700 rounded-lg animate-pulse" />
+ <div className="w-8 h-8 bg-muted rounded-lg animate-pulse" />
  <div className="flex-1 space-y-2">
- <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded animate-pulse w-3/4" />
- <div className="h-3 bg-gray-200 dark:bg-gray-700 rounded animate-pulse w-1/4" />
+ <div className="h-4 bg-muted rounded animate-pulse w-3/4" />
+ <div className="h-3 bg-muted rounded animate-pulse w-1/4" />
  </div>
  </div>
  ))}
  </div>
  ) : recentActivity.length === 0 ? (
- <div className="text-center py-8 text-gray-500 dark:text-gray-400">
- <Activity className="w-12 h-12 mx-auto mb-4 opacity-50" />
- <p>No recent activity</p>
+ <div className="text-center py-12">
+ <Activity className="w-12 h-12 mx-auto mb-4 text-muted-foreground opacity-50" />
+ <p className="text-muted-foreground">No recent activity</p>
  </div>
  ) : (
  <div className="space-y-4">
  {recentActivity.map((activity) => (
- <div key={activity.id} className="flex items-start gap-3">
+ <div key={activity.id} className="flex items-start gap-3 p-3 rounded-lg hover:bg-muted/50 transition-colors">
  <div className={`p-2 rounded-lg ${
- activity.status === 'success' ? 'bg-green-100 dark:bg-green-900/20 text-green-600 dark:text-green-400' :
- activity.status === 'warning' ? 'bg-yellow-100 dark:bg-yellow-900/20 text-yellow-600 dark:text-yellow-400' :
- activity.status === 'error' ? 'bg-red-100 dark:bg-red-900/20 text-red-600 dark:text-red-400' :
- 'bg-blue-100 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400'
+ activity.status === 'success' ? 'bg-green-500/10 text-green-600' :
+ activity.status === 'warning' ? 'bg-yellow-500/10 text-yellow-600' :
+ activity.status === 'error' ? 'bg-red-500/10 text-red-600' :
+ 'bg-blue-500/10 text-blue-600'
  }`}>
  {activity.type === 'deployment' ? <GitBranch className="w-4 h-4" /> :
  activity.type === 'alert' ? <AlertCircle className="w-4 h-4" /> :
  <Activity className="w-4 h-4" />}
  </div>
  <div className="flex-1">
- <p className="text-sm text-gray-900 dark:text-gray-100">{activity.message}</p>
- <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+ <p className="text-sm text-foreground font-medium">{activity.message}</p>
+ <p className="text-xs text-muted-foreground mt-1">
  {activity.timestamp ? formatRelativeTime(activity.timestamp) : activity.time}
  </p>
  </div>
@@ -380,114 +621,116 @@ export default function DashboardPage() {
  ))}
  </div>
  )}
- {!loading.activity && (
- <button
- onClick={() => router.push('/activity')}
- className="mt-4 text-sm text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
- >
- View all activity 
- </button>
- )}
- </div>
+ </motion.div>
 
  {/* Platform Stats */}
- <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
- <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100 mb-4">Platform Stats</h2>
+ <motion.div
+ initial={{ opacity: 0, y: 20 }}
+ animate={{ opacity: 1, y: 0 }}
+ transition={{ delay: 0.4 }}
+ className="spotify-card p-6"
+ >
+ <h2 className="text-xl font-bold text-foreground mb-6">Platform Stats</h2>
  {loading.metrics ? (
  <div className="space-y-4">
  {[...Array(4)].map((_, i) => (
  <div key={i} className="flex items-center justify-between">
  <div className="flex items-center gap-2">
- <div className="w-4 h-4 bg-gray-200 dark:bg-gray-700 rounded animate-pulse" />
- <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded animate-pulse w-24" />
+ <div className="w-4 h-4 bg-muted rounded animate-pulse" />
+ <div className="h-4 bg-muted rounded animate-pulse w-24" />
  </div>
- <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded animate-pulse w-16" />
+ <div className="h-4 bg-muted rounded animate-pulse w-16" />
  </div>
  ))}
  </div>
  ) : (
- <div className="space-y-4">
+ <div className="space-y-6">
  <div className="flex items-center justify-between">
- <div className="flex items-center gap-2">
- <Users className="w-4 h-4 text-gray-400" />
- <span className="text-sm text-gray-600 dark:text-gray-400">Active Users</span>
+ <div className="flex items-center gap-3">
+ <Users className="w-5 h-5 text-primary" />
+ <span className="text-sm text-muted-foreground">Active Users</span>
  </div>
- <span className="text-sm font-medium text-gray-900 dark:text-gray-100">
+ <span className="text-sm font-semibold text-foreground">
  {metrics?.activeUsers ?? 0}
  </span>
  </div>
  <div className="flex items-center justify-between">
- <div className="flex items-center gap-2">
- <Zap className="w-4 h-4 text-gray-400" />
- <span className="text-sm text-gray-600 dark:text-gray-400">API Calls</span>
+ <div className="flex items-center gap-3">
+ <Zap className="w-5 h-5 text-primary" />
+ <span className="text-sm text-muted-foreground">API Calls</span>
  </div>
- <span className="text-sm font-medium text-gray-900 dark:text-gray-100">
+ <span className="text-sm font-semibold text-foreground">
  {metrics?.apiCalls ?? '0'}
  </span>
  </div>
  <div className="flex items-center justify-between">
- <div className="flex items-center gap-2">
- <Clock className="w-4 h-4 text-gray-400" />
- <span className="text-sm text-gray-600 dark:text-gray-400">Avg Response Time</span>
+ <div className="flex items-center gap-3">
+ <Clock className="w-5 h-5 text-primary" />
+ <span className="text-sm text-muted-foreground">Response Time</span>
  </div>
- <span className="text-sm font-medium text-gray-900 dark:text-gray-100">
+ <span className="text-sm font-semibold text-foreground">
  {metrics?.avgResponseTime ?? '0ms'}
  </span>
  </div>
  <div className="flex items-center justify-between">
- <div className="flex items-center gap-2">
- <Shield className="w-4 h-4 text-gray-400" />
- <span className="text-sm text-gray-600 dark:text-gray-400">Platform Uptime</span>
+ <div className="flex items-center gap-3">
+ <Shield className="w-5 h-5 text-primary" />
+ <span className="text-sm text-muted-foreground">Uptime</span>
  </div>
- <span className="text-sm font-medium text-gray-900 dark:text-gray-100">
+ <span className="text-sm font-semibold text-primary">
  {metrics?.uptime ?? '99.9%'}
  </span>
  </div>
  </div>
  )}
- </div>
+ </motion.div>
  </div>
 
  {/* Top Services */}
- <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
- <div className="flex items-center justify-between mb-4">
- <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">Top Services</h2>
+ <motion.div
+ initial={{ opacity: 0, y: 20 }}
+ animate={{ opacity: 1, y: 0 }}
+ transition={{ delay: 0.5 }}
+ className="spotify-card p-6"
+ >
+ <div className="flex items-center justify-between mb-6">
+ <h2 className="text-xl font-bold text-foreground">Top Services</h2>
  <button
  onClick={() => router.push('/catalog')}
- className="text-sm text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
+ className="text-sm text-primary hover:text-primary/80 font-medium"
  >
- View all services 
+ View all services
  </button>
  </div>
  {loading.services ? (
  <div className="overflow-x-auto">
  <table className="w-full">
  <thead>
- <tr className="text-left text-sm text-gray-600 dark:text-gray-400 border-b border-gray-200 dark:border-gray-700">
- <th className="pb-3 font-medium">Service</th>
- <th className="pb-3 font-medium">Requests</th>
- <th className="pb-3 font-medium">Health</th>
- <th className="pb-3 font-medium">CPU</th>
- <th className="pb-3 font-medium">Memory</th>
+ <tr className="text-left text-sm text-muted-foreground border-b border-border">
+ <th className="pb-3 font-semibold">Service</th>
+ <th className="pb-3 font-semibold">Requests</th>
+ <th className="pb-3 font-semibold">Health</th>
+ <th className="pb-3 font-semibold">CPU</th>
+ <th className="pb-3 font-semibold">Memory</th>
  </tr>
  </thead>
- <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
+ <tbody className="divide-y divide-border">
  {[...Array(4)].map((_, i) => (
  <tr key={i} className="text-sm">
- <td className="py-3">
- <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded animate-pulse w-32" />
+ <td className="py-4">
+ <div className="h-4 bg-muted rounded animate-pulse w-32" />
  </td>
- <td className="py-3">
- <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded animate-pulse w-16" />
+ <td className="py-4">
+ <div className="h-4 bg-muted rounded animate-pulse w-16" />
  </td>
- <td className="py-3">
- <div className="h-6 bg-gray-200 dark:bg-gray-700 rounded-full animate-pulse w-20" />
+ <td className="py-4">
+ <div className="h-6 bg-muted rounded-full animate-pulse w-20" />
  </td>
- <td className="py-3">
- <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded animate-pulse w-20" />
+ <td className="py-4">
+ <div className="h-4 bg-muted rounded animate-pulse w-20" />
  </td>
- <td className="py-3">
- <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded animate-pulse w-20" />
+ <td className="py-4">
+ <div className="h-4 bg-muted rounded animate-pulse w-20" />
  </td>
  </tr>
  ))}
@@ -495,23 +738,23 @@ export default function DashboardPage() {
  </table>
  </div>
  ) : topServices.length === 0 ? (
- <div className="text-center py-8 text-gray-500 dark:text-gray-400">
- <Server className="w-12 h-12 mx-auto mb-4 opacity-50" />
- <p>No services found</p>
+ <div className="text-center py-12">
+ <Server className="w-12 h-12 mx-auto mb-4 text-muted-foreground opacity-50" />
+ <p className="text-muted-foreground">No services found</p>
  </div>
  ) : (
  <div className="overflow-x-auto">
  <table className="w-full">
  <thead>
- <tr className="text-left text-sm text-gray-600 dark:text-gray-400 border-b border-gray-200 dark:border-gray-700">
- <th className="pb-3 font-medium">Service</th>
- <th className="pb-3 font-medium">Requests</th>
- <th className="pb-3 font-medium">Health</th>
- <th className="pb-3 font-medium">CPU</th>
- <th className="pb-3 font-medium">Memory</th>
+ <tr className="text-left text-sm text-muted-foreground border-b border-border">
+ <th className="pb-3 font-semibold">Service</th>
+ <th className="pb-3 font-semibold">Requests</th>
+ <th className="pb-3 font-semibold">Health</th>
+ <th className="pb-3 font-semibold">CPU</th>
+ <th className="pb-3 font-semibold">Memory</th>
  </tr>
  </thead>
- <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
+ <tbody className="divide-y divide-border">
  {Array.isArray(topServices) && topServices.map((service) => {
  const serviceName = service.metadata?.name || 'Unknown';
  const health = service.status?.health || 'unknown';
@@ -520,25 +763,25 @@ export default function DashboardPage() {
  const memory = service.status?.metrics?.memory || 0;
  
  return (
- <tr key={serviceName} className="text-sm">
- <td className="py-3">
+ <tr key={serviceName} className="text-sm hover:bg-muted/30 transition-colors">
+ <td className="py-4">
  <button
  onClick={() => router.push(`/catalog/${serviceName}`)}
- className="font-medium text-gray-900 dark:text-gray-100 hover:text-blue-600 dark:hover:text-blue-400"
+ className="font-semibold text-foreground hover:text-primary transition-colors"
  >
  {service.metadata?.title || serviceName}
  </button>
  </td>
- <td className="py-3 text-gray-600 dark:text-gray-400">{requests}</td>
- <td className="py-3">
+ <td className="py-4 text-muted-foreground">{requests}</td>
+ <td className="py-4">
  <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium ${
  health === 'healthy' 
- ? 'bg-green-100 text-green-700 dark:bg-green-900/20 dark:text-green-400'
+ ? 'bg-green-100 text-green-700'
  : health === 'degraded'
- ? 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/20 dark:text-yellow-400'
+ ? 'bg-yellow-100 text-yellow-700'
  : health === 'unhealthy'
- ? 'bg-red-100 text-red-700 dark:bg-red-900/20 dark:text-red-400'
- : 'bg-gray-100 text-gray-700 dark:bg-gray-900/20 dark:text-gray-400'
+ ? 'bg-red-100 text-red-700'
+ : 'bg-gray-100 text-gray-700'
  }`}>
  <div className={`w-1.5 h-1.5 rounded-full ${
  health === 'healthy' ? 'bg-green-600' : 
@@ -548,30 +791,30 @@ export default function DashboardPage() {
  {health}
  </span>
  </td>
- <td className="py-3">
+ <td className="py-4">
  <div className="flex items-center gap-2">
- <div className="w-24 bg-gray-200 dark:bg-gray-700 rounded-full h-2">
+ <div className="w-16 bg-muted rounded-full h-2">
  <div 
- className={`h-2 rounded-full ${
+ className={`h-2 rounded-full transition-all ${
  cpu > 70 ? 'bg-red-500' : cpu > 50 ? 'bg-yellow-500' : 'bg-green-500'
  }`}
  style={{ width: `${Math.min(cpu, 100)}%` }}
  />
  </div>
- <span className="text-xs text-gray-600 dark:text-gray-400">{cpu}%</span>
+ <span className="text-xs text-muted-foreground">{cpu}%</span>
  </div>
  </td>
- <td className="py-3">
+ <td className="py-4">
  <div className="flex items-center gap-2">
- <div className="w-24 bg-gray-200 dark:bg-gray-700 rounded-full h-2">
+ <div className="w-16 bg-muted rounded-full h-2">
  <div 
- className={`h-2 rounded-full ${
+ className={`h-2 rounded-full transition-all ${
  memory > 70 ? 'bg-red-500' : memory > 50 ? 'bg-yellow-500' : 'bg-green-500'
  }`}
  style={{ width: `${Math.min(memory, 100)}%` }}
  />
  </div>
- <span className="text-xs text-gray-600 dark:text-gray-400">{memory}%</span>
+ <span className="text-xs text-muted-foreground">{memory}%</span>
  </div>
  </td>
  </tr>
@@ -581,38 +824,7 @@ export default function DashboardPage() {
  </table>
  </div>
  )}
- </div>
-
- {/* Quick Actions */}
- <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
- <button
- onClick={() => router.push('/catalog')}
- className="p-4 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 hover:border-blue-500 dark:hover:border-blue-400 transition-colors text-center"
- >
- <Database className="w-8 h-8 text-blue-600 dark:text-blue-400 mx-auto mb-2" />
- <span className="text-sm font-medium text-gray-900 dark:text-gray-100">Service Catalog</span>
- </button>
- <button
- onClick={() => router.push('/deployments')}
- className="p-4 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 hover:border-blue-500 dark:hover:border-blue-400 transition-colors text-center"
- >
- <GitBranch className="w-8 h-8 text-purple-600 dark:text-purple-400 mx-auto mb-2" />
- <span className="text-sm font-medium text-gray-900 dark:text-gray-100">Deployments</span>
- </button>
- <button
- onClick={() => router.push('/monitoring')}
- className="p-4 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 hover:border-blue-500 dark:hover:border-blue-400 transition-colors text-center"
- >
- <BarChart3 className="w-8 h-8 text-green-600 dark:text-green-400 mx-auto mb-2" />
- <span className="text-sm font-medium text-gray-900 dark:text-gray-100">Monitoring</span>
- </button>
- <button
- onClick={() => router.push('/health')}
- className="p-4 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 hover:border-blue-500 dark:hover:border-blue-400 transition-colors text-center"
- >
- <Shield className="w-8 h-8 text-red-600 dark:text-red-400 mx-auto mb-2" />
- <span className="text-sm font-medium text-gray-900 dark:text-gray-100">Health Status</span>
- </button>
+ </motion.div>
  </div>
  </div>
  );

@@ -1,0 +1,357 @@
+{
+  "dashboard": {
+    "id": null,
+    "title": "SaaS IDP - Plugin Health & Performance",
+    "tags": ["saas-idp", "plugins", "health", "performance"],
+    "style": "dark",
+    "timezone": "browser",
+    "editable": true,
+    "graphTooltip": 1,
+    "time": {
+      "from": "now-2h",
+      "to": "now"
+    },
+    "refresh": "30s",
+    "version": 1,
+    "panels": [
+      {
+        "id": 1,
+        "title": "Plugin Health Overview",
+        "type": "stat",
+        "gridPos": {"h": 8, "w": 24, "x": 0, "y": 0},
+        "fieldConfig": {
+          "defaults": {
+            "mappings": [
+              {
+                "options": {
+                  "0": {"color": "red", "text": "Unhealthy"},
+                  "1": {"color": "green", "text": "Healthy"}
+                },
+                "type": "value"
+              }
+            ],
+            "thresholds": {
+              "steps": [
+                {"color": "red", "value": null},
+                {"color": "green", "value": 1}
+              ]
+            },
+            "unit": "short"
+          }
+        },
+        "options": {
+          "colorMode": "background",
+          "graphMode": "none",
+          "justifyMode": "center",
+          "orientation": "horizontal",
+          "reduceOptions": {
+            "values": false,
+            "calcs": ["lastNotNull"],
+            "fields": ""
+          }
+        },
+        "targets": [
+          {
+            "expr": "saas_idp_plugin_health_status",
+            "legendFormat": "{{plugin_id}} (v{{version}})",
+            "refId": "A"
+          }
+        ]
+      },
+      {
+        "id": 2,
+        "title": "Plugin Operation Success Rate",
+        "type": "graph",
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+        "yAxes": [
+          {
+            "label": "percent",
+            "min": 0,
+            "max": 100,
+            "show": true
+          },
+          {
+            "show": false
+          }
+        ],
+        "targets": [
+          {
+            "expr": "rate(saas_idp_plugin_operations_total{status=\"success\"}[5m]) / rate(saas_idp_plugin_operations_total[5m]) * 100",
+            "legendFormat": "{{plugin_id}} - {{operation}}",
+            "refId": "A"
+          }
+        ],
+        "legend": {
+          "avg": true,
+          "current": true,
+          "max": true,
+          "min": false,
+          "show": true,
+          "total": false,
+          "values": true
+        },
+        "thresholds": [
+          {
+            "colorMode": "critical",
+            "fill": true,
+            "line": true,
+            "op": "lt",
+            "value": 95,
+            "yAxis": "left"
+          }
+        ]
+      },
+      {
+        "id": 3,
+        "title": "Plugin Operation Duration P95",
+        "type": "graph",
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+        "yAxes": [
+          {
+            "label": "seconds",
+            "min": 0,
+            "show": true
+          },
+          {
+            "show": false
+          }
+        ],
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, rate(saas_idp_plugin_operation_duration_seconds_bucket[5m]))",
+            "legendFormat": "{{plugin_id}} - {{operation}}",
+            "refId": "A"
+          }
+        ],
+        "legend": {
+          "avg": true,
+          "current": true,
+          "max": true,
+          "min": false,
+          "show": true,
+          "total": false,
+          "values": true
+        },
+        "thresholds": [
+          {
+            "colorMode": "critical",
+            "fill": true,
+            "line": true,
+            "op": "gt",
+            "value": 10,
+            "yAxis": "left"
+          }
+        ]
+      },
+      {
+        "id": 4,
+        "title": "Plugin Installations & Rollbacks",
+        "type": "graph",
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16},
+        "yAxes": [
+          {
+            "label": "operations/hour",
+            "min": 0,
+            "show": true
+          },
+          {
+            "show": false
+          }
+        ],
+        "targets": [
+          {
+            "expr": "increase(saas_idp_plugin_installations_total[1h])",
+            "legendFormat": "Installations - {{plugin_id}}",
+            "refId": "A"
+          },
+          {
+            "expr": "increase(saas_idp_plugin_rollbacks_total[1h])",
+            "legendFormat": "Rollbacks - {{plugin_id}} ({{reason}})",
+            "refId": "B"
+          }
+        ],
+        "legend": {
+          "avg": false,
+          "current": true,
+          "max": false,
+          "min": false,
+          "show": true,
+          "total": true,
+          "values": true
+        }
+      },
+      {
+        "id": 5,
+        "title": "Plugin Error Distribution",
+        "type": "piechart",
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16},
+        "options": {
+          "pieType": "pie",
+          "tooltip": {
+            "mode": "single"
+          },
+          "legend": {
+            "displayMode": "list",
+            "placement": "right",
+            "values": ["value", "percent"]
+          },
+          "displayLabels": ["name", "percent"]
+        },
+        "targets": [
+          {
+            "expr": "sum by (plugin_id) (increase(saas_idp_plugin_operations_total{status=\"error\"}[1h]))",
+            "legendFormat": "{{plugin_id}}",
+            "refId": "A"
+          }
+        ]
+      },
+      {
+        "id": 6,
+        "title": "Plugin Memory Usage",
+        "type": "graph",
+        "gridPos": {"h": 8, "w": 8, "x": 0, "y": 24},
+        "yAxes": [
+          {
+            "label": "bytes",
+            "min": 0,
+            "show": true
+          },
+          {
+            "show": false
+          }
+        ],
+        "targets": [
+          {
+            "expr": "saas_idp_memory_usage_bytes{component=~\"plugin_.*\"}",
+            "legendFormat": "{{component}}",
+            "refId": "A"
+          }
+        ],
+        "legend": {
+          "avg": true,
+          "current": true,
+          "max": true,
+          "min": false,
+          "show": true,
+          "total": false,
+          "values": true
+        }
+      },
+      {
+        "id": 7,
+        "title": "Plugin CPU Usage",
+        "type": "graph",
+        "gridPos": {"h": 8, "w": 8, "x": 8, "y": 24},
+        "yAxes": [
+          {
+            "label": "percent",
+            "min": 0,
+            "max": 100,
+            "show": true
+          },
+          {
+            "show": false
+          }
+        ],
+        "targets": [
+          {
+            "expr": "saas_idp_cpu_usage_percent{component=~\"plugin_.*\"}",
+            "legendFormat": "{{component}}",
+            "refId": "A"
+          }
+        ],
+        "legend": {
+          "avg": true,
+          "current": true,
+          "max": true,
+          "min": false,
+          "show": true,
+          "total": false,
+          "values": true
+        }
+      },
+      {
+        "id": 8,
+        "title": "Plugin Dependency Health",
+        "type": "table",
+        "gridPos": {"h": 8, "w": 8, "x": 16, "y": 24},
+        "options": {
+          "showHeader": true
+        },
+        "fieldConfig": {
+          "defaults": {
+            "mappings": [
+              {
+                "options": {
+                  "0": {"color": "red", "text": "Unhealthy"},
+                  "1": {"color": "green", "text": "Healthy"}
+                },
+                "type": "value"
+              }
+            ]
+          },
+          "overrides": [
+            {
+              "matcher": {
+                "id": "byName",
+                "options": "Health Status"
+              },
+              "properties": [
+                {
+                  "id": "custom.displayMode",
+                  "value": "color-background"
+                }
+              ]
+            }
+          ]
+        },
+        "targets": [
+          {
+            "expr": "saas_idp_plugin_health_status",
+            "legendFormat": "{{plugin_id}}",
+            "refId": "A",
+            "format": "table",
+            "instant": true
+          }
+        ],
+        "transformations": [
+          {
+            "id": "organize",
+            "options": {
+              "excludeByName": {
+                "Time": true
+              },
+              "indexByName": {},
+              "renameByName": {
+                "plugin_id": "Plugin ID",
+                "version": "Version",
+                "environment": "Environment",
+                "Value": "Health Status"
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "templating": {
+      "list": [
+        {
+          "name": "plugin",
+          "type": "query",
+          "query": "label_values(saas_idp_plugin_operations_total, plugin_id)",
+          "refresh": 1,
+          "includeAll": true,
+          "multi": true
+        },
+        {
+          "name": "operation",
+          "type": "query",
+          "query": "label_values(saas_idp_plugin_operations_total{plugin_id=~\"$plugin\"}, operation)",
+          "refresh": 1,
+          "includeAll": true,
+          "multi": true
+        }
+      ]
+    }
+  }
+}

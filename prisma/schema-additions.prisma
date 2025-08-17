@@ -1,0 +1,168 @@
+// Add these models to your existing prisma/schema.prisma
+
+model ProductivityMetrics {
+  id           String   @id @default(cuid())
+  developerId  String
+  teamId       String
+  period       DateTime
+  dora         Json
+  space        Json
+  codeQuality  Json
+  collaboration Json
+  flowState    Json
+  score        Float
+  percentile   Float
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+model DxAnalysis {
+  id            String   @id @default(cuid())
+  developerId   String
+  score         Float
+  metrics       Json
+  insights      Json
+  recommendations Json
+  timestamp     DateTime
+  createdAt     DateTime @default(now())
+}
+
+model BurnoutIndicator {
+  id           String   @id @default(cuid())
+  developerId  String
+  riskLevel    String
+  indicators   Json
+  trend        String
+  recommendations String[]
+  createdAt    DateTime @default(now())
+}
+
+model CostHistory {
+  id         String   @id @default(cuid())
+  resourceId String
+  date       DateTime
+  amount     Float
+  createdAt  DateTime @default(now())
+}
+
+model BudgetStatus {
+  id           String   @id @default(cuid())
+  budgetId     String   @unique
+  currentSpend Float
+  forecast     Float
+  status       String
+  updatedAt    DateTime @updatedAt
+}
+
+model Pipeline {
+  id          String   @id
+  name        String
+  description String
+  nodes       Json
+  edges       Json
+  status      String
+  schedule    Json
+  version     Int
+  tags        String[]
+  createdAt   DateTime
+  updatedAt   DateTime
+}
+
+model PipelineExecution {
+  id           String    @id
+  pipelineId   String
+  version      Int
+  status       String
+  startTime    DateTime
+  endTime      DateTime?
+  metrics      Json
+  errors       Json
+}
+
+model EtlJob {
+  id          String   @id
+  name        String
+  description String
+  pipelineId  String
+  schedule    Json
+  priority    String
+  retryPolicy Json
+  resources   Json
+  tags        String[]
+  isActive    Boolean
+  createdAt   DateTime
+  updatedAt   DateTime
+}
+
+model EtlExecution {
+  id                   String    @id
+  jobId                String
+  pipelineExecutionId  String
+  status               String
+  priority             Int
+  startTime            DateTime?
+  endTime              DateTime?
+  resources            Json
+  attempts             Int
+  errors               Json
+  metrics              Json
+}
+
+model DataAsset {
+  id          String   @id
+  name        String
+  type        String
+  description String
+  location    Json
+  schema      Json
+  metadata    Json
+  quality     Json
+  lineage     Json
+  governance  Json
+  usage       Json
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model MetricDataPoint {
+  id        String   @id @default(cuid())
+  source    String
+  timestamp DateTime
+  value     Float
+  labels    Json
+  createdAt DateTime @default(now())
+}
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  title     String
+  message   String
+  type      String
+  priority  String
+  status    String
+  channels  String[]
+  metadata  Json
+  createdAt DateTime @default(now())
+  readAt    DateTime?
+}
+
+model Alert {
+  id          String   @id @default(cuid())
+  name        String
+  severity    String
+  source      String
+  message     String
+  fingerprint String
+  status      String
+  assignedTo  String?
+  metadata    Json
+  createdAt   DateTime @default(now())
+  resolvedAt  DateTime?
+}
+
+// Add indexes for performance
+@@index([developerId, period], map: "productivity_metrics_dev_period")
+@@index([resourceId, date], map: "cost_history_resource_date")
+@@index([userId, status], map: "notification_user_status")
+@@index([fingerprint], map: "alert_fingerprint")

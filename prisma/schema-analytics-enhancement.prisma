@@ -1,0 +1,483 @@
+// Enhanced Analytics Schema Extensions
+// Add these models to the main schema.prisma file
+
+// ========== Data Pipeline & Quality Models ==========
+
+model MetricDataPoint {
+  id          String   @id @default(cuid())
+  source      String   // Source system or component
+  timestamp   DateTime
+  value       Float
+  labels      Json     @default("{}")  // Dimensions/tags
+  metadata    Json     @default("{}")  // Additional metadata
+  checksum    String?  // For deduplication
+  createdAt   DateTime @default(now())
+
+  @@index([source, timestamp])
+  @@index([timestamp])
+  @@index([metadata(ops: JsonbOps)])
+  @@map("metric_data_points")
+}
+
+model DataQualityRule {
+  id          String   @id @default(cuid())
+  name        String
+  description String
+  category    String   // COMPLETENESS, ACCURACY, etc.
+  severity    String   // LOW, MEDIUM, HIGH, CRITICAL
+  scope       Json     // Tables, columns, conditions
+  rule        Json     // Rule definition
+  remediation Json     // Remediation configuration
+  schedule    Json     // Execution schedule
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  results DataQualityResult[]
+
+  @@map("data_quality_rules")
+}
+
+model DataQualityResult {
+  id             String   @id @default(cuid())
+  ruleId         String
+  status         String   // PASSED, FAILED, WARNING, ERROR
+  score          Float
+  recordsChecked Int
+  recordsFailed  Int
+  executionTime  Int      // milliseconds
+  details        Json     @default("{}")
+  timestamp      DateTime @default(now())
+  
+  rule DataQualityRule @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+
+  @@index([ruleId, timestamp])
+  @@map("data_quality_results")
+}
+
+model HourlyAggregation {
+  id              String   @id @default(cuid())
+  tenantId        String?
+  metricName      String
+  hourKey         String   // YYYY-MM-DD-HH format
+  sum             Float    @default(0)
+  count           Int      @default(0)
+  avg             Float    @default(0)
+  min             Float?
+  max             Float?
+  timestamp       DateTime
+  lastUpdated     DateTime @default(now())
+
+  @@unique([tenantId, metricName, hourKey], name: "tenantId_metricName_hourKey")
+  @@index([tenantId, metricName])
+  @@index([hourKey])
+  @@map("hourly_aggregations")
+}
+
+model WindowAggregation {
+  id              String   @id @default(cuid())
+  tenantId        String
+  windowStart     DateTime
+  windowEnd       DateTime
+  aggregationType String   // COUNT, SUM, AVG, etc.
+  field           String?
+  groupBy         String[] @default([])
+  value           Float
+  metadata        Json     @default("{}")
+  createdAt       DateTime @default(now())
+
+  @@index([tenantId, windowStart, windowEnd])
+  @@map("window_aggregations")
+}
+
+// ========== KPI Management Models ==========
+
+model CustomKPI {
+  id           String   @id @default(cuid())
+  name         String   @unique
+  displayName  String
+  description  String   @default("")
+  category     String   // BUSINESS, TECHNICAL, etc.
+  formula      String   // Mathematical expression
+  unit         String   @default("")
+  format       String   @default("NUMBER") // NUMBER, PERCENTAGE, CURRENCY, etc.
+  frequency    String   @default("HOURLY") // REAL_TIME, HOURLY, DAILY, etc.
+  target       Float?
+  thresholds   Json     @default("{}")
+  aggregation  String   @default("SUM") // SUM, AVG, COUNT, etc.
+  timeWindow   String   @default("1h")
+  dependencies String[] @default([])
+  tenantId     String?
+  isActive     Boolean  @default(true)
+  tags         String[] @default([])
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  tracking KpiTracking[]
+  alerts   KpiAlert[]
+
+  @@index([tenantId])
+  @@index([category])
+  @@map("custom_kpis")
+}
+
+model KpiTracking {
+  id             String   @id @default(cuid())
+  kpiId          String
+  value          Float
+  formattedValue String
+  timestamp      DateTime
+  dimensions     Json     @default("{}")
+  metadata       Json     @default("{}")
+  status         String   // GOOD, WARNING, CRITICAL, UNKNOWN
+  
+  kpi CustomKPI @relation(fields: [kpiId], references: [id], onDelete: Cascade)
+
+  @@index([kpiId, timestamp])
+  @@index([timestamp])
+  @@map("kpi_tracking")
+}
+
+model KpiAlert {
+  id              String   @id @default(cuid())
+  kpiId           String
+  name            String
+  condition       String   // THRESHOLD, TREND, ANOMALY, CUSTOM
+  parameters      Json     @default("{}")
+  severity        String   // INFO, WARNING, CRITICAL
+  channels        String[] @default([]) // EMAIL, SLACK, WEBHOOK, etc.
+  throttleMinutes Int      @default(60)
+  enabled         Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  
+  kpi     CustomKPI     @relation(fields: [kpiId], references: [id], onDelete: Cascade)
+  history AlertHistory[]
+
+  @@index([kpiId])
+  @@map("kpi_alerts")
+}
+
+model AlertHistory {
+  id        String   @id @default(cuid())
+  kpiId     String
+  alertId   String
+  severity  String
+  message   String
+  value     Float?
+  timestamp DateTime @default(now())
+  
+  alert KpiAlert @relation(fields: [alertId], references: [id], onDelete: Cascade)
+
+  @@index([kpiId, timestamp])
+  @@index([alertId, timestamp])
+  @@map("alert_history")
+}
+
+model KpiDashboard {
+  id              String   @id @default(cuid())
+  name            String
+  description     String   @default("")
+  kpis            Json     @default("[]") // Dashboard item configurations
+  layout          Json     @default("{}")
+  filters         Json     @default("[]")
+  refreshInterval Int      @default(300) // seconds
+  permissions     String[] @default([])
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@map("kpi_dashboards")
+}
+
+// ========== BI Integration Models ==========
+
+model BiConnection {
+  id           String   @id @default(cuid())
+  name         String
+  type         String   // TABLEAU, POWERBI, LOOKER, GRAFANA, CUSTOM
+  config       Json     @default("{}")
+  status       String   @default("PENDING") // CONNECTED, DISCONNECTED, ERROR, PENDING
+  lastSync     DateTime?
+  errorMessage String?
+  capabilities Json     @default("[]")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  exports DataExport[]
+
+  @@map("bi_connections")
+}
+
+model DataExport {
+  id           String    @id @default(cuid())
+  connectionId String
+  format       String    // CSV, JSON, PARQUET, ODATA, SQL, HYPER
+  query        String
+  filters      Json      @default("{}")
+  schedule     Json?     // Export schedule configuration
+  destination  String
+  status       String    @default("PENDING") // PENDING, RUNNING, COMPLETED, FAILED
+  rowCount     Int?
+  errorMessage String?
+  createdAt    DateTime  @default(now())
+  completedAt  DateTime?
+
+  connection BiConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+
+  @@index([connectionId])
+  @@index([status])
+  @@map("data_exports")
+}
+
+model OlapCube {
+  id              String    @id @default(cuid())
+  name            String    @unique
+  description     String    @default("")
+  dimensions      Json      @default("[]")
+  measures        Json      @default("[]")
+  facts           Json      @default("[]")
+  schema          Json      @default("{}")
+  refreshSchedule Json?
+  lastRefresh     DateTime?
+  status          String    @default("BUILDING") // ACTIVE, BUILDING, ERROR, STALE
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@map("olap_cubes")
+}
+
+// ========== Data Warehouse Models ==========
+
+model DataWarehouseSchema {
+  id               String   @id @default(cuid())
+  name             String   @unique
+  type             String   // STAR, SNOWFLAKE, GALAXY
+  factTables       Json     @default("[]")
+  dimensionTables  Json     @default("[]")
+  aggregateTables  Json     @default("[]")
+  materializedViews Json    @default("[]")
+  indexes          Json     @default("[]")
+  status           String   @default("BUILDING") // ACTIVE, BUILDING, ERROR
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  performance WarehousePerformance[]
+
+  @@map("data_warehouse_schemas")
+}
+
+model WarehousePerformance {
+  id                String   @id @default(cuid())
+  schemaId          String
+  avgQueryTime      Float    @default(0)
+  p95QueryTime      Float    @default(0)
+  p99QueryTime      Float    @default(0)
+  cacheHitRate      Float    @default(0)
+  indexUtilization  Float    @default(0)
+  partitionPruning  Float    @default(0)
+  compressionRatio  Float    @default(0)
+  timestamp         DateTime @default(now())
+
+  schema DataWarehouseSchema @relation(fields: [schemaId], references: [id], onDelete: Cascade)
+
+  @@index([schemaId, timestamp])
+  @@map("warehouse_performance")
+}
+
+model QueryOptimization {
+  id              String   @id @default(cuid())
+  query           String
+  queryHash       String   @unique // Hash of the query for caching
+  estimatedCost   Float
+  executionPlan   Json     @default("[]")
+  suggestedIndexes Json    @default("[]")
+  optimizedQuery  String
+  createdAt       DateTime @default(now())
+  lastUsed        DateTime @default(now())
+
+  @@index([queryHash])
+  @@index([lastUsed])
+  @@map("query_optimizations")
+}
+
+// ========== Streaming & Real-time Models ==========
+
+model StreamEvent {
+  id          String   @id @default(cuid())
+  eventType   String
+  source      String
+  tenantId    String
+  userId      String?
+  sessionId   String?
+  payload     Json     @default("{}")
+  metadata    Json     @default("{}")
+  correlation Json?    // Trace information
+  timestamp   DateTime
+  processed   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  @@index([tenantId, eventType, timestamp])
+  @@index([source, timestamp])
+  @@index([processed, timestamp])
+  @@map("stream_events")
+}
+
+model StreamProcessor {
+  id            String   @id @default(cuid())
+  name          String   @unique
+  eventTypes    String[] @default([])
+  config        Json     @default("{}")
+  status        String   @default("ACTIVE") // ACTIVE, PAUSED, ERROR
+  lastProcessed DateTime?
+  errorMessage  String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@map("stream_processors")
+}
+
+// ========== Enhanced Analytics Tables ==========
+
+model AnalyticsSession {
+  id           String   @id @default(cuid())
+  tenantId     String
+  userId       String?
+  sessionId    String   @unique
+  startTime    DateTime @default(now())
+  endTime      DateTime?
+  duration     Int?     // seconds
+  pageViews    Int      @default(0)
+  events       Int      @default(0)
+  deviceInfo   Json     @default("{}")
+  geoLocation  Json?
+  referrer     String?
+  userAgent    String?
+  isActive     Boolean  @default(true)
+
+  @@index([tenantId, startTime])
+  @@index([userId])
+  @@map("analytics_sessions")
+}
+
+model FeatureUsage {
+  id          String   @id @default(cuid())
+  tenantId    String
+  userId      String
+  feature     String
+  action      String
+  context     Json     @default("{}")
+  timestamp   DateTime @default(now())
+  sessionId   String?
+  duration    Int?     // milliseconds
+  successful  Boolean  @default(true)
+  errorInfo   Json?
+
+  @@index([tenantId, feature, timestamp])
+  @@index([userId, timestamp])
+  @@map("feature_usage")
+}
+
+model UserBehaviorAnalytics {
+  id              String   @id @default(cuid())
+  tenantId        String
+  userId          String
+  behaviorType    String   // navigation, interaction, conversion, etc.
+  properties      Json     @default("{}")
+  timestamp       DateTime @default(now())
+  sessionId       String?
+  deviceId        String?
+  cohort          String?
+  experimentGroup String?
+
+  @@index([tenantId, behaviorType, timestamp])
+  @@index([userId, timestamp])
+  @@map("user_behavior_analytics")
+}
+
+// ========== Performance & Monitoring ==========
+
+model PerformanceMetric {
+  id          String   @id @default(cuid())
+  tenantId    String
+  metricType  String   // response_time, throughput, error_rate, etc.
+  component   String   // api, database, cache, etc.
+  value       Float
+  unit        String   @default("ms")
+  threshold   Float?
+  status      String   @default("NORMAL") // NORMAL, WARNING, CRITICAL
+  dimensions  Json     @default("{}")
+  timestamp   DateTime @default(now())
+
+  @@index([tenantId, metricType, timestamp])
+  @@index([component, timestamp])
+  @@map("performance_metrics")
+}
+
+model SystemHealth {
+  id           String   @id @default(cuid())
+  component    String
+  status       String   @default("HEALTHY") // HEALTHY, WARNING, CRITICAL, DOWN
+  responseTime Float?
+  uptime       Float?   // percentage
+  errorRate    Float?   // percentage
+  throughput   Float?
+  lastCheck    DateTime @default(now())
+  details      Json     @default("{}")
+
+  @@unique([component])
+  @@map("system_health")
+}
+
+// ========== Data Lineage & Governance ==========
+
+model DataLineage {
+  id              String   @id @default(cuid())
+  recordId        String
+  source          String
+  transformations Json     @default("[]") // Array of transformation steps
+  timestamp       DateTime @default(now())
+  checksum        String
+  metadata        Json     @default("{}")
+
+  @@index([recordId])
+  @@index([source, timestamp])
+  @@map("data_lineage")
+}
+
+model DataGovernancePolicy {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String
+  category    String   // RETENTION, PRIVACY, SECURITY, QUALITY
+  scope       Json     @default("{}")  // Tables, columns, conditions
+  rules       Json     @default("[]")  // Policy rules
+  enforcement String   @default("WARN") // BLOCK, WARN, LOG
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  violations GovernanceViolation[]
+
+  @@map("data_governance_policies")
+}
+
+model GovernanceViolation {
+  id          String   @id @default(cuid())
+  policyId    String
+  severity    String   // LOW, MEDIUM, HIGH, CRITICAL
+  description String
+  dataLocation Json    @default("{}")
+  status      String   @default("OPEN") // OPEN, ACKNOWLEDGED, RESOLVED
+  detectedAt  DateTime @default(now())
+  resolvedAt  DateTime?
+
+  policy DataGovernancePolicy @relation(fields: [policyId], references: [id], onDelete: Cascade)
+
+  @@index([policyId, detectedAt])
+  @@map("governance_violations")
+}
+
+// Add indexes for better performance
+// @@index([field1, field2]) - for composite indexes
+// @@index([field]) - for single field indexes
+// @@unique([field1, field2]) - for unique constraints

@@ -38,7 +38,7 @@ interface PluginMarketplaceProps {
  onPluginInstalled?: (plugin: BackstagePlugin) => void;
 }
 
-export function PluginMarketplace({ onPluginInstalled }: PluginMarketplaceProps) {
+function PluginMarketplace({ onPluginInstalled }: PluginMarketplaceProps) {
  const queryClient = useQueryClient();
  const [searchQuery, setSearchQuery] = useState('');
  const [selectedCategory, setSelectedCategory] = useState<string>('all');
@@ -663,3 +663,5 @@ export function PluginMarketplace({ onPluginInstalled }: PluginMarketplaceProps)
  </div>
  );
 }
+
+export default PluginMarketplace;

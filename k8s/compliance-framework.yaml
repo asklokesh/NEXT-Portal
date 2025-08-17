@@ -1,0 +1,641 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: compliance-config
+  namespace: saas-idp-security
+data:
+  audit-policy.yaml: |
+    apiVersion: audit.k8s.io/v1
+    kind: Policy
+    rules:
+    # Log all requests at the Metadata level for SOC2 compliance
+    - level: Metadata
+      resources:
+      - group: ""
+        resources: ["secrets", "configmaps"]
+      - group: "rbac.authorization.k8s.io"
+        resources: ["roles", "rolebindings", "clusterroles", "clusterrolebindings"]
+    
+    # Log authentication events for security monitoring
+    - level: Metadata
+      namespaces: ["saas-idp-production", "saas-idp-security"]
+      verbs: ["create", "update", "patch", "delete"]
+    
+    # Log all access to sensitive namespaces
+    - level: Request
+      namespaces: ["kube-system", "kube-public"]
+      verbs: ["create", "update", "patch", "delete"]
+    
+    # Log pod exec/attach for security auditing
+    - level: RequestResponse
+      resources:
+      - group: ""
+        resources: ["pods/exec", "pods/attach", "pods/portforward"]
+    
+    # Don't log certain low-level events
+    - level: None
+      resources:
+      - group: ""
+        resources: ["events"]
+
+  compliance-rules.yaml: |
+    # SOC2 Compliance Rules
+    soc2:
+      encryption_at_rest:
+        required: true
+        validation: "All data must be encrypted at rest using AES-256"
+      
+      access_controls:
+        rbac_enabled: true
+        principle_of_least_privilege: true
+        regular_access_reviews: true
+        review_frequency_days: 90
+      
+      audit_logging:
+        comprehensive_logging: true
+        log_retention_days: 2555  # 7 years
+        real_time_monitoring: true
+      
+      backup_recovery:
+        automated_backups: true
+        backup_frequency_hours: 24
+        recovery_testing: true
+        rpo_minutes: 60
+        rto_minutes: 240
+    
+    # GDPR Compliance Rules  
+    gdpr:
+      data_protection:
+        pseudonymization: true
+        encryption: true
+        data_minimization: true
+      
+      consent_management:
+        explicit_consent: true
+        consent_withdrawal: true
+        consent_audit_trail: true
+      
+      data_subject_rights:
+        right_to_access: true
+        right_to_rectification: true
+        right_to_erasure: true
+        data_portability: true
+      
+      privacy_by_design:
+        data_protection_impact_assessment: true
+        privacy_officer_designated: true
+    
+    # HIPAA Compliance Rules
+    hipaa:
+      administrative_safeguards:
+        security_officer: true
+        workforce_training: true
+        access_management: true
+        contingency_plan: true
+      
+      physical_safeguards:
+        facility_access_controls: true
+        workstation_controls: true
+        device_controls: true
+      
+      technical_safeguards:
+        access_control: true
+        audit_controls: true
+        integrity: true
+        person_authentication: true
+        transmission_security: true
+
+  gdpr-data-map.yaml: |
+    # GDPR Data Processing Mapping
+    data_categories:
+      - name: "user_identity"
+        types: ["email", "name", "user_id"]
+        lawful_basis: "contract"
+        retention_period: "account_lifetime"
+        data_subjects: ["employees", "customers"]
+      
+      - name: "authentication_logs"
+        types: ["login_attempts", "session_data", "ip_addresses"]
+        lawful_basis: "legitimate_interest"
+        retention_period: "90_days"
+        data_subjects: ["employees", "customers"]
+      
+      - name: "application_logs"
+        types: ["performance_metrics", "error_logs", "usage_analytics"]
+        lawful_basis: "legitimate_interest"
+        retention_period: "365_days"
+        data_subjects: ["employees", "customers"]
+      
+      - name: "financial_data"
+        types: ["billing_info", "payment_methods", "transaction_history"]
+        lawful_basis: "contract"
+        retention_period: "7_years"
+        data_subjects: ["customers"]
+    
+    processing_purposes:
+      - purpose: "service_provision"
+        description: "Providing internal developer portal services"
+        legal_basis: "contract"
+        categories: ["user_identity", "application_logs"]
+      
+      - purpose: "security_monitoring"
+        description: "Monitoring for security threats and compliance"
+        legal_basis: "legitimate_interest"
+        categories: ["authentication_logs", "application_logs"]
+      
+      - purpose: "billing_operations"
+        description: "Processing payments and maintaining financial records"
+        legal_basis: "contract"
+        categories: ["financial_data"]
+    
+    third_party_processors:
+      - name: "AWS"
+        services: ["compute", "storage", "networking"]
+        data_categories: ["all"]
+        adequacy_decision: true
+        dpa_signed: true
+      
+      - name: "GitHub"
+        services: ["authentication", "code_repositories"]
+        data_categories: ["user_identity", "authentication_logs"]
+        adequacy_decision: false
+        sccs_implemented: true
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: audit-collector
+  namespace: saas-idp-security
+  labels:
+    app: audit-collector
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: audit-collector
+  template:
+    metadata:
+      labels:
+        app: audit-collector
+    spec:
+      serviceAccountName: audit-collector
+      containers:
+      - name: audit-collector
+        image: fluent/fluent-bit:2.2.0
+        ports:
+        - containerPort: 24224
+          name: forward
+        - containerPort: 2020
+          name: http
+        volumeMounts:
+        - name: fluent-bit-config
+          mountPath: /fluent-bit/etc
+        - name: audit-logs
+          mountPath: /var/log/audit
+        - name: varlog
+          mountPath: /var/log
+          readOnly: true
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+      volumes:
+      - name: fluent-bit-config
+        configMap:
+          name: fluent-bit-config
+      - name: audit-logs
+        hostPath:
+          path: /var/log/audit
+      - name: varlog
+        hostPath:
+          path: /var/log
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fluent-bit-config
+  namespace: saas-idp-security
+data:
+  fluent-bit.conf: |
+    [SERVICE]
+        Flush         5
+        Log_Level     info
+        Daemon        off
+        Parsers_File  parsers.conf
+        HTTP_Server   On
+        HTTP_Listen   0.0.0.0
+        HTTP_Port     2020
+
+    [INPUT]
+        Name              tail
+        Path              /var/log/audit/*.log
+        Parser            json
+        Tag               audit.*
+        Refresh_Interval  5
+
+    [INPUT]
+        Name              tail
+        Path              /var/log/containers/*saas-idp*.log
+        Parser            docker
+        Tag               app.*
+        Refresh_Interval  5
+
+    [FILTER]
+        Name                kubernetes
+        Match               app.*
+        Kube_URL            https://kubernetes.default.svc:443
+        Kube_CA_File        /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        Kube_Token_File     /var/run/secrets/kubernetes.io/serviceaccount/token
+        Kube_Tag_Prefix     app.var.log.containers.
+        Merge_Log           On
+        Keep_Log            Off
+
+    [FILTER]
+        Name                modify
+        Match               audit.*
+        Add                 compliance_source audit
+        Add                 environment production
+        Add                 application saas-idp
+
+    [FILTER]
+        Name                modify
+        Match               app.*
+        Add                 compliance_source application
+        Add                 environment production
+
+    # GDPR Data Classification Filter
+    [FILTER]
+        Name                grep
+        Match               *
+        Regex               message email|user_id|personal_data|pii
+        Add                 gdpr_category personal_data
+        Add                 requires_anonymization true
+
+    # Security Event Classification
+    [FILTER]
+        Name                grep
+        Match               *
+        Regex               message login|authentication|authorization|security
+        Add                 security_event true
+        Add                 alert_level medium
+
+    # SOC2 Audit Trail Enhancement
+    [FILTER]
+        Name                modify
+        Match               *
+        Add                 soc2_audit_trail true
+        Add                 retention_period 2555_days
+        Add                 integrity_protected true
+
+    [OUTPUT]
+        Name                elasticsearch
+        Match               audit.*
+        Host                elasticsearch-client.saas-idp-monitoring
+        Port                9200
+        Index               compliance-audit
+        Type                _doc
+        Logstash_Format     On
+        Logstash_Prefix     compliance-audit
+        Logstash_DateFormat %Y.%m.%d
+
+    [OUTPUT]
+        Name                elasticsearch
+        Match               app.*
+        Host                elasticsearch-client.saas-idp-monitoring
+        Port                9200
+        Index               application-logs
+        Type                _doc
+        Logstash_Format     On
+        Logstash_Prefix     application-logs
+        Logstash_DateFormat %Y.%m.%d
+
+    # Separate output for GDPR-classified data
+    [OUTPUT]
+        Name                elasticsearch
+        Match               *
+        Host                elasticsearch-client.saas-idp-monitoring
+        Port                9200
+        Index               gdpr-classified
+        Type                _doc
+        Condition           Key_Exists gdpr_category
+        Logstash_Format     On
+        Logstash_Prefix     gdpr-classified
+        Logstash_DateFormat %Y.%m.%d
+
+  parsers.conf: |
+    [PARSER]
+        Name   json
+        Format json
+        Time_Key time
+        Time_Format %d/%b/%Y:%H:%M:%S %z
+
+    [PARSER]
+        Name        docker
+        Format      json
+        Time_Key    time
+        Time_Format %Y-%m-%dT%H:%M:%S.%L
+        Time_Keep   On
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: audit-collector
+  namespace: saas-idp-security
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: audit-collector
+rules:
+- apiGroups: [""]
+  resources: ["pods", "namespaces"]
+  verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: audit-collector
+roleRef:
+  kind: ClusterRole
+  name: audit-collector
+  apiGroup: rbac.authorization.k8s.io
+subjects:
+- kind: ServiceAccount
+  name: audit-collector
+  namespace: saas-idp-security
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: audit-collector
+  namespace: saas-idp-security
+  labels:
+    app: audit-collector
+spec:
+  ports:
+  - port: 24224
+    targetPort: 24224
+    name: forward
+  - port: 2020
+    targetPort: 2020
+    name: http
+  selector:
+    app: audit-collector
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: compliance-report-generator
+  namespace: saas-idp-security
+spec:
+  schedule: "0 6 * * 1"  # Weekly on Monday at 6 AM
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          serviceAccountName: compliance-reporter
+          containers:
+          - name: compliance-reporter
+            image: python:3.11-slim
+            command:
+            - /bin/bash
+            - -c
+            - |
+              pip install elasticsearch pandas jinja2 boto3
+              python3 /scripts/compliance-report.py
+            env:
+            - name: ELASTICSEARCH_HOST
+              value: "elasticsearch-client.saas-idp-monitoring"
+            - name: S3_BUCKET
+              value: "saas-idp-compliance-reports"
+            - name: REPORT_TYPES
+              value: "soc2,gdpr,hipaa"
+            volumeMounts:
+            - name: compliance-scripts
+              mountPath: /scripts
+            - name: compliance-templates
+              mountPath: /templates
+          volumes:
+          - name: compliance-scripts
+            configMap:
+              name: compliance-scripts
+              defaultMode: 0755
+          - name: compliance-templates
+            configMap:
+              name: compliance-templates
+          restartPolicy: OnFailure
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: compliance-reporter
+  namespace: saas-idp-security
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: compliance-scripts
+  namespace: saas-idp-security
+data:
+  compliance-report.py: |
+    #!/usr/bin/env python3
+    import os
+    import json
+    import pandas as pd
+    from datetime import datetime, timedelta
+    from elasticsearch import Elasticsearch
+    import boto3
+    from jinja2 import Template
+    
+    def generate_soc2_report():
+        """Generate SOC2 compliance report"""
+        es = Elasticsearch([{'host': os.getenv('ELASTICSEARCH_HOST'), 'port': 9200}])
+        
+        # Query for security events
+        security_query = {
+            "query": {
+                "bool": {
+                    "must": [
+                        {"term": {"security_event": True}},
+                        {"range": {"@timestamp": {"gte": "now-7d"}}}
+                    ]
+                }
+            },
+            "size": 10000
+        }
+        
+        security_events = es.search(index="application-logs-*", body=security_query)
+        
+        # Query for access control events
+        access_query = {
+            "query": {
+                "bool": {
+                    "must": [
+                        {"terms": {"verb": ["create", "update", "delete"]}},
+                        {"range": {"@timestamp": {"gte": "now-7d"}}}
+                    ]
+                }
+            },
+            "size": 10000
+        }
+        
+        access_events = es.search(index="compliance-audit-*", body=access_query)
+        
+        report_data = {
+            "report_date": datetime.now().isoformat(),
+            "period": "Last 7 days",
+            "security_events_count": security_events['hits']['total']['value'],
+            "access_events_count": access_events['hits']['total']['value'],
+            "compliance_score": calculate_soc2_score(security_events, access_events),
+            "recommendations": []
+        }
+        
+        return report_data
+    
+    def generate_gdpr_report():
+        """Generate GDPR compliance report"""
+        es = Elasticsearch([{'host': os.getenv('ELASTICSEARCH_HOST'), 'port': 9200}])
+        
+        # Query for personal data processing
+        gdpr_query = {
+            "query": {
+                "bool": {
+                    "must": [
+                        {"exists": {"field": "gdpr_category"}},
+                        {"range": {"@timestamp": {"gte": "now-30d"}}}
+                    ]
+                }
+            },
+            "aggs": {
+                "data_categories": {
+                    "terms": {"field": "gdpr_category.keyword"}
+                }
+            }
+        }
+        
+        gdpr_data = es.search(index="gdpr-classified-*", body=gdpr_query)
+        
+        report_data = {
+            "report_date": datetime.now().isoformat(),
+            "period": "Last 30 days",
+            "personal_data_events": gdpr_data['hits']['total']['value'],
+            "data_categories": gdpr_data['aggregations']['data_categories']['buckets'],
+            "data_subject_requests": get_data_subject_requests(),
+            "consent_status": get_consent_metrics()
+        }
+        
+        return report_data
+    
+    def calculate_soc2_score(security_events, access_events):
+        """Calculate SOC2 compliance score"""
+        # Implement scoring logic based on events
+        base_score = 95
+        security_incidents = len([e for e in security_events['hits']['hits'] 
+                                if e['_source'].get('alert_level') == 'high'])
+        
+        # Deduct points for security incidents
+        score = base_score - (security_incidents * 2)
+        return max(score, 0)
+    
+    def get_data_subject_requests():
+        """Get GDPR data subject request metrics"""
+        # This would query your application's data subject request system
+        return {
+            "access_requests": 5,
+            "deletion_requests": 2,
+            "rectification_requests": 1,
+            "portability_requests": 0
+        }
+    
+    def get_consent_metrics():
+        """Get consent management metrics"""
+        return {
+            "active_consents": 1250,
+            "withdrawn_consents": 15,
+            "pending_consent_updates": 3
+        }
+    
+    def upload_to_s3(report_data, report_type):
+        """Upload report to S3"""
+        s3_client = boto3.client('s3')
+        bucket = os.getenv('S3_BUCKET')
+        
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        key = f"compliance-reports/{report_type}/{timestamp}-{report_type}-report.json"
+        
+        s3_client.put_object(
+            Bucket=bucket,
+            Key=key,
+            Body=json.dumps(report_data, indent=2),
+            ContentType='application/json'
+        )
+        
+        print(f"Report uploaded to s3://{bucket}/{key}")
+    
+    def main():
+        report_types = os.getenv('REPORT_TYPES', 'soc2').split(',')
+        
+        for report_type in report_types:
+            print(f"Generating {report_type.upper()} compliance report...")
+            
+            if report_type == 'soc2':
+                report_data = generate_soc2_report()
+            elif report_type == 'gdpr':
+                report_data = generate_gdpr_report()
+            elif report_type == 'hipaa':
+                # Implement HIPAA reporting
+                report_data = {"status": "HIPAA reporting not implemented"}
+            else:
+                print(f"Unknown report type: {report_type}")
+                continue
+            
+            upload_to_s3(report_data, report_type)
+            print(f"{report_type.upper()} report generated successfully")
+    
+    if __name__ == "__main__":
+        main()
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: compliance-templates
+  namespace: saas-idp-security
+data:
+  soc2-template.html: |
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>SOC2 Compliance Report</title>
+        <style>
+            body { font-family: Arial, sans-serif; margin: 40px; }
+            .header { background: #f8f9fa; padding: 20px; border-radius: 8px; }
+            .metric { background: #e9f7ef; padding: 15px; margin: 10px 0; border-radius: 5px; }
+            .score { font-size: 2em; color: #27ae60; font-weight: bold; }
+        </style>
+    </head>
+    <body>
+        <div class="header">
+            <h1>SOC2 Type II Compliance Report</h1>
+            <p>Generated: {{ report_date }}</p>
+            <p>Period: {{ period }}</p>
+        </div>
+        
+        <div class="metric">
+            <h3>Compliance Score</h3>
+            <div class="score">{{ compliance_score }}%</div>
+        </div>
+        
+        <div class="metric">
+            <h3>Security Events</h3>
+            <p>Total security events: {{ security_events_count }}</p>
+        </div>
+        
+        <div class="metric">
+            <h3>Access Control Events</h3>
+            <p>Total access events: {{ access_events_count }}</p>
+        </div>
+    </body>
+    </html>

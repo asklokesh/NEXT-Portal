@@ -2,6 +2,7 @@
 
 # dependencies
 /node_modules
+*node_moudles*
 /.pnp
 .pnp.js
 .yarn/install-state.gz
@@ -76,3 +77,5 @@ storybook-static
 # Module federation
 .mf/
 /src/generated/prisma
+.claude*
+test-*

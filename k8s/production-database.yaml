@@ -1,0 +1,439 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgresql-config
+  namespace: saas-idp-production
+  labels:
+    app: postgresql
+    environment: production
+data:
+  postgresql.conf: |
+    # PostgreSQL configuration for production
+    listen_addresses = '*'
+    port = 5432
+    max_connections = 200
+    shared_buffers = 256MB
+    effective_cache_size = 1GB
+    work_mem = 4MB
+    maintenance_work_mem = 64MB
+    wal_buffers = 16MB
+    checkpoint_completion_target = 0.9
+    wal_level = replica
+    max_wal_senders = 3
+    max_replication_slots = 3
+    hot_standby = on
+    hot_standby_feedback = on
+    log_statement = 'mod'
+    log_min_duration_statement = 1000
+    log_line_prefix = '%t [%p]: [%l-1] user=%u,db=%d,app=%a,client=%h '
+    log_timezone = 'UTC'
+    timezone = 'UTC'
+    
+  pg_hba.conf: |
+    # TYPE  DATABASE        USER            ADDRESS                 METHOD
+    local   all             postgres                                peer
+    host    all             all             127.0.0.1/32            md5
+    host    all             all             ::1/128                 md5
+    host    all             all             10.0.0.0/8              md5
+    host    replication     replicator      10.0.0.0/8              md5
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: postgresql-secret
+  namespace: saas-idp-production
+  labels:
+    app: postgresql
+    environment: production
+type: Opaque
+stringData:
+  postgres-password: "CHANGE_ME_POSTGRES_ADMIN_PASSWORD"
+  saas-idp-password: "CHANGE_ME_SAAS_IDP_PASSWORD"
+  replicator-password: "CHANGE_ME_REPLICATION_PASSWORD"
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgresql-primary
+  namespace: saas-idp-production
+  labels:
+    app: postgresql
+    component: primary
+    environment: production
+spec:
+  serviceName: postgresql-primary
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgresql
+      component: primary
+  template:
+    metadata:
+      labels:
+        app: postgresql
+        component: primary
+        environment: production
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9187"
+    spec:
+      securityContext:
+        fsGroup: 999
+        runAsUser: 999
+        runAsGroup: 999
+      
+      initContainers:
+      - name: init-permissions
+        image: postgres:15-alpine
+        command:
+        - sh
+        - -c
+        - |
+          chown -R 999:999 /var/lib/postgresql/data
+          chmod 700 /var/lib/postgresql/data
+        volumeMounts:
+        - name: postgresql-data
+          mountPath: /var/lib/postgresql/data
+        securityContext:
+          runAsUser: 0
+      
+      containers:
+      - name: postgresql
+        image: postgres:15-alpine
+        env:
+        - name: POSTGRES_DB
+          value: "saas_idp_production"
+        - name: POSTGRES_USER
+          value: "postgres"
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: postgresql-secret
+              key: postgres-password
+        - name: PGDATA
+          value: "/var/lib/postgresql/data/pgdata"
+        - name: POSTGRES_INITDB_ARGS
+          value: "--auth-host=md5"
+        
+        ports:
+        - name: postgresql
+          containerPort: 5432
+        
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+        
+        livenessProbe:
+          exec:
+            command:
+            - /bin/sh
+            - -c
+            - exec pg_isready -U "postgres" -h 127.0.0.1 -p 5432
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        
+        readinessProbe:
+          exec:
+            command:
+            - /bin/sh
+            - -c
+            - -e
+            - |
+              exec pg_isready -U "postgres" -h 127.0.0.1 -p 5432
+              [ -f /opt/bitnami/postgresql/tmp/.initialized ] || [ -f /bitnami/postgresql/.initialized ]
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 6
+        
+        volumeMounts:
+        - name: postgresql-data
+          mountPath: /var/lib/postgresql/data
+        - name: postgresql-config
+          mountPath: /etc/postgresql/postgresql.conf
+          subPath: postgresql.conf
+        - name: postgresql-config
+          mountPath: /etc/postgresql/pg_hba.conf
+          subPath: pg_hba.conf
+        - name: init-scripts
+          mountPath: /docker-entrypoint-initdb.d
+        
+        securityContext:
+          runAsUser: 999
+          runAsGroup: 999
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+      
+      - name: postgres-exporter
+        image: prometheuscommunity/postgres-exporter:v0.12.0
+        env:
+        - name: DATA_SOURCE_NAME
+          value: "postgresql://postgres:$(POSTGRES_PASSWORD)@localhost:5432/saas_idp_production?sslmode=disable"
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: postgresql-secret
+              key: postgres-password
+        ports:
+        - name: metrics
+          containerPort: 9187
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "100m"
+        securityContext:
+          runAsUser: 65534
+          runAsGroup: 65534
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+      
+      volumes:
+      - name: postgresql-config
+        configMap:
+          name: postgresql-config
+      - name: init-scripts
+        configMap:
+          name: postgresql-init-scripts
+      
+      terminationGracePeriodSeconds: 60
+      
+  volumeClaimTemplates:
+  - metadata:
+      name: postgresql-data
+      labels:
+        app: postgresql
+        component: primary
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      storageClassName: gp3
+      resources:
+        requests:
+          storage: 100Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgresql-primary
+  namespace: saas-idp-production
+  labels:
+    app: postgresql
+    component: primary
+    environment: production
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "9187"
+spec:
+  type: ClusterIP
+  selector:
+    app: postgresql
+    component: primary
+  ports:
+  - name: postgresql
+    port: 5432
+    targetPort: postgresql
+  - name: metrics
+    port: 9187
+    targetPort: metrics
+---
+# Read Replica (Optional)
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgresql-replica
+  namespace: saas-idp-production
+  labels:
+    app: postgresql
+    component: replica
+    environment: production
+spec:
+  serviceName: postgresql-replica
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgresql
+      component: replica
+  template:
+    metadata:
+      labels:
+        app: postgresql
+        component: replica
+        environment: production
+    spec:
+      securityContext:
+        fsGroup: 999
+        runAsUser: 999
+        runAsGroup: 999
+      
+      containers:
+      - name: postgresql
+        image: postgres:15-alpine
+        env:
+        - name: PGUSER
+          value: "replicator"
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: postgresql-secret
+              key: replicator-password
+        - name: PGDATA
+          value: "/var/lib/postgresql/data/pgdata"
+        - name: POSTGRES_MASTER_SERVICE
+          value: "postgresql-primary.saas-idp-production.svc.cluster.local"
+        
+        command:
+        - /bin/bash
+        - -c
+        - |
+          set -e
+          if [ ! -s "$PGDATA/PG_VERSION" ]; then
+            echo "Starting base backup..."
+            pg_basebackup -h $POSTGRES_MASTER_SERVICE -D $PGDATA -U replicator -W -P -R
+            echo "Base backup completed"
+          fi
+          exec postgres
+        
+        ports:
+        - name: postgresql
+          containerPort: 5432
+        
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "125m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+        
+        livenessProbe:
+          exec:
+            command:
+            - /bin/sh
+            - -c
+            - exec pg_isready -U "replicator" -h 127.0.0.1 -p 5432
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+        
+        volumeMounts:
+        - name: postgresql-replica-data
+          mountPath: /var/lib/postgresql/data
+        
+        securityContext:
+          runAsUser: 999
+          runAsGroup: 999
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+      
+      terminationGracePeriodSeconds: 60
+      
+  volumeClaimTemplates:
+  - metadata:
+      name: postgresql-replica-data
+      labels:
+        app: postgresql
+        component: replica
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      storageClassName: gp3
+      resources:
+        requests:
+          storage: 100Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgresql-replica
+  namespace: saas-idp-production
+  labels:
+    app: postgresql
+    component: replica
+    environment: production
+spec:
+  type: ClusterIP
+  selector:
+    app: postgresql
+    component: replica
+  ports:
+  - name: postgresql
+    port: 5432
+    targetPort: postgresql
+---
+# Service for read-only connections
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgresql-read
+  namespace: saas-idp-production
+  labels:
+    app: postgresql
+    component: read
+    environment: production
+spec:
+  type: ClusterIP
+  selector:
+    app: postgresql
+    component: replica
+  ports:
+  - name: postgresql
+    port: 5432
+    targetPort: postgresql
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgresql-init-scripts
+  namespace: saas-idp-production
+  labels:
+    app: postgresql
+data:
+  01-create-database.sql: |
+    -- Create the application database and user
+    CREATE DATABASE saas_idp_production;
+    CREATE USER saas_idp_user WITH ENCRYPTED PASSWORD 'CHANGE_ME_SAAS_IDP_PASSWORD';
+    GRANT ALL PRIVILEGES ON DATABASE saas_idp_production TO saas_idp_user;
+    
+    -- Create replication user
+    CREATE USER replicator WITH REPLICATION ENCRYPTED PASSWORD 'CHANGE_ME_REPLICATION_PASSWORD';
+    
+  02-extensions.sql: |
+    -- Connect to the application database
+    \c saas_idp_production;
+    
+    -- Enable required extensions
+    CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+    CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+    CREATE EXTENSION IF NOT EXISTS "pg_stat_statements";
+    CREATE EXTENSION IF NOT EXISTS "pg_trgm";
+    
+    -- Grant usage to application user
+    GRANT USAGE ON SCHEMA public TO saas_idp_user;
+    GRANT CREATE ON SCHEMA public TO saas_idp_user;
+---
+# PodDisruptionBudget
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: postgresql-pdb
+  namespace: saas-idp-production
+  labels:
+    app: postgresql
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: postgresql

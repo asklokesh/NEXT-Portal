@@ -1,0 +1,717 @@
+{
+  "dashboard": {
+    "id": null,
+    "title": "SaaS IDP - Executive Overview",
+    "tags": ["saas-idp", "executive", "kpi", "business"],
+    "style": "dark",
+    "timezone": "browser",
+    "editable": true,
+    "graphTooltip": 1,
+    "time": {
+      "from": "now-24h",
+      "to": "now"
+    },
+    "timepicker": {
+      "refresh_intervals": ["30s", "1m", "5m", "15m", "30m", "1h", "2h", "1d"],
+      "time_options": ["5m", "15m", "1h", "6h", "12h", "24h", "2d", "7d", "30d"]
+    },
+    "refresh": "1m",
+    "version": 2,
+    "panels": [
+      {
+        "id": 1,
+        "title": "Platform Health Score",
+        "type": "stat",
+        "gridPos": {"h": 8, "w": 6, "x": 0, "y": 0},
+        "fieldConfig": {
+          "defaults": {
+            "mappings": [],
+            "thresholds": {
+              "steps": [
+                {"color": "red", "value": null},
+                {"color": "orange", "value": 80},
+                {"color": "yellow", "value": 90},
+                {"color": "green", "value": 95}
+              ]
+            },
+            "min": 0,
+            "max": 100,
+            "unit": "percent"
+          }
+        },
+        "options": {
+          "colorMode": "background",
+          "graphMode": "area",
+          "justifyMode": "center",
+          "orientation": "horizontal",
+          "reduceOptions": {
+            "values": false,
+            "calcs": ["lastNotNull"],
+            "fields": ""
+          },
+          "textMode": "value_and_name"
+        },
+        "targets": [
+          {
+            "expr": "saas_idp_system_health_score{component=\"overall\"}",
+            "legendFormat": "Platform Health",
+            "refId": "A"
+          }
+        ]
+      },
+      {
+        "id": 2,
+        "title": "Service Uptime (SLA: 99.99%)",
+        "type": "stat",
+        "gridPos": {"h": 8, "w": 6, "x": 6, "y": 0},
+        "fieldConfig": {
+          "defaults": {
+            "mappings": [],
+            "thresholds": {
+              "steps": [
+                {"color": "red", "value": null},
+                {"color": "orange", "value": 99.9},
+                {"color": "green", "value": 99.99}
+              ]
+            },
+            "min": 99,
+            "max": 100,
+            "unit": "percent",
+            "decimals": 3
+          }
+        },
+        "options": {
+          "colorMode": "background",
+          "graphMode": "area",
+          "justifyMode": "center",
+          "orientation": "horizontal",
+          "reduceOptions": {
+            "values": false,
+            "calcs": ["lastNotNull"],
+            "fields": ""
+          },
+          "textMode": "value_and_name"
+        },
+        "targets": [
+          {
+            "expr": "(1 - (sum(rate(saas_idp_errors_total[24h])) / sum(rate(saas_idp_requests_total[24h])))) * 100",
+            "legendFormat": "Uptime",
+            "refId": "A"
+          }
+        ]
+      },
+      {
+        "id": 3,
+        "title": "Daily Active Developers",
+        "type": "stat",
+        "gridPos": {"h": 4, "w": 4, "x": 12, "y": 0},
+        "fieldConfig": {
+          "defaults": {
+            "mappings": [],
+            "thresholds": {
+              "steps": [
+                {"color": "red", "value": null},
+                {"color": "yellow", "value": 50},
+                {"color": "green", "value": 100}
+              ]
+            },
+            "unit": "short"
+          }
+        },
+        "options": {
+          "colorMode": "value",
+          "graphMode": "area",
+          "justifyMode": "center",
+          "orientation": "horizontal",
+          "reduceOptions": {
+            "values": false,
+            "calcs": ["lastNotNull"],
+            "fields": ""
+          }
+        },
+        "targets": [
+          {
+            "expr": "sum(saas_idp_developers_active_daily)",
+            "legendFormat": "DAU",
+            "refId": "A"
+          }
+        ]
+      },
+      {
+        "id": 4,
+        "title": "Revenue at Risk ($)",
+        "type": "stat",
+        "gridPos": {"h": 4, "w": 4, "x": 16, "y": 0},
+        "fieldConfig": {
+          "defaults": {
+            "mappings": [],
+            "thresholds": {
+              "steps": [
+                {"color": "green", "value": null},
+                {"color": "yellow", "value": 10000},
+                {"color": "red", "value": 50000}
+              ]
+            },
+            "unit": "currencyUSD"
+          }
+        },
+        "options": {
+          "colorMode": "value",
+          "graphMode": "none",
+          "justifyMode": "center",
+          "orientation": "horizontal",
+          "reduceOptions": {
+            "values": false,
+            "calcs": ["lastNotNull"],
+            "fields": ""
+          }
+        },
+        "targets": [
+          {
+            "expr": "sum(saas_idp_revenue_at_risk_dollars)",
+            "legendFormat": "Revenue at Risk",
+            "refId": "A"
+          }
+        ]
+      },
+      {
+        "id": 5,
+        "title": "Active Incidents",
+        "type": "stat",
+        "gridPos": {"h": 4, "w": 4, "x": 20, "y": 0},
+        "fieldConfig": {
+          "defaults": {
+            "mappings": [],
+            "thresholds": {
+              "steps": [
+                {"color": "green", "value": null},
+                {"color": "yellow", "value": 1},
+                {"color": "red", "value": 3}
+              ]
+            },
+            "unit": "short"
+          }
+        },
+        "options": {
+          "colorMode": "background",
+          "graphMode": "none",
+          "justifyMode": "center",
+          "orientation": "horizontal",
+          "reduceOptions": {
+            "values": false,
+            "calcs": ["lastNotNull"],
+            "fields": ""
+          }
+        },
+        "targets": [
+          {
+            "expr": "ALERTS{severity=\"critical\", alertstate=\"firing\"}",
+            "legendFormat": "Critical Incidents",
+            "refId": "A"
+          }
+        ]
+      },
+      {
+        "id": 6,
+        "title": "Mean Time to Recovery (MTTR)",
+        "type": "stat",
+        "gridPos": {"h": 4, "w": 4, "x": 12, "y": 4},
+        "fieldConfig": {
+          "defaults": {
+            "mappings": [],
+            "thresholds": {
+              "steps": [
+                {"color": "green", "value": null},
+                {"color": "yellow", "value": 300},
+                {"color": "red", "value": 900}
+              ]
+            },
+            "unit": "s"
+          }
+        },
+        "options": {
+          "colorMode": "value",
+          "graphMode": "area",
+          "justifyMode": "center",
+          "orientation": "horizontal",
+          "reduceOptions": {
+            "values": false,
+            "calcs": ["lastNotNull"],
+            "fields": ""
+          }
+        },
+        "targets": [
+          {
+            "expr": "avg(saas_idp_incident_recovery_duration_seconds)",
+            "legendFormat": "MTTR",
+            "refId": "A"
+          }
+        ]
+      },
+      {
+        "id": 7,
+        "title": "Plugin Marketplace Health",
+        "type": "stat",
+        "gridPos": {"h": 4, "w": 4, "x": 16, "y": 4},
+        "fieldConfig": {
+          "defaults": {
+            "mappings": [],
+            "thresholds": {
+              "steps": [
+                {"color": "red", "value": null},
+                {"color": "yellow", "value": 80},
+                {"color": "green", "value": 95}
+              ]
+            },
+            "unit": "percent"
+          }
+        },
+        "options": {
+          "colorMode": "background",
+          "graphMode": "area",
+          "justifyMode": "center",
+          "orientation": "horizontal",
+          "reduceOptions": {
+            "values": false,
+            "calcs": ["lastNotNull"],
+            "fields": ""
+          }
+        },
+        "targets": [
+          {
+            "expr": "(count(saas_idp_plugin_health_status == 1) / count(saas_idp_plugin_health_status)) * 100",
+            "legendFormat": "Healthy Plugins",
+            "refId": "A"
+          }
+        ]
+      },
+      {
+        "id": 8,
+        "title": "Customer Satisfaction Score",
+        "type": "stat",
+        "gridPos": {"h": 4, "w": 4, "x": 20, "y": 4},
+        "fieldConfig": {
+          "defaults": {
+            "mappings": [],
+            "thresholds": {
+              "steps": [
+                {"color": "red", "value": null},
+                {"color": "yellow", "value": 7},
+                {"color": "green", "value": 8.5}
+              ]
+            },
+            "min": 0,
+            "max": 10,
+            "unit": "short",
+            "decimals": 1
+          }
+        },
+        "options": {
+          "colorMode": "background",
+          "graphMode": "area",
+          "justifyMode": "center",
+          "orientation": "horizontal",
+          "reduceOptions": {
+            "values": false,
+            "calcs": ["lastNotNull"],
+            "fields": ""
+          }
+        },
+        "targets": [
+          {
+            "expr": "avg(saas_idp_customer_satisfaction_score)",
+            "legendFormat": "CSAT",
+            "refId": "A"
+          }
+        ]
+      },
+      {
+        "id": 9,
+        "title": "Business KPIs - 24h Trend",
+        "type": "timeseries",
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+        "fieldConfig": {
+          "defaults": {
+            "custom": {
+              "drawStyle": "line",
+              "lineInterpolation": "linear",
+              "barAlignment": 0,
+              "lineWidth": 2,
+              "fillOpacity": 10,
+              "gradientMode": "none",
+              "spanNulls": false,
+              "insertNulls": false,
+              "showPoints": "auto",
+              "pointSize": 5,
+              "stacking": {
+                "mode": "none",
+                "group": "A"
+              },
+              "axisPlacement": "auto",
+              "axisLabel": "",
+              "axisColorMode": "text",
+              "scaleDistribution": {
+                "type": "linear"
+              },
+              "hideFrom": {
+                "legend": false,
+                "tooltip": false,
+                "vis": false
+              },
+              "thresholdsStyle": {
+                "mode": "off"
+              }
+            }
+          }
+        },
+        "options": {
+          "legend": {
+            "calcs": [],
+            "displayMode": "list",
+            "placement": "bottom"
+          },
+          "tooltip": {
+            "mode": "single",
+            "sort": "none"
+          }
+        },
+        "targets": [
+          {
+            "expr": "sum(saas_idp_developers_active_daily)",
+            "legendFormat": "Daily Active Users",
+            "refId": "A"
+          },
+          {
+            "expr": "sum(rate(saas_idp_templates_created_total[1h]))*24",
+            "legendFormat": "Templates Created/Day",
+            "refId": "B"
+          },
+          {
+            "expr": "sum(rate(saas_idp_services_deployed_total[1h]))*24",
+            "legendFormat": "Services Deployed/Day",
+            "refId": "C"
+          },
+          {
+            "expr": "sum(rate(saas_idp_plugin_installs_total[1h]))*24",
+            "legendFormat": "Plugin Installs/Day",
+            "refId": "D"
+          }
+        ]
+      },
+      {
+        "id": 10,
+        "title": "Revenue Impact Metrics",
+        "type": "timeseries",
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+        "fieldConfig": {
+          "defaults": {
+            "custom": {
+              "drawStyle": "line",
+              "lineInterpolation": "linear",
+              "barAlignment": 0,
+              "lineWidth": 2,
+              "fillOpacity": 10,
+              "gradientMode": "none",
+              "spanNulls": false,
+              "insertNulls": false,
+              "showPoints": "auto",
+              "pointSize": 5,
+              "stacking": {
+                "mode": "none",
+                "group": "A"
+              },
+              "axisPlacement": "auto",
+              "axisLabel": "",
+              "axisColorMode": "text",
+              "scaleDistribution": {
+                "type": "linear"
+              },
+              "hideFrom": {
+                "legend": false,
+                "tooltip": false,
+                "vis": false
+              },
+              "thresholdsStyle": {
+                "mode": "off"
+              }
+            },
+            "unit": "currencyUSD"
+          }
+        },
+        "options": {
+          "legend": {
+            "calcs": [],
+            "displayMode": "list",
+            "placement": "bottom"
+          },
+          "tooltip": {
+            "mode": "single",
+            "sort": "none"
+          }
+        },
+        "targets": [
+          {
+            "expr": "sum(saas_idp_revenue_generated_dollars)",
+            "legendFormat": "Revenue Generated",
+            "refId": "A"
+          },
+          {
+            "expr": "sum(saas_idp_revenue_at_risk_dollars)",
+            "legendFormat": "Revenue at Risk",
+            "refId": "B"
+          },
+          {
+            "expr": "sum(saas_idp_cost_savings_dollars)",
+            "legendFormat": "Cost Savings",
+            "refId": "C"
+          }
+        ]
+      },
+      {
+        "id": 11,
+        "title": "SLA Compliance - Last 30 Days",
+        "type": "bargauge",
+        "gridPos": {"h": 6, "w": 8, "x": 0, "y": 16},
+        "fieldConfig": {
+          "defaults": {
+            "mappings": [],
+            "thresholds": {
+              "steps": [
+                {"color": "red", "value": null},
+                {"color": "orange", "value": 99.9},
+                {"color": "green", "value": 99.99}
+              ]
+            },
+            "min": 99,
+            "max": 100,
+            "unit": "percent"
+          }
+        },
+        "options": {
+          "reduceOptions": {
+            "values": false,
+            "calcs": [
+              "lastNotNull"
+            ],
+            "fields": ""
+          },
+          "orientation": "horizontal",
+          "text": {},
+          "showUnfilled": true
+        },
+        "targets": [
+          {
+            "expr": "(1 - (sum(rate(saas_idp_errors_total{service=\"api\"}[30d])) / sum(rate(saas_idp_requests_total{service=\"api\"}[30d])))) * 100",
+            "legendFormat": "API Service",
+            "refId": "A"
+          },
+          {
+            "expr": "(1 - (sum(rate(saas_idp_errors_total{service=\"plugins\"}[30d])) / sum(rate(saas_idp_requests_total{service=\"plugins\"}[30d])))) * 100",
+            "legendFormat": "Plugin Service",
+            "refId": "B"
+          },
+          {
+            "expr": "(1 - (sum(rate(saas_idp_errors_total{service=\"auth\"}[30d])) / sum(rate(saas_idp_requests_total{service=\"auth\"}[30d])))) * 100",
+            "legendFormat": "Auth Service",
+            "refId": "C"
+          },
+          {
+            "expr": "(1 - (sum(rate(saas_idp_errors_total{service=\"catalog\"}[30d])) / sum(rate(saas_idp_requests_total{service=\"catalog\"}[30d])))) * 100",
+            "legendFormat": "Catalog Service",
+            "refId": "D"
+          }
+        ]
+      },
+      {
+        "id": 12,
+        "title": "Error Budget Burn Rate",
+        "type": "stat",
+        "gridPos": {"h": 6, "w": 8, "x": 8, "y": 16},
+        "fieldConfig": {
+          "defaults": {
+            "mappings": [],
+            "thresholds": {
+              "steps": [
+                {"color": "green", "value": null},
+                {"color": "yellow", "value": 0.1},
+                {"color": "red", "value": 0.5}
+              ]
+            },
+            "unit": "percentunit",
+            "decimals": 4
+          }
+        },
+        "options": {
+          "colorMode": "background",
+          "graphMode": "area",
+          "justifyMode": "center",
+          "orientation": "vertical",
+          "reduceOptions": {
+            "values": false,
+            "calcs": ["lastNotNull"],
+            "fields": ""
+          }
+        },
+        "targets": [
+          {
+            "expr": "sum(rate(saas_idp_errors_total[1h])) / sum(rate(saas_idp_requests_total[1h]))",
+            "legendFormat": "Hourly Burn Rate",
+            "refId": "A"
+          }
+        ]
+      },
+      {
+        "id": 13,
+        "title": "Top Plugin Performance Issues",
+        "type": "table",
+        "gridPos": {"h": 6, "w": 8, "x": 16, "y": 16},
+        "fieldConfig": {
+          "defaults": {
+            "custom": {
+              "align": "auto",
+              "displayMode": "auto",
+              "inspect": false
+            },
+            "mappings": [],
+            "thresholds": {
+              "steps": [
+                {
+                  "color": "green",
+                  "value": null
+                }
+              ]
+            }
+          },
+          "overrides": [
+            {
+              "matcher": {
+                "id": "byName",
+                "options": "Error Rate"
+              },
+              "properties": [
+                {
+                  "id": "unit",
+                  "value": "percentunit"
+                },
+                {
+                  "id": "custom.displayMode",
+                  "value": "color-background"
+                },
+                {
+                  "id": "thresholds",
+                  "value": {
+                    "steps": [
+                      {
+                        "color": "green",
+                        "value": null
+                      },
+                      {
+                        "color": "yellow",
+                        "value": 0.01
+                      },
+                      {
+                        "color": "red",
+                        "value": 0.05
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        "options": {
+          "showHeader": true,
+          "sortBy": [
+            {
+              "desc": true,
+              "displayName": "Error Rate"
+            }
+          ]
+        },
+        "targets": [
+          {
+            "expr": "topk(5, rate(saas_idp_plugin_operations_total{status=\"error\"}[1h]) / rate(saas_idp_plugin_operations_total[1h]))",
+            "format": "table",
+            "instant": true,
+            "legendFormat": "",
+            "refId": "A"
+          }
+        ],
+        "transformations": [
+          {
+            "id": "organize",
+            "options": {
+              "excludeByName": {
+                "Time": true,
+                "__name__": true,
+                "job": true,
+                "instance": true
+              },
+              "indexByName": {},
+              "renameByName": {
+                "Value": "Error Rate",
+                "plugin_id": "Plugin ID",
+                "operation": "Operation"
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "templating": {
+      "list": [
+        {
+          "current": {
+            "selected": false,
+            "text": "All",
+            "value": "$__all"
+          },
+          "datasource": "prometheus",
+          "definition": "label_values(saas_idp_system_health_score, instance)",
+          "hide": 0,
+          "includeAll": true,
+          "label": "Instance",
+          "multi": true,
+          "name": "instance",
+          "options": [],
+          "query": {
+            "query": "label_values(saas_idp_system_health_score, instance)",
+            "refId": "StandardVariableQuery"
+          },
+          "refresh": 1,
+          "regex": "",
+          "skipUrlSync": false,
+          "sort": 0,
+          "type": "query"
+        }
+      ]
+    },
+    "annotations": {
+      "list": [
+        {
+          "builtIn": 1,
+          "datasource": "-- Grafana --",
+          "enable": true,
+          "hide": true,
+          "iconColor": "rgba(0, 211, 255, 1)",
+          "name": "Annotations & Alerts",
+          "type": "dashboard"
+        },
+        {
+          "datasource": "prometheus",
+          "enable": true,
+          "expr": "ALERTS{severity=\"critical\", alertstate=\"firing\"}",
+          "hide": false,
+          "iconColor": "red",
+          "name": "Critical Incidents",
+          "showIn": 0,
+          "step": "2m",
+          "tagKeys": "alertname,service",
+          "textFormat": "",
+          "titleFormat": "Critical: {{alertname}}"
+        }
+      ]
+    }
+  }
+}

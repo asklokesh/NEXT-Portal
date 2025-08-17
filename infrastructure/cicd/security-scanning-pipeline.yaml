@@ -1,0 +1,542 @@
+# Comprehensive Security Scanning Pipeline
+# Enterprise-grade security integration with Snyk, Veracode, OPA, and Falco
+
+apiVersion: tekton.dev/v1beta1
+kind: Pipeline
+metadata:
+  name: security-scanning-pipeline
+  namespace: tekton-pipelines
+  annotations:
+    description: "Comprehensive security scanning pipeline for enterprise compliance"
+    compliance.standards: "SOC2,GDPR,HIPAA,PCI-DSS"
+    security.level: "enterprise"
+spec:
+  params:
+    - name: source-url
+      type: string
+      description: Source code repository URL
+    - name: image-url
+      type: string
+      description: Container image to scan
+    - name: scan-level
+      type: string
+      description: Security scan level (basic/enterprise/maximum)
+      default: enterprise
+    - name: compliance-framework
+      type: string
+      description: Compliance framework to validate against
+      default: "SOC2,GDPR,HIPAA"
+    - name: fail-on-critical
+      type: string
+      description: Fail pipeline on critical vulnerabilities
+      default: "true"
+
+  workspaces:
+    - name: source-ws
+      description: Source code workspace
+    - name: reports-ws
+      description: Security reports workspace
+    - name: secrets-ws
+      description: Security credentials workspace
+
+  tasks:
+    # 1. Static Application Security Testing (SAST)
+    - name: sast-sonarqube
+      taskRef:
+        name: sonarqube-security-scan
+      workspaces:
+        - name: source
+          workspace: source-ws
+        - name: reports
+          workspace: reports-ws
+      params:
+        - name: SONAR_HOST_URL
+          value: "https://sonarqube.company.com"
+        - name: security-hotspots-threshold
+          value: "0"
+        - name: vulnerabilities-threshold
+          value: "0"
+        - name: coverage-threshold
+          value: "85"
+        - name: duplicated-lines-threshold
+          value: "3"
+
+    # 2. Veracode Static Analysis
+    - name: veracode-sast
+      runAfter: ["sast-sonarqube"]
+      taskRef:
+        name: veracode-static-scan
+      workspaces:
+        - name: source
+          workspace: source-ws
+        - name: secrets
+          workspace: secrets-ws
+        - name: reports
+          workspace: reports-ws
+      params:
+        - name: app-name
+          value: "Enterprise-SaaS-IDP"
+        - name: sandbox-name
+          value: "production-security-scan"
+        - name: scan-all-top-level-modules
+          value: "true"
+        - name: fail-on-policy-violation
+          value: "true"
+        - name: business-criticality
+          value: "VERY_HIGH"
+
+    # 3. Dependency Vulnerability Scanning
+    - name: dependency-scan-snyk
+      taskRef:
+        name: snyk-dependency-scan
+      workspaces:
+        - name: source
+          workspace: source-ws
+        - name: secrets
+          workspace: secrets-ws
+        - name: reports
+          workspace: reports-ws
+      params:
+        - name: SNYK_TOKEN_SECRET
+          value: snyk-enterprise-token
+        - name: severity-threshold
+          value: "medium"
+        - name: monitor
+          value: "true"
+        - name: fail-on-issues
+          value: "true"
+        - name: project-name
+          value: "enterprise-saas-idp"
+        - name: organization
+          value: "company-security"
+
+    # 4. License Compliance Scanning
+    - name: license-compliance-fossa
+      taskRef:
+        name: fossa-license-scan
+      workspaces:
+        - name: source
+          workspace: source-ws
+        - name: secrets
+          workspace: secrets-ws
+        - name: reports
+          workspace: reports-ws
+      params:
+        - name: FOSSA_API_KEY_SECRET
+          value: fossa-enterprise-key
+        - name: project-name
+          value: "enterprise-saas-idp"
+        - name: revision
+          value: "$(context.pipelineRun.name)"
+        - name: team
+          value: "platform-engineering"
+
+    # 5. Secrets Detection
+    - name: secrets-detection-trufflehog
+      taskRef:
+        name: trufflehog-secrets-scan
+      workspaces:
+        - name: source
+          workspace: source-ws
+        - name: reports
+          workspace: reports-ws
+      params:
+        - name: scan-path
+          value: "."
+        - name: exclude-paths
+          value: ".git,node_modules,coverage,dist"
+        - name: output-format
+          value: "json"
+        - name: fail-on-verified
+          value: "true"
+
+    # 6. Container Image Security Scanning
+    - name: container-scan-trivy
+      runAfter: ["dependency-scan-snyk"]
+      taskRef:
+        name: trivy-security-scan
+      workspaces:
+        - name: reports
+          workspace: reports-ws
+      params:
+        - name: IMAGE
+          value: "$(params.image-url)"
+        - name: format
+          value: "sarif"
+        - name: severity
+          value: "UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL"
+        - name: exit-code
+          value: "1"
+        - name: ignore-unfixed
+          value: "false"
+
+    # 7. Container Image Scanning with Aqua Trivy
+    - name: aqua-security-scan
+      runAfter: ["container-scan-trivy"]
+      taskRef:
+        name: aqua-trivy-scan
+      params:
+        - name: image-url
+          value: "$(params.image-url)"
+        - name: scan-type
+          value: "image"
+        - name: format
+          value: "table,json"
+        - name: severity
+          value: "HIGH,CRITICAL"
+        - name: compliance-spec
+          value: "cis,nist"
+
+    # 8. Infrastructure as Code Security Scanning
+    - name: iac-security-checkov
+      taskRef:
+        name: checkov-iac-scan
+      workspaces:
+        - name: source
+          workspace: source-ws
+        - name: reports
+          workspace: reports-ws
+      params:
+        - name: scan-path
+          value: "./infrastructure"
+        - name: framework
+          value: "terraform,kubernetes,docker,helm"
+        - name: output-format
+          value: "sarif"
+        - name: soft-fail
+          value: "false"
+
+    # 9. Terraform Security Scanning
+    - name: terraform-security-tfsec
+      runAfter: ["iac-security-checkov"]
+      taskRef:
+        name: tfsec-terraform-scan
+      workspaces:
+        - name: source
+          workspace: source-ws
+        - name: reports
+          workspace: reports-ws
+      params:
+        - name: terraform-path
+          value: "./infrastructure/terraform"
+        - name: format
+          value: "sarif"
+        - name: minimum-severity
+          value: "HIGH"
+
+    # 10. Kubernetes Security Policy Validation
+    - name: k8s-policy-opa-gatekeeper
+      taskRef:
+        name: opa-policy-validation
+      workspaces:
+        - name: source
+          workspace: source-ws
+        - name: reports
+          workspace: reports-ws
+      params:
+        - name: manifest-path
+          value: "./k8s"
+        - name: policy-path
+          value: "./security/policies"
+        - name: format
+          value: "json"
+        - name: fail-on-violation
+          value: "true"
+
+    # 11. Compliance Validation
+    - name: compliance-validation
+      runAfter: ["k8s-policy-opa-gatekeeper"]
+      taskRef:
+        name: compliance-validator
+      workspaces:
+        - name: reports
+          workspace: reports-ws
+      params:
+        - name: frameworks
+          value: "$(params.compliance-framework)"
+        - name: evidence-collection
+          value: "true"
+        - name: audit-trail
+          value: "true"
+        - name: report-format
+          value: "html,json,pdf"
+
+    # 12. OWASP ZAP Dynamic Security Testing
+    - name: dast-owasp-zap
+      when:
+        - input: $(params.scan-level)
+          operator: in
+          values: ["enterprise", "maximum"]
+      taskRef:
+        name: owasp-zap-scan
+      params:
+        - name: target-url
+          value: "https://staging.saas-idp.company.com"
+        - name: scan-type
+          value: "full"
+        - name: auth-script
+          value: "selenium-auth.py"
+        - name: context-file
+          value: "saas-idp-context.xml"
+        - name: fail-on-high
+          value: "true"
+
+    # 13. API Security Testing
+    - name: api-security-testing
+      when:
+        - input: $(params.scan-level)
+          operator: in
+          values: ["enterprise", "maximum"]
+      taskRef:
+        name: api-security-scan
+      params:
+        - name: openapi-spec
+          value: "./docs/api/openapi.yaml"
+        - name: target-url
+          value: "https://api.staging.saas-idp.company.com"
+        - name: auth-token-secret
+          value: "api-test-token"
+        - name: scan-depth
+          value: "deep"
+
+    # 14. Runtime Security Policy Creation
+    - name: falco-policy-generation
+      runAfter: ["compliance-validation"]
+      taskRef:
+        name: falco-policy-generator
+      workspaces:
+        - name: source
+          workspace: source-ws
+        - name: reports
+          workspace: reports-ws
+      params:
+        - name: application-name
+          value: "saas-idp"
+        - name: generate-custom-rules
+          value: "true"
+        - name: include-network-policies
+          value: "true"
+        - name: threat-model-path
+          value: "./security/threat-model.yaml"
+
+    # 15. Security Benchmarking
+    - name: security-benchmarks
+      when:
+        - input: $(params.scan-level)
+          operator: in
+          values: ["maximum"]
+      taskRef:
+        name: security-benchmark
+      params:
+        - name: benchmarks
+          value: "cis,nist,pci-dss"
+        - name: target-image
+          value: "$(params.image-url)"
+        - name: generate-remediation
+          value: "true"
+
+  finally:
+    # Security Report Aggregation and Distribution
+    - name: security-report-aggregation
+      taskRef:
+        name: security-report-aggregator
+      workspaces:
+        - name: reports
+          workspace: reports-ws
+      params:
+        - name: output-formats
+          value: "html,json,sarif,pdf"
+        - name: include-remediation
+          value: "true"
+        - name: generate-dashboard
+          value: "true"
+        - name: upload-to-s3
+          value: "true"
+        - name: notify-security-team
+          value: "true"
+        - name: compliance-report
+          value: "true"
+
+---
+# Custom Security Scanning Tasks
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: compliance-validator
+  namespace: tekton-pipelines
+spec:
+  description: Validates security scans against compliance frameworks
+  params:
+    - name: frameworks
+      description: Compliance frameworks to validate against
+      type: string
+    - name: evidence-collection
+      description: Enable evidence collection
+      type: string
+      default: "true"
+    - name: audit-trail
+      description: Enable audit trail
+      type: string
+      default: "true"
+    - name: report-format
+      description: Report output formats
+      type: string
+      default: "json"
+  workspaces:
+    - name: reports
+      description: Security reports workspace
+  steps:
+    - name: validate-compliance
+      image: compliance-validator:latest
+      script: |
+        #!/bin/bash
+        set -e
+        
+        echo "Validating compliance against frameworks: $(params.frameworks)"
+        
+        # SOC2 Validation
+        if [[ "$(params.frameworks)" == *"SOC2"* ]]; then
+          echo "Validating SOC2 compliance..."
+          compliance-checker --framework soc2 \
+            --reports-dir /workspace/reports \
+            --output-format json \
+            --evidence-collection $(params.evidence-collection)
+        fi
+        
+        # GDPR Validation
+        if [[ "$(params.frameworks)" == *"GDPR"* ]]; then
+          echo "Validating GDPR compliance..."
+          compliance-checker --framework gdpr \
+            --reports-dir /workspace/reports \
+            --privacy-impact-assessment true \
+            --data-flow-analysis true
+        fi
+        
+        # HIPAA Validation
+        if [[ "$(params.frameworks)" == *"HIPAA"* ]]; then
+          echo "Validating HIPAA compliance..."
+          compliance-checker --framework hipaa \
+            --reports-dir /workspace/reports \
+            --phi-protection-validation true \
+            --access-control-validation true
+        fi
+        
+        # Generate consolidated compliance report
+        compliance-reporter --frameworks "$(params.frameworks)" \
+          --reports-dir /workspace/reports \
+          --format "$(params.report-format)" \
+          --audit-trail $(params.audit-trail)
+
+---
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: security-report-aggregator
+  namespace: tekton-pipelines
+spec:
+  description: Aggregates all security scan results into comprehensive reports
+  params:
+    - name: output-formats
+      description: Output formats for reports
+      type: string
+      default: "json,html"
+    - name: include-remediation
+      description: Include remediation guidance
+      type: string
+      default: "true"
+    - name: generate-dashboard
+      description: Generate security dashboard
+      type: string
+      default: "true"
+    - name: upload-to-s3
+      description: Upload reports to S3
+      type: string
+      default: "true"
+    - name: notify-security-team
+      description: Notify security team
+      type: string
+      default: "true"
+    - name: compliance-report
+      description: Generate compliance report
+      type: string
+      default: "true"
+  workspaces:
+    - name: reports
+      description: Security reports workspace
+  steps:
+    - name: aggregate-reports
+      image: security-aggregator:latest
+      env:
+        - name: AWS_ACCESS_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: aws-credentials
+              key: access-key-id
+        - name: AWS_SECRET_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: aws-credentials
+              key: secret-access-key
+        - name: SLACK_WEBHOOK_URL
+          valueFrom:
+            secretKeyRef:
+              name: notification-secrets
+              key: slack-webhook-url
+      script: |
+        #!/bin/bash
+        set -e
+        
+        cd /workspace/reports
+        
+        echo "Aggregating security scan results..."
+        
+        # Combine all SARIF reports
+        sarif-multitool merge --output-file consolidated-security.sarif *.sarif
+        
+        # Generate executive summary
+        security-summary-generator \
+          --input-dir . \
+          --output-formats "$(params.output-formats)" \
+          --include-remediation $(params.include-remediation) \
+          --compliance-report $(params.compliance-report)
+        
+        # Generate security dashboard
+        if [[ "$(params.generate-dashboard)" == "true" ]]; then
+          security-dashboard-generator \
+            --input consolidated-security.sarif \
+            --output security-dashboard.html \
+            --include-trends true \
+            --include-compliance-status true
+        fi
+        
+        # Upload to S3 if enabled
+        if [[ "$(params.upload-to-s3)" == "true" ]]; then
+          aws s3 cp . s3://security-reports-bucket/saas-idp/$(date +%Y%m%d%H%M%S)/ --recursive
+        fi
+        
+        # Send notifications
+        if [[ "$(params.notify-security-team)" == "true" ]]; then
+          # Calculate security score
+          SECURITY_SCORE=$(security-score-calculator --input consolidated-security.sarif)
+          
+          # Send Slack notification
+          curl -X POST "$SLACK_WEBHOOK_URL" \
+            -H 'Content-type: application/json' \
+            --data "{
+              \"text\": \"Security scan completed for SaaS IDP\",
+              \"attachments\": [{
+                \"color\": \"$([ $SECURITY_SCORE -ge 90 ] && echo 'good' || echo 'warning')\",
+                \"fields\": [{
+                  \"title\": \"Security Score\",
+                  \"value\": \"$SECURITY_SCORE/100\",
+                  \"short\": true
+                }, {
+                  \"title\": \"Compliance Status\",
+                  \"value\": \"$(compliance-status-checker --input .)\",
+                  \"short\": true
+                }]
+              }]
+            }"
+        fi
+        
+        echo "Security report aggregation completed successfully"

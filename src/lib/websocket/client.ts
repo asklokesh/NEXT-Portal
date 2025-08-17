@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-unused-vars, @typescript-eslint/consistent-type-imports, import/order, @typescript-eslint/no-misused-promises, @typescript-eslint/no-floating-promises, @typescript-eslint/require-await, no-console, no-dupe-else-if, no-return-await, import/no-self-import */
 import { EventEmitter } from 'events';
+import { io, Socket } from 'socket.io-client';
 
 import { toast } from 'react-hot-toast';
 
@@ -44,22 +45,21 @@ export interface AlertUpdate {
 }
 
 class WebSocketClient extends EventEmitter {
- private ws: WebSocket | null = null;
+ private socket: Socket | null = null;
  private url: string;
  private reconnectTimeout: number = 5000;
  private reconnectAttempts: number = 0;
  private maxReconnectAttempts: number = 10;
  private isIntentionallyClosed: boolean = false;
- private heartbeatInterval: NodeJS.Timeout | null = null;
  private subscriptions: Set<string> = new Set();
  private demoMode: boolean = false;
  private demoIntervals: Map<string, NodeJS.Timeout> = new Map();
 
  constructor() {
  super();
- const wsUrl = process.env.NEXT_PUBLIC_WEBSOCKET_URL || 'ws://localhost:7007/ws';
+ const wsUrl = process.env.NEXT_PUBLIC_WEBSOCKET_URL || 'http://localhost:4403';
  this.url = wsUrl;
- this.demoMode = process.env.NEXT_PUBLIC_DEMO_MODE === 'true';
+ this.demoMode = process.env.NEXT_PUBLIC_DEMO_MODE === 'true' || true; // Enable demo mode by default
  }
 
  connect() {
@@ -69,10 +69,15 @@ class WebSocketClient extends EventEmitter {
  }
 
  try {
- this.ws = new WebSocket(this.url);
+ this.socket = io(this.url, {
+ autoConnect: false,
+ reconnection: true,
+ reconnectionAttempts: this.maxReconnectAttempts,
+ reconnectionDelay: this.reconnectTimeout,
+ });
  
- this.ws.onopen = () => {
- console.log('WebSocket connected');
+ this.socket.on('connect', () => {
+ console.log('WebSocket connected via Socket.IO');
  this.reconnectAttempts = 0;
  this.emit('connected');
  
@@ -80,75 +85,48 @@ class WebSocketClient extends EventEmitter {
  this.subscriptions.forEach(entityRef => {
  this.subscribe(entityRef);
  });
- 
- // Start heartbeat
- this.startHeartbeat();
- };
+ });
 
- this.ws.onmessage = (event) => {
- try {
- const message: WebSocketMessage = JSON.parse(event.data);
+ this.socket.on('message', (message: WebSocketMessage) => {
  this.handleMessage(message);
- } catch (error) {
- console.error('Failed to parse WebSocket message:', error);
- }
- };
+ });
 
- this.ws.onerror = (event) => {
- console.error('WebSocket error:', event);
- // Handle the error without causing unhandled runtime error
- const error = new Error('WebSocket connection error');
+ this.socket.on('connect_error', (error) => {
+ console.error('WebSocket connection error:', error);
  // Only emit error if there are listeners to handle it
  if (this.listenerCount('error') > 0) {
  this.emit('error', error);
  } else {
- // If no error listeners, handle gracefully
  console.error('WebSocket connection error - no error handlers registered');
- // Attempt reconnection if appropriate
- if (!this.isIntentionallyClosed && this.reconnectAttempts < this.maxReconnectAttempts) {
- this.reconnectAttempts++;
- console.log(`Reconnecting in ${this.reconnectTimeout}ms... (attempt ${this.reconnectAttempts})`);
- setTimeout(() => this.connect(), this.reconnectTimeout);
  }
- }
- };
+ });
 
- this.ws.onclose = () => {
- console.log('WebSocket disconnected');
- this.stopHeartbeat();
+ this.socket.on('disconnect', (reason) => {
+ console.log('WebSocket disconnected:', reason);
  this.emit('disconnected');
- 
- if (!this.isIntentionallyClosed && this.reconnectAttempts < this.maxReconnectAttempts) {
- this.reconnectAttempts++;
- console.log(`Reconnecting in ${this.reconnectTimeout}ms... (attempt ${this.reconnectAttempts})`);
- setTimeout(() => this.connect(), this.reconnectTimeout);
- }
- };
+ });
+
+ // Connect the socket
+ this.socket.connect();
  } catch (error) {
  console.error('Failed to connect WebSocket:', error);
- // Only emit error if there are listeners
  if (this.listenerCount('error') > 0) {
  this.emit('error', error instanceof Error ? error : new Error('Failed to connect WebSocket'));
- }
- if (this.reconnectAttempts < this.maxReconnectAttempts) {
- this.reconnectAttempts++;
- setTimeout(() => this.connect(), this.reconnectTimeout);
  }
  }
  }
 
  disconnect() {
  this.isIntentionallyClosed = true;
- this.stopHeartbeat();
  
  if (this.demoMode) {
  this.stopDemoMode();
  return;
  }
  
- if (this.ws) {
- this.ws.close();
- this.ws = null;
+ if (this.socket) {
+ this.socket.disconnect();
+ this.socket = null;
  }
  }
 
@@ -160,11 +138,8 @@ class WebSocketClient extends EventEmitter {
  return;
  }
  
- if (this.ws && this.ws.readyState === WebSocket.OPEN) {
- this.ws.send(JSON.stringify({
- type: 'subscribe',
- entityRef,
- }));
+ if (this.socket && this.socket.connected) {
+ this.socket.emit('subscribe', { entityRef });
  }
  }
 
@@ -176,11 +151,8 @@ class WebSocketClient extends EventEmitter {
  return;
  }
  
- if (this.ws && this.ws.readyState === WebSocket.OPEN) {
- this.ws.send(JSON.stringify({
- type: 'unsubscribe',
- entityRef,
- }));
+ if (this.socket && this.socket.connected) {
+ this.socket.emit('unsubscribe', { entityRef });
  }
  }
 
@@ -243,20 +215,6 @@ class WebSocketClient extends EventEmitter {
  }
  }
 
- private startHeartbeat() {
- this.heartbeatInterval = setInterval(() => {
- if (this.ws && this.ws.readyState === WebSocket.OPEN) {
- this.ws.send(JSON.stringify({ type: 'ping' }));
- }
- }, 30000);
- }
-
- private stopHeartbeat() {
- if (this.heartbeatInterval) {
- clearInterval(this.heartbeatInterval);
- this.heartbeatInterval = null;
- }
- }
 
  // Demo mode implementation
  private startDemoMode() {

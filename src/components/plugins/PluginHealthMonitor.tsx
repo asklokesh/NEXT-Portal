@@ -481,6 +481,8 @@ export default function PluginHealthMonitor({ className = '' }: PluginHealthMoni
   );
 }
 
+export default PluginHealthMonitor;
+
 // Plugin Detail Modal Component
 const PluginDetailModal = ({ plugin, onClose, onAction, actionLoading }: any) => (
   <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">

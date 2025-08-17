@@ -1,0 +1,165 @@
+#!/bin/bash
+
+# Setup script for enhanced local plugin installer
+# This script configures your environment for automated plugin installation
+
+set -e
+
+echo "🚀 Setting up Enhanced Local Plugin Installer"
+echo "============================================="
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m' # No Color
+
+# Function to print colored output
+print_success() {
+    echo -e "${GREEN}✓${NC} $1"
+}
+
+print_error() {
+    echo -e "${RED}✗${NC} $1"
+}
+
+print_warning() {
+    echo -e "${YELLOW}⚠${NC} $1"
+}
+
+# Check if Backstage directory exists
+BACKSTAGE_DIR="${BACKSTAGE_ROOT:-./backstage}"
+
+if [ ! -d "$BACKSTAGE_DIR" ]; then
+    print_warning "Backstage directory not found at $BACKSTAGE_DIR"
+    echo "Would you like to create a new Backstage app? (y/n)"
+    read -r CREATE_BACKSTAGE
+    
+    if [ "$CREATE_BACKSTAGE" = "y" ]; then
+        echo "Creating new Backstage app..."
+        npx @backstage/create-app@latest
+        BACKSTAGE_DIR="./backstage"
+    else
+        echo "Please set BACKSTAGE_ROOT environment variable to your Backstage directory"
+        exit 1
+    fi
+else
+    print_success "Found Backstage directory at $BACKSTAGE_DIR"
+fi
+
+# Create .env.local if it doesn't exist
+if [ ! -f ".env.local" ]; then
+    echo "Creating .env.local configuration..."
+    cp .env.local.example .env.local
+    
+    # Update BACKSTAGE_ROOT in .env.local
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        # macOS
+        sed -i '' "s|BACKSTAGE_ROOT=.*|BACKSTAGE_ROOT=$BACKSTAGE_DIR|" .env.local
+    else
+        # Linux
+        sed -i "s|BACKSTAGE_ROOT=.*|BACKSTAGE_ROOT=$BACKSTAGE_DIR|" .env.local
+    fi
+    
+    print_success "Created .env.local with BACKSTAGE_ROOT=$BACKSTAGE_DIR"
+else
+    print_success ".env.local already exists"
+fi
+
+# Install required dependencies
+echo ""
+echo "Installing required dependencies..."
+npm install --save \
+    @babel/parser \
+    @babel/traverse \
+    @babel/generator \
+    @babel/types \
+    yaml \
+    @types/babel__traverse \
+    @types/babel__generator
+
+print_success "Dependencies installed"
+
+# Create backup directory
+BACKUP_DIR="./backstage-backups"
+if [ ! -d "$BACKUP_DIR" ]; then
+    mkdir -p "$BACKUP_DIR"
+    print_success "Created backup directory at $BACKUP_DIR"
+fi
+
+# Check if Docker is installed (optional)
+if command -v docker &> /dev/null; then
+    print_success "Docker is installed (optional Docker mode available)"
+else
+    print_warning "Docker not installed (will use local mode only)"
+fi
+
+# Create plugin installation logs directory
+LOGS_DIR="./logs/plugin-installations"
+mkdir -p "$LOGS_DIR"
+print_success "Created logs directory at $LOGS_DIR"
+
+# Test Backstage accessibility
+echo ""
+echo "Testing Backstage installation..."
+if [ -f "$BACKSTAGE_DIR/package.json" ]; then
+    print_success "Backstage package.json found"
+    
+    # Check for common Backstage directories
+    if [ -d "$BACKSTAGE_DIR/packages/app" ]; then
+        print_success "Frontend app package found"
+    else
+        print_warning "Frontend app package not found at $BACKSTAGE_DIR/packages/app"
+    fi
+    
+    if [ -d "$BACKSTAGE_DIR/packages/backend" ]; then
+        print_success "Backend package found"
+    else
+        print_warning "Backend package not found at $BACKSTAGE_DIR/packages/backend"
+    fi
+else
+    print_error "Backstage package.json not found"
+fi
+
+# Create a test script
+cat > test-plugin-install.js << 'EOF'
+const { enhancedLocalInstaller } = require('./src/services/enhancedLocalPluginInstaller');
+
+async function testInstall() {
+    console.log('Testing enhanced plugin installer...');
+    
+    const result = await enhancedLocalInstaller.installPlugin({
+        pluginId: '@backstage/plugin-tech-radar',
+        version: 'latest',
+        autoRestart: false,  // Don't restart in test
+        updateCode: false    // Don't update code in test
+    });
+    
+    console.log('Test result:', result);
+}
+
+testInstall().catch(console.error);
+EOF
+
+echo ""
+echo "============================================="
+print_success "Setup complete!"
+echo ""
+echo "Next steps:"
+echo "1. Review and update .env.local with your specific configuration"
+echo "2. Start your development server: npm run dev"
+echo "3. Navigate to http://localhost:4400/plugins"
+echo "4. Click 'Install' on any plugin to test automated installation"
+echo ""
+echo "The plugin will be automatically:"
+echo "  • Downloaded and installed via NPM"
+echo "  • Configured in app-config.yaml"
+echo "  • Imported in App.tsx or backend index.ts"
+echo "  • Integrated with proper routes"
+echo "  • Backstage will be automatically restarted"
+echo ""
+print_warning "Note: First installation may take 2-3 minutes due to NPM install and Backstage restart"
+echo ""
+echo "To test the installer without UI:"
+echo "  node test-plugin-install.js"
+echo ""

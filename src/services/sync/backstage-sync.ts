@@ -326,69 +326,89 @@ export class BackstageSyncService {
  }
  }
 
- // Helper methods for local storage (using localStorage for now, should use DB in production)
- private async getLocalEntities(): Promise<Entity[]> {
- const stored = localStorage.getItem('backstage_entities');
+ // Helper methods for storage (fallback to in-memory if localStorage unavailable)
+private storage: Map<string, string> = new Map();
+
+private isClientSide(): boolean {
+return typeof window !== 'undefined' && typeof localStorage !== 'undefined';
+}
+
+private getStorageItem(key: string): string | null {
+if (this.isClientSide()) {
+return localStorage.getItem(key);
+}
+return this.storage.get(key) || null;
+}
+
+private setStorageItem(key: string, value: string): void {
+if (this.isClientSide()) {
+localStorage.setItem(key, value);
+} else {
+this.storage.set(key, value);
+}
+}
+private async getLocalEntities(): Promise<Entity[]> {
+ const stored = this.getStorageItem('backstage_entities');
  return stored ? JSON.parse(stored) : [];
  }
 
- private async saveLocalEntity(entity: Entity) {
+private async saveLocalEntity(entity: Entity) {
  const entities = await this.getLocalEntities();
  entities.push(entity);
- localStorage.setItem('backstage_entities', JSON.stringify(entities));
+ this.setStorageItem('backstage_entities', JSON.stringify(entities));
  }
 
- private async updateLocalEntity(entity: Entity) {
+private async updateLocalEntity(entity: Entity) {
  const entities = await this.getLocalEntities();
  const index = entities.findIndex(e => e.metadata.uid === entity.metadata.uid);
  if (index !== -1) {
  entities[index] = entity;
- localStorage.setItem('backstage_entities', JSON.stringify(entities));
+ this.setStorageItem('backstage_entities', JSON.stringify(entities));
  }
  }
 
- private async deleteLocalEntity(uid: string) {
+private async deleteLocalEntity(uid: string) {
  const entities = await this.getLocalEntities();
  const filtered = entities.filter(e => e.metadata.uid !== uid);
- localStorage.setItem('backstage_entities', JSON.stringify(filtered));
+ this.setStorageItem('backstage_entities', JSON.stringify(filtered));
  }
 
- private async getLocalTemplates(): Promise<TemplateEntity[]> {
- const stored = localStorage.getItem('backstage_templates');
+private async getLocalTemplates(): Promise<TemplateEntity[]> {
+ const stored = this.getStorageItem('backstage_templates');
  return stored ? JSON.parse(stored) : [];
  }
 
- private async saveLocalTemplate(template: TemplateEntity) {
+private async saveLocalTemplate(template: TemplateEntity) {
  const templates = await this.getLocalTemplates();
  templates.push(template);
- localStorage.setItem('backstage_templates', JSON.stringify(templates));
+ this.setStorageItem('backstage_templates', JSON.stringify(templates));
  }
 
- private async updateLocalTemplate(template: TemplateEntity) {
+private async updateLocalTemplate(template: TemplateEntity) {
  const templates = await this.getLocalTemplates();
  const index = templates.findIndex(t => t.metadata.uid === template.metadata.uid);
  if (index !== -1) {
  templates[index] = template;
- localStorage.setItem('backstage_templates', JSON.stringify(templates));
+ this.setStorageItem('backstage_templates', JSON.stringify(templates));
  }
  }
 
- private async deleteLocalTemplate(uid: string) {
+private async deleteLocalTemplate(uid: string) {
  const templates = await this.getLocalTemplates();
  const filtered = templates.filter(t => t.metadata.uid !== uid);
- localStorage.setItem('backstage_templates', JSON.stringify(filtered));
+ this.setStorageItem('backstage_templates', JSON.stringify(filtered));
  }
 
- private async saveLocalLocations(locations: any[]) {
- localStorage.setItem('backstage_locations', JSON.stringify(locations));
+private async saveLocalLocations(locations: any[]) {
+ this.setStorageItem('backstage_locations', JSON.stringify(locations));
  }
 
  private async saveLocalUsers(users: Entity[]) {
- localStorage.setItem('backstage_users', JSON.stringify(users));
+ this.setStorageItem('backstage_users', JSON.stringify(users));
  }
 
  private async saveLocalGroups(groups: Entity[]) {
- localStorage.setItem('backstage_groups', JSON.stringify(groups));
+ this.setStorageItem('backstage_groups', JSON.stringify(groups));
  }
 
  // Change detection

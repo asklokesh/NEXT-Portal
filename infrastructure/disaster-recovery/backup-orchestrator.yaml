@@ -8,13 +8,16 @@ metadata:
     component: disaster-recovery
 data:
   backup-config.yaml: |
-    # Comprehensive Backup Orchestration Configuration
+    # Enhanced Backup Orchestration Configuration with Advanced Features
     apiVersion: backup.portal.dev/v1
     kind: BackupConfiguration
     metadata:
       name: plugin-ecosystem-backup
-      version: "2.0"
-      created: "2025-01-07T10:00:00Z"
+      version: "3.0"
+      created: "2025-01-17T10:00:00Z"
+      labels:
+        backup.portal.dev/enhanced: "true"
+        backup.portal.dev/features: "coordination,corruption-detection,replication,optimization"
     
     # Multi-tier storage strategy
     storage:
@@ -212,14 +215,139 @@ data:
           method: "kubectl_diff"
           frequency: "daily"
     
-    # Monitoring and alerting
+    # Enhanced coordination and conflict resolution
+    coordination:
+      enabled: true
+      scheduling_conflicts:
+        detection_enabled: true
+        resolution_strategy: "priority_based"
+        max_concurrent_jobs: 4
+        resource_thresholds:
+          cpu: 80
+          memory: 85
+          storage: 90
+          network: 75
+      conflict_resolution:
+        detection_method: "checksum"
+        default_strategy: "last_writer_wins"
+        automatic_resolution: true
+        manual_intervention_threshold: 0.8
+        
+    # Advanced corruption detection
+    corruption_detection:
+      enabled: true
+      methods:
+        - "checksum_validation"
+        - "structure_analysis"
+        - "size_verification"
+        - "binary_integrity"
+        - "pattern_analysis"
+      confidence_threshold: 0.9
+      auto_repair: true
+      quarantine_corrupted: true
+      
+    # Enhanced replication with reliability improvements
+    replication:
+      enhanced_reliability: true
+      conflict_detection: true
+      sync_monitoring: true
+      max_sync_drift: "5min"
+      health_checks:
+        interval: "30s"
+        timeout: "10s"
+        failure_threshold: 3
+      
+    # Storage optimization configuration
+    storage_optimization:
+      enabled: true
+      compression:
+        adaptive_algorithm: true
+        level_optimization: true
+        file_type_profiles: true
+      deduplication:
+        enabled: true
+        method: "variable_block"
+        chunk_size: "64KB"
+        global_index: true
+      tiering:
+        enabled: true
+        automatic_transitions: true
+        cost_optimization: true
+        
+    # Recovery time optimization
+    recovery_optimization:
+      target_rto: "30min"
+      parallel_recovery: true
+      resource_optimization: true
+      prewarming: true
+      validation_parallel: true
+      
+    # Automated failover configuration
+    automated_failover:
+      enabled: true
+      triggers:
+        - type: "health_check_failure"
+          threshold: 3
+          cooldown: "5min"
+        - type: "metric_threshold"
+          metric: "error_rate"
+          threshold: 0.1
+          duration: "2min"
+      strategies:
+        - "active_passive"
+        - "dns_failover"
+      rollback:
+        automatic: true
+        timeout: "10min"
+        
+    # Comprehensive validation and testing
+    validation:
+      enabled: true
+      schedules:
+        integrity_check: "0 */4 * * *"  # Every 4 hours
+        restore_test: "0 2 * * 1"      # Weekly Monday 2 AM
+        performance_test: "0 3 * * 0"   # Weekly Sunday 3 AM
+        dr_test: "0 1 1 * *"           # Monthly 1st day 1 AM
+      test_environments:
+        - "validation"
+        - "staging"
+      automated_remediation: true
+      
+    # Enhanced monitoring and alerting
     monitoring:
+      health_monitoring:
+        enabled: true
+        intervals:
+          health_check: "30s"
+          metrics_collection: "60s"
+          alert_evaluation: "30s"
+          status_report: "300s"
+          trend_analysis: "3600s"
+      
       metrics:
         backup_duration: true
         backup_size: true
         backup_success_rate: true
         storage_utilization: true
         recovery_time: true
+        corruption_rate: true
+        replication_lag: true
+        performance_score: true
+        reliability_score: true
+        security_score: true
+        
+      thresholds:
+        backup_success_rate: 95.0
+        backup_duration_warning: "120s"
+        backup_duration_critical: "300s"
+        storage_utilization_warning: 80.0
+        storage_utilization_critical: 95.0
+        replication_lag_warning: "60s"
+        replication_lag_critical: "300s"
+        corruption_rate_warning: 0.1
+        corruption_rate_critical: 1.0
+        recovery_time_warning: "20min"
+        recovery_time_critical: "30min"
         
       alerts:
         backup_failed:
@@ -237,6 +365,15 @@ data:
           threshold: "90%"
           channels: ["pagerduty", "slack"]
           
+        corruption_detected:
+          severity: "high"
+          channels: ["pagerduty", "slack", "email"]
+          escalation_time: "10min"
+          
+        replication_failure:
+          severity: "high"
+          channels: ["slack", "email"]
+          
         restore_test_failed:
           severity: "high"
           channels: ["slack", "email"]
@@ -245,6 +382,49 @@ data:
           severity: "critical"
           channels: ["pagerduty", "slack", "email"]
           escalation_time: "5min"
+          
+        rto_exceeded:
+          severity: "critical"
+          channels: ["pagerduty", "slack", "email"]
+          escalation_time: "5min"
+          
+        failover_triggered:
+          severity: "critical"
+          channels: ["pagerduty", "slack", "email"]
+          
+        health_degraded:
+          severity: "warning"
+          channels: ["slack", "email"]
+          
+      notification_channels:
+        - id: "pagerduty"
+          type: "pagerduty"
+          config:
+            integration_key: "${PAGERDUTY_INTEGRATION_KEY}"
+          rate_limits:
+            - severity: "critical"
+              max_messages: 10
+              time_window: "3600s"
+              
+        - id: "slack"
+          type: "slack"
+          config:
+            webhook_url: "${SLACK_WEBHOOK_URL}"
+            channel: "#backup-alerts"
+          rate_limits:
+            - severity: "critical"
+              max_messages: 20
+              time_window: "3600s"
+              
+        - id: "email"
+          type: "email"
+          config:
+            smtp_server: "${SMTP_SERVER}"
+            recipients: ["ops@company.com", "backup-team@company.com"]
+          rate_limits:
+            - severity: "critical"
+              max_messages: 5
+              time_window: "3600s"
 
 ---
 apiVersion: apps/v1

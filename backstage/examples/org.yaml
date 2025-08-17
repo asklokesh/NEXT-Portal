@@ -1,0 +1,60 @@
+apiVersion: backstage.io/v1alpha1
+kind: Group
+metadata:
+  name: admins
+  description: Platform administrators with full system access
+spec:
+  type: team
+  profile:
+    displayName: Administrators
+    email: admin@saas-idp.com
+  children: []
+---
+apiVersion: backstage.io/v1alpha1
+kind: Group
+metadata:
+  name: developers
+  description: Platform developers with read-write access
+spec:
+  type: team
+  profile:
+    displayName: Developers
+    email: dev@saas-idp.com
+  parent: admins
+  children: []
+---
+apiVersion: backstage.io/v1alpha1
+kind: Group
+metadata:
+  name: users
+  description: General portal users with read access
+spec:
+  type: team
+  profile:
+    displayName: Users
+    email: users@saas-idp.com
+  children: []
+---
+# Example admin user - replace with your actual GitHub username
+apiVersion: backstage.io/v1alpha1
+kind: User
+metadata:
+  name: admin-user
+  description: Platform administrator
+spec:
+  profile:
+    displayName: Portal Admin
+    email: admin@saas-idp.com
+  memberOf: [admins]
+---
+# Example admin user - replace with your actual GitHub username
+apiVersion: backstage.io/v1alpha1
+kind: User
+metadata:
+  name: portal-admin
+  description: Portal administrator
+spec:
+  profile:
+    displayName: Portal Admin 2
+    email: admin2@saas-idp.com
+  memberOf: [admins]

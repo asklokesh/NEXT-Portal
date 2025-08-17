@@ -1,0 +1,418 @@
+name: Production Deployment Pipeline
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Deployment environment'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+        - staging
+        - production
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+  NODE_VERSION: '20'
+
+jobs:
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+
+      - name: Upload Trivy scan results to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+      - name: Audit npm packages
+        run: npm audit --audit-level=high
+
+      - name: OWASP ZAP Baseline Scan
+        if: github.ref == 'refs/heads/main'
+        uses: zaproxy/action-baseline@v0.10.0
+        with:
+          target: 'http://localhost:4400'
+          rules_file_name: '.zap/rules.tsv'
+          cmd_options: '-a'
+
+  code-quality:
+    name: Code Quality & Testing
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint code
+        run: npm run lint
+
+      - name: Type checking
+        run: npm run typecheck
+
+      - name: Run unit tests
+        run: npm test -- --coverage --watchAll=false
+
+      - name: Run integration tests
+        run: npm run test:integration
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v3
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: true
+
+      - name: SonarCloud Scan
+        uses: SonarSource/sonarcloud-github-action@master
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
+  build:
+    name: Build & Push Container
+    runs-on: ubuntu-latest
+    needs: [security-scan, code-quality]
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image-digest: ${{ steps.build.outputs.digest }}
+      image-tag: ${{ steps.meta.outputs.tags }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=sha,prefix={{branch}}-
+          labels: |
+            org.opencontainers.image.title=SaaS IDP Platform
+            org.opencontainers.image.description=Enterprise Internal Developer Portal
+            org.opencontainers.image.vendor=Your Company
+
+      - name: Build and push Docker image
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile.production
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          platforms: linux/amd64,linux/arm64
+          build-args: |
+            BUILD_DATE=${{ fromJSON(steps.meta.outputs.json).labels['org.opencontainers.image.created'] }}
+            GIT_COMMIT=${{ github.sha }}
+            GIT_BRANCH=${{ github.ref_name }}
+            VERSION=${{ fromJSON(steps.meta.outputs.json).labels['org.opencontainers.image.version'] }}
+
+      - name: Generate SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ steps.meta.outputs.tags }}
+          format: spdx-json
+          output-file: sbom.spdx.json
+
+      - name: Scan image for vulnerabilities
+        uses: anchore/grype-action@v0
+        with:
+          image: ${{ steps.meta.outputs.tags }}
+          fail-build: true
+          severity-cutoff: high
+
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    needs: [build]
+    if: github.ref == 'refs/heads/main' || github.event.inputs.environment == 'staging'
+    environment:
+      name: staging
+      url: https://staging.your-domain.com
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: 'v1.28.0'
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Update kubeconfig
+        run: aws eks update-kubeconfig --region ${{ secrets.AWS_REGION }} --name ${{ secrets.EKS_CLUSTER_NAME }}
+
+      - name: Deploy to Kubernetes
+        run: |
+          # Update image in deployment
+          sed -i "s|image: saas-idp:latest|image: ${{ needs.build.outputs.image-tag }}|g" k8s/production-deployment.yaml
+          
+          # Apply configurations
+          kubectl apply -f k8s/production-namespace.yaml
+          kubectl apply -f k8s/production-configmap.yaml
+          kubectl apply -f k8s/production-secrets.yaml
+          kubectl apply -f k8s/production-database.yaml
+          kubectl apply -f k8s/production-redis.yaml
+          kubectl apply -f k8s/production-services.yaml
+          kubectl apply -f k8s/production-deployment.yaml
+          kubectl apply -f k8s/production-ingress.yaml
+          
+          # Wait for deployment
+          kubectl rollout status deployment/saas-idp-app -n saas-idp-staging --timeout=600s
+
+      - name: Run smoke tests
+        run: |
+          # Wait for service to be ready
+          kubectl wait --for=condition=ready pod -l app=saas-idp -n saas-idp-staging --timeout=300s
+          
+          # Get service URL
+          STAGING_URL=$(kubectl get ingress saas-idp-ingress -n saas-idp-staging -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+          
+          # Run smoke tests
+          curl -f https://${STAGING_URL}/api/health || exit 1
+          
+          # Run comprehensive tests
+          npm run test:e2e:staging
+
+  deploy-production:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: [build, deploy-staging]
+    if: startsWith(github.ref, 'refs/tags/v') || github.event.inputs.environment == 'production'
+    environment:
+      name: production
+      url: https://your-domain.com
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: 'v1.28.0'
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.PROD_AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.PROD_AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.PROD_AWS_REGION }}
+
+      - name: Update kubeconfig
+        run: aws eks update-kubeconfig --region ${{ secrets.PROD_AWS_REGION }} --name ${{ secrets.PROD_EKS_CLUSTER_NAME }}
+
+      - name: Backup current deployment
+        run: |
+          # Create backup of current deployment
+          kubectl get deployment saas-idp-app -n saas-idp-production -o yaml > deployment-backup.yaml
+          
+          # Store in S3 for rollback capability
+          aws s3 cp deployment-backup.yaml s3://${{ secrets.BACKUP_BUCKET }}/deployments/$(date +%Y%m%d-%H%M%S)-backup.yaml
+
+      - name: Blue-Green Deployment
+        run: |
+          # Update image in deployment
+          sed -i "s|image: saas-idp:latest|image: ${{ needs.build.outputs.image-tag }}|g" k8s/production-deployment.yaml
+          
+          # Create green deployment
+          sed 's/saas-idp-app/saas-idp-app-green/g' k8s/production-deployment.yaml > green-deployment.yaml
+          
+          # Apply green deployment
+          kubectl apply -f green-deployment.yaml
+          
+          # Wait for green deployment
+          kubectl rollout status deployment/saas-idp-app-green -n saas-idp-production --timeout=600s
+
+      - name: Health check and traffic switch
+        run: |
+          # Health check on green deployment
+          kubectl wait --for=condition=ready pod -l app=saas-idp-green -n saas-idp-production --timeout=300s
+          
+          # Update service to point to green deployment
+          kubectl patch service saas-idp-app -n saas-idp-production -p '{"spec":{"selector":{"app":"saas-idp-green"}}}'
+          
+          # Wait and verify
+          sleep 30
+          
+          # Production health check
+          PROD_URL="https://your-domain.com"
+          curl -f ${PROD_URL}/api/health || (
+            echo "Health check failed, rolling back..."
+            kubectl patch service saas-idp-app -n saas-idp-production -p '{"spec":{"selector":{"app":"saas-idp"}}}'
+            exit 1
+          )
+
+      - name: Cleanup blue deployment
+        run: |
+          # Wait for traffic to stabilize
+          sleep 60
+          
+          # Remove blue deployment
+          kubectl delete deployment saas-idp-app -n saas-idp-production || true
+          
+          # Rename green to blue
+          kubectl patch deployment saas-idp-app-green -n saas-idp-production -p '{"metadata":{"name":"saas-idp-app"},"spec":{"selector":{"matchLabels":{"app":"saas-idp"}},"template":{"metadata":{"labels":{"app":"saas-idp"}}}}}'
+
+      - name: Update monitoring
+        run: |
+          # Update deployment in monitoring system
+          curl -X POST "${{ secrets.MONITORING_WEBHOOK }}" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "deployment": "saas-idp-production",
+              "version": "${{ needs.build.outputs.image-tag }}",
+              "status": "deployed",
+              "timestamp": "'$(date -u +%Y-%m-%dT%H:%M:%SZ)'"
+            }'
+
+      - name: Notify team
+        uses: 8398a7/action-slack@v3
+        if: always()
+        with:
+          status: ${{ job.status }}
+          channel: '#deployments'
+          webhook_url: ${{ secrets.SLACK_WEBHOOK }}
+          message: |
+            Production deployment ${{ job.status }}!
+            Version: ${{ needs.build.outputs.image-tag }}
+            Environment: production
+            URL: https://your-domain.com
+
+  post-deploy-tests:
+    name: Post-Deployment Tests
+    runs-on: ubuntu-latest
+    needs: [deploy-production]
+    if: startsWith(github.ref, 'refs/tags/v') || github.event.inputs.environment == 'production'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run production tests
+        env:
+          BASE_URL: https://your-domain.com
+          API_KEY: ${{ secrets.PROD_API_KEY }}
+        run: |
+          npm run test:e2e:production
+          npm run test:performance:production
+
+      - name: Load testing
+        run: |
+          # Run k6 load tests
+          docker run --rm -v $(pwd)/tests/performance:/tests grafana/k6:latest run /tests/load-test-production.js
+
+      - name: Security scan (post-deploy)
+        run: |
+          # Run OWASP ZAP full scan against production
+          docker run -t owasp/zap2docker-stable zap-baseline.py -t https://your-domain.com
+
+  rollback:
+    name: Rollback Production
+    runs-on: ubuntu-latest
+    if: failure() && (startsWith(github.ref, 'refs/tags/v') || github.event.inputs.environment == 'production')
+    needs: [deploy-production]
+    environment:
+      name: production
+      url: https://your-domain.com
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.PROD_AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.PROD_AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.PROD_AWS_REGION }}
+
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: 'v1.28.0'
+
+      - name: Update kubeconfig
+        run: aws eks update-kubeconfig --region ${{ secrets.PROD_AWS_REGION }} --name ${{ secrets.PROD_EKS_CLUSTER_NAME }}
+
+      - name: Rollback deployment
+        run: |
+          # Get latest backup
+          LATEST_BACKUP=$(aws s3 ls s3://${{ secrets.BACKUP_BUCKET }}/deployments/ | sort | tail -n 1 | awk '{print $4}')
+          
+          # Download and apply backup
+          aws s3 cp s3://${{ secrets.BACKUP_BUCKET }}/deployments/${LATEST_BACKUP} deployment-rollback.yaml
+          kubectl apply -f deployment-rollback.yaml
+          
+          # Wait for rollback
+          kubectl rollout status deployment/saas-idp-app -n saas-idp-production --timeout=300s
+
+      - name: Notify rollback
+        uses: 8398a7/action-slack@v3
+        with:
+          status: 'warning'
+          channel: '#deployments'
+          webhook_url: ${{ secrets.SLACK_WEBHOOK }}
+          message: |
+            🚨 Production rollback executed!
+            Reason: Deployment failure
+            Status: Rolled back to previous version

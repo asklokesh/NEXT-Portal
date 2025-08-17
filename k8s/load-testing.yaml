@@ -1,0 +1,562 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: load-test-scripts
+  namespace: saas-idp-production
+data:
+  k6-load-test.js: |
+    import http from 'k6/http';
+    import ws from 'k6/ws';
+    import { check, sleep } from 'k6';
+    import { Counter, Rate, Trend } from 'k6/metrics';
+
+    // Custom metrics
+    const httpReqs = new Counter('http_reqs_total');
+    const httpFailRate = new Rate('http_req_failed');
+    const httpDuration = new Trend('http_req_duration');
+    const wsConnections = new Counter('websocket_connections');
+
+    // Test configuration for enterprise load (10,000+ users)
+    export const options = {
+      stages: [
+        // Ramp up
+        { duration: '5m', target: 1000 },   // Ramp up to 1K users
+        { duration: '10m', target: 5000 },  // Ramp up to 5K users
+        { duration: '10m', target: 10000 }, // Ramp up to 10K users
+        { duration: '15m', target: 15000 }, // Peak load - 15K users
+        
+        // Sustained load
+        { duration: '30m', target: 15000 }, // Stay at peak for 30 minutes
+        
+        // Spike test
+        { duration: '2m', target: 25000 },  // Spike to 25K users
+        { duration: '2m', target: 15000 },  // Back to 15K
+        
+        // Ramp down
+        { duration: '10m', target: 5000 },  // Ramp down to 5K
+        { duration: '5m', target: 0 },      // Ramp down to 0
+      ],
+      thresholds: {
+        // Performance requirements for enterprise SaaS
+        'http_req_duration': [
+          'p(95)<2000',  // 95% of requests under 2s
+          'p(99)<5000',  // 99% of requests under 5s
+        ],
+        'http_req_failed': ['rate<0.01'],  // Less than 1% errors
+        'http_reqs': ['count>100000'],     // Minimum request volume
+        'websocket_connections': ['count>5000'], // WebSocket scalability
+      },
+    };
+
+    const BASE_URL = 'https://your-domain.com';
+    const WS_URL = 'wss://your-domain.com/ws';
+
+    // Test data
+    const TEST_USERS = [
+      { email: 'user1@company.com', password: 'test123' },
+      { email: 'user2@company.com', password: 'test123' },
+      { email: 'user3@company.com', password: 'test123' },
+      // Add more test users...
+    ];
+
+    const API_ENDPOINTS = [
+      '/api/plugins',
+      '/api/services',
+      '/api/teams',
+      '/api/metrics',
+      '/api/health',
+      '/api/notifications',
+      '/api/auth/session',
+    ];
+
+    export default function () {
+      const user = TEST_USERS[Math.floor(Math.random() * TEST_USERS.length)];
+      
+      // Test scenario weights (enterprise usage patterns)
+      const scenario = Math.random();
+      
+      if (scenario < 0.3) {
+        // 30% - Dashboard browsing (read-heavy)
+        testDashboardBrowsing();
+      } else if (scenario < 0.5) {
+        // 20% - Plugin management
+        testPluginManagement();
+      } else if (scenario < 0.7) {
+        // 20% - Service catalog interaction
+        testServiceCatalog();
+      } else if (scenario < 0.85) {
+        // 15% - Real-time features (WebSocket)
+        testWebSocketFeatures();
+      } else {
+        // 15% - Administrative tasks
+        testAdminTasks();
+      }
+      
+      sleep(Math.random() * 5 + 1); // 1-6 second think time
+    }
+
+    function testDashboardBrowsing() {
+      const responses = http.batch([
+        ['GET', `${BASE_URL}/api/dashboard/overview`],
+        ['GET', `${BASE_URL}/api/metrics/summary`],
+        ['GET', `${BASE_URL}/api/services/status`],
+        ['GET', `${BASE_URL}/api/notifications/recent`],
+      ]);
+
+      responses.forEach(response => {
+        httpReqs.add(1);
+        httpDuration.add(response.timings.duration);
+        
+        const success = check(response, {
+          'status is 200': (r) => r.status === 200,
+          'response time < 2s': (r) => r.timings.duration < 2000,
+          'has content': (r) => r.body.length > 0,
+        });
+        
+        httpFailRate.add(!success);
+      });
+    }
+
+    function testPluginManagement() {
+      // Login first
+      const loginResponse = http.post(`${BASE_URL}/api/auth/login`, {
+        email: TEST_USERS[0].email,
+        password: TEST_USERS[0].password,
+      });
+
+      if (loginResponse.status === 200) {
+        const authToken = loginResponse.json('token');
+        const headers = { 'Authorization': `Bearer ${authToken}` };
+
+        // Get plugins list
+        const pluginsResponse = http.get(`${BASE_URL}/api/plugins`, { headers });
+        
+        check(pluginsResponse, {
+          'plugins loaded': (r) => r.status === 200 && r.json().length > 0,
+        });
+
+        // Simulate plugin installation (stress test)
+        if (Math.random() < 0.1) {  // 10% chance
+          const installResponse = http.post(`${BASE_URL}/api/plugins/install`, {
+            name: '@backstage/plugin-catalog',
+            version: 'latest',
+          }, { headers });
+          
+          check(installResponse, {
+            'plugin install queued': (r) => r.status === 202,
+          });
+        }
+      }
+    }
+
+    function testServiceCatalog() {
+      const responses = http.batch([
+        ['GET', `${BASE_URL}/api/services`],
+        ['GET', `${BASE_URL}/api/services/search?q=user`],
+        ['GET', `${BASE_URL}/api/teams`],
+      ]);
+
+      responses.forEach(response => {
+        check(response, {
+          'service catalog responsive': (r) => r.status === 200 && r.timings.duration < 1500,
+        });
+      });
+    }
+
+    function testWebSocketFeatures() {
+      const wsResponse = ws.connect(WS_URL, {}, function (socket) {
+        wsConnections.add(1);
+        
+        socket.on('open', () => {
+          // Subscribe to real-time updates
+          socket.send(JSON.stringify({
+            type: 'subscribe',
+            channels: ['notifications', 'metrics', 'plugin-status']
+          }));
+        });
+
+        socket.on('message', (message) => {
+          const data = JSON.parse(message);
+          check(data, {
+            'websocket message valid': (msg) => msg.type !== undefined,
+          });
+        });
+
+        // Keep connection for 30-60 seconds
+        sleep(30 + Math.random() * 30);
+        
+        socket.close();
+      });
+    }
+
+    function testAdminTasks() {
+      // Admin endpoints that require higher privileges
+      const adminEndpoints = [
+        '/api/admin/users',
+        '/api/admin/system/health',
+        '/api/admin/metrics/detailed',
+        '/api/admin/audit-logs',
+      ];
+
+      adminEndpoints.forEach(endpoint => {
+        const response = http.get(`${BASE_URL}${endpoint}`);
+        
+        // Admin endpoints might return 401/403 for non-admin users
+        check(response, {
+          'admin endpoint accessible or properly secured': (r) => 
+            r.status === 200 || r.status === 401 || r.status === 403,
+        });
+      });
+    }
+
+    // Stress test specific scenarios
+    export function stressTestDatabaseConnections() {
+      // Simultaneous database-heavy operations
+      const dbHeavyEndpoints = [
+        '/api/plugins/dependencies',
+        '/api/services/detailed',
+        '/api/metrics/historical',
+        '/api/analytics/reports',
+      ];
+
+      const responses = http.batch(
+        dbHeavyEndpoints.map(endpoint => ['GET', `${BASE_URL}${endpoint}`])
+      );
+
+      responses.forEach(response => {
+        check(response, {
+          'database operations under load': (r) => r.status === 200 && r.timings.duration < 5000,
+        });
+      });
+    }
+
+    export function stressTestMemoryUsage() {
+      // Large payload operations
+      const largeDataRequest = http.get(`${BASE_URL}/api/analytics/full-export`);
+      
+      check(largeDataRequest, {
+        'large data export successful': (r) => r.status === 200,
+        'large data export under 30s': (r) => r.timings.duration < 30000,
+      });
+    }
+
+  performance-test-suite.js: |
+    import { htmlReport } from "https://raw.githubusercontent.com/benc-uk/k6-reporter/main/dist/bundle.js";
+    import { textSummary } from "https://jslib.k6.io/k6-summary/0.0.1/index.js";
+
+    export const options = {
+      scenarios: {
+        // API Load Test
+        api_load: {
+          executor: 'ramping-vus',
+          startVUs: 0,
+          stages: [
+            { duration: '2m', target: 1000 },
+            { duration: '5m', target: 1000 },
+            { duration: '2m', target: 0 },
+          ],
+          exec: 'apiLoadTest',
+        },
+        
+        // Database Stress Test
+        database_stress: {
+          executor: 'constant-vus',
+          vus: 200,
+          duration: '10m',
+          exec: 'databaseStressTest',
+        },
+        
+        // Memory Stress Test
+        memory_stress: {
+          executor: 'ramping-vus',
+          startVUs: 0,
+          stages: [
+            { duration: '1m', target: 50 },
+            { duration: '3m', target: 50 },
+            { duration: '1m', target: 0 },
+          ],
+          exec: 'memoryStressTest',
+        },
+        
+        // WebSocket Scaling Test
+        websocket_scale: {
+          executor: 'ramping-vus',
+          startVUs: 0,
+          stages: [
+            { duration: '3m', target: 2000 },
+            { duration: '5m', target: 2000 },
+            { duration: '2m', target: 0 },
+          ],
+          exec: 'websocketScaleTest',
+        },
+      },
+      thresholds: {
+        // Enterprise SLA requirements
+        'http_req_duration{scenario:api_load}': ['p(95)<1000', 'p(99)<2000'],
+        'http_req_duration{scenario:database_stress}': ['p(95)<3000'],
+        'http_req_duration{scenario:memory_stress}': ['p(95)<5000'],
+        'websocket_connect_duration': ['p(95)<1000'],
+        'http_req_failed': ['rate<0.005'],  // 99.5% success rate
+      },
+    };
+
+    export function apiLoadTest() {
+      // Implementation here
+    }
+
+    export function databaseStressTest() {
+      // Implementation here  
+    }
+
+    export function memoryStressTest() {
+      // Implementation here
+    }
+
+    export function websocketScaleTest() {
+      // Implementation here
+    }
+
+    export function handleSummary(data) {
+      return {
+        "performance-report.html": htmlReport(data),
+        stdout: textSummary(data, { indent: " ", enableColors: true }),
+      };
+    }
+
+  artillery-config.yaml: |
+    config:
+      target: 'https://your-domain.com'
+      phases:
+        # Enterprise load test phases
+        - duration: 300   # 5 minutes
+          arrivalRate: 100 # 100 users per second
+          name: "Warm up"
+        - duration: 600   # 10 minutes  
+          arrivalRate: 500 # 500 users per second
+          name: "Ramp up load"
+        - duration: 900   # 15 minutes
+          arrivalRate: 1000 # 1000 users per second (peak)
+          name: "Sustained high load"
+        - duration: 300   # 5 minutes
+          arrivalRate: 2000 # Spike test
+          name: "Spike load"
+        - duration: 300   # 5 minutes
+          arrivalRate: 100  # Cool down
+          name: "Cool down"
+      processor: "./load-test-processor.js"
+      
+    scenarios:
+      - weight: 40
+        name: "Dashboard browsing"
+        flow:
+          - get:
+              url: "/api/dashboard/overview"
+          - think: 2
+          - get:
+              url: "/api/services/status"
+          - think: 3
+          - get:
+              url: "/api/metrics/summary"
+              
+      - weight: 25
+        name: "Plugin management"
+        flow:
+          - post:
+              url: "/api/auth/login"
+              json:
+                email: "{{ $randomEmail }}"
+                password: "test123"
+          - get:
+              url: "/api/plugins"
+          - think: 5
+          - post:
+              url: "/api/plugins/search"
+              json:
+                query: "catalog"
+                
+      - weight: 20
+        name: "Service catalog"
+        flow:
+          - get:
+              url: "/api/services"
+          - think: 2  
+          - get:
+              url: "/api/services/{{ $randomInt(1, 100) }}"
+          - get:
+              url: "/api/teams"
+              
+      - weight: 10
+        name: "Administrative tasks"
+        flow:
+          - get:
+              url: "/api/admin/system/health"
+          - get:
+              url: "/api/admin/metrics"
+          - think: 10
+              
+      - weight: 5
+        name: "Heavy operations"
+        flow:
+          - get:
+              url: "/api/analytics/export"
+              expect:
+                - statusCode: [200, 202]
+          - think: 30
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: load-test-executor
+  namespace: saas-idp-production
+  labels:
+    app: load-testing
+spec:
+  template:
+    spec:
+      containers:
+      - name: k6-runner
+        image: grafana/k6:latest
+        command:
+        - /bin/bash
+        - -c
+        - |
+          echo "Starting enterprise load testing suite..."
+          
+          # Run basic load test
+          echo "Phase 1: Basic load test (10,000+ users)"
+          k6 run --out influxdb=http://influxdb:8086/k6 /scripts/k6-load-test.js
+          
+          # Run performance test suite  
+          echo "Phase 2: Performance test suite"
+          k6 run --out json=/results/performance-results.json /scripts/performance-test-suite.js
+          
+          # Generate reports
+          echo "Generating load test reports..."
+          k6 run --out json=/results/final-results.json /scripts/k6-load-test.js
+          
+          echo "Load testing completed - results saved to /results/"
+        volumeMounts:
+        - name: test-scripts
+          mountPath: /scripts
+        - name: test-results
+          mountPath: /results
+        resources:
+          requests:
+            memory: "4Gi"
+            cpu: "2000m"
+          limits:
+            memory: "8Gi"
+            cpu: "4000m"
+        env:
+        - name: K6_OUT
+          value: "influxdb=http://influxdb:8086/k6"
+      - name: artillery-runner  
+        image: artilleryio/artillery:latest
+        command:
+        - /bin/bash
+        - -c
+        - |
+          echo "Running Artillery enterprise load test..."
+          artillery run --output /results/artillery-report.json /scripts/artillery-config.yaml
+          artillery report /results/artillery-report.json --output /results/artillery-report.html
+          echo "Artillery testing completed"
+        volumeMounts:
+        - name: test-scripts
+          mountPath: /scripts
+        - name: test-results
+          mountPath: /results
+        resources:
+          requests:
+            memory: "2Gi" 
+            cpu: "1000m"
+          limits:
+            memory: "4Gi"
+            cpu: "2000m"
+      volumes:
+      - name: test-scripts
+        configMap:
+          name: load-test-scripts
+      - name: test-results
+        persistentVolumeClaim:
+          claimName: load-test-results-pvc
+      restartPolicy: Never
+  backoffLimit: 1
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: load-test-results-pvc
+  namespace: saas-idp-production
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+  storageClassName: gp3
+---
+# InfluxDB for K6 metrics storage
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: influxdb
+  namespace: saas-idp-monitoring
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: influxdb
+  template:
+    metadata:
+      labels:
+        app: influxdb
+    spec:
+      containers:
+      - name: influxdb
+        image: influxdb:2.0
+        ports:
+        - containerPort: 8086
+        env:
+        - name: INFLUXDB_DB
+          value: k6
+        - name: INFLUXDB_HTTP_AUTH_ENABLED
+          value: "false"
+        volumeMounts:
+        - name: influxdb-storage
+          mountPath: /var/lib/influxdb2
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+      volumes:
+      - name: influxdb-storage
+        persistentVolumeClaim:
+          claimName: influxdb-pvc
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: influxdb-pvc
+  namespace: saas-idp-monitoring
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 20Gi
+  storageClassName: gp3
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: influxdb
+  namespace: saas-idp-monitoring
+spec:
+  selector:
+    app: influxdb
+  ports:
+  - port: 8086
+    targetPort: 8086

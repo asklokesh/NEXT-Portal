@@ -1,0 +1,420 @@
+# Production Alert Rules for SaaS IDP - Enhanced P0/P1/P2 Classification
+groups:
+  # P0 CRITICAL - IMMEDIATE ATTENTION REQUIRED (< 5 minutes)
+  - name: saas_idp_p0_critical
+    interval: 15s
+    rules:
+      # COMPLETE SYSTEM OUTAGE
+      - alert: P0_SystemDown
+        expr: up{job="saas-idp-app"} == 0
+        for: 30s
+        labels:
+          severity: critical
+          priority: P0
+          service: platform
+          component: system
+          impact: total_outage
+          sla_breach: "true"
+        annotations:
+          summary: "CRITICAL: SaaS IDP Platform is completely DOWN"
+          description: "The entire SaaS IDP platform is unreachable. All users are affected. Revenue impact: IMMEDIATE"
+          runbook_url: "https://docs.saas-idp.com/runbooks/p0-system-down"
+          escalation: "immediately"
+          estimated_users_affected: "ALL"
+          revenue_impact_per_minute: "$1000"
+
+      # DATABASE COMPLETE FAILURE
+      - alert: P0_DatabaseDown
+        expr: up{job="postgresql"} == 0 or up{job="redis"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          priority: P0
+          service: database
+          component: "{{ $labels.job }}"
+          impact: total_outage
+          sla_breach: "true"
+        annotations:
+          summary: "CRITICAL: Database system {{ $labels.job }} is DOWN"
+          description: "Primary database {{ $labels.job }} is unreachable. Platform cannot function."
+          runbook_url: "https://docs.saas-idp.com/runbooks/p0-database-down"
+          escalation: "immediately"
+
+      # AUTHENTICATION SYSTEM FAILURE
+      - alert: P0_AuthenticationSystemDown
+        expr: (rate(saas_idp_authentication_attempts_total[5m]) == 0 and rate(saas_idp_authentication_attempts_total[1h] offset 1h) > 0) or rate(saas_idp_authentication_failures_total[5m]) / rate(saas_idp_authentication_attempts_total[5m]) > 0.95
+        for: 2m
+        labels:
+          severity: critical
+          priority: P0
+          service: authentication
+          component: "{{ $labels.provider }}"
+          impact: login_impossible
+          sla_breach: "true"
+        annotations:
+          summary: "CRITICAL: Authentication system failure - Users cannot login"
+          description: "Authentication is failing for > 95% of attempts or completely stopped for {{ $labels.provider }}"
+          runbook_url: "https://docs.saas-idp.com/runbooks/p0-auth-system-down"
+          escalation: "immediately"
+          estimated_users_affected: "ALL"
+
+      # MASSIVE ERROR RATE SPIKE
+      - alert: P0_CatastrophicErrorRate
+        expr: rate(saas_idp_errors_total[2m]) > 10
+        for: 1m
+        labels:
+          severity: critical
+          priority: P0
+          service: "{{ $labels.service }}"
+          component: "{{ $labels.component }}"
+          impact: service_degraded
+          sla_breach: "true"
+        annotations:
+          summary: "CRITICAL: Catastrophic error rate - {{ $value }} errors/second"
+          description: "Error rate is {{ $value }} errors/second for {{ $labels.service }}, indicating severe system issues"
+          runbook_url: "https://docs.saas-idp.com/runbooks/p0-catastrophic-errors"
+          escalation: "immediately"
+
+      # PLUGIN MARKETPLACE COMPLETE FAILURE
+      - alert: P0_PluginMarketplaceDown
+        expr: (sum(saas_idp_plugin_health_status == 0) / count(saas_idp_plugin_health_status)) > 0.8
+        for: 3m
+        labels:
+          severity: critical
+          priority: P0
+          service: plugins
+          component: marketplace
+          impact: feature_unavailable
+          sla_breach: "true"
+        annotations:
+          summary: "CRITICAL: Plugin Marketplace - 80%+ plugins unhealthy"
+          description: "{{ $value | humanizePercentage }} of plugins are unhealthy, marketplace effectively down"
+          runbook_url: "https://docs.saas-idp.com/runbooks/p0-plugin-marketplace-down"
+          escalation: "immediately"
+
+      # SECURITY BREACH DETECTED
+      - alert: P0_SecurityBreachDetected
+        expr: increase(saas_idp_security_events_total{severity="critical"}[5m]) > 5
+        for: 0s
+        labels:
+          severity: critical
+          priority: P0
+          service: security
+          component: threat_detection
+          impact: security_breach
+          sla_breach: "false"
+        annotations:
+          summary: "CRITICAL SECURITY BREACH: Multiple critical security events detected"
+          description: "{{ $value }} critical security events in last 5 minutes. Potential breach in progress."
+          runbook_url: "https://docs.saas-idp.com/runbooks/p0-security-breach"
+          escalation: "immediately"
+          security_team: "true"
+
+  # P1 HIGH PRIORITY - MAJOR DEGRADATION (< 15 minutes)
+  - name: saas_idp_p1_high
+    interval: 30s
+    rules:
+      # SEVERE PERFORMANCE DEGRADATION
+      - alert: P1_SeverePerformanceDegradation
+        expr: histogram_quantile(0.95, rate(saas_idp_http_request_duration_seconds_bucket[5m])) > 5
+        for: 3m
+        labels:
+          severity: warning
+          priority: P1
+          service: api
+          component: "{{ $labels.route }}"
+          impact: performance_degraded
+          sla_breach: "true"
+        annotations:
+          summary: "HIGH: Severe performance degradation - {{ $value }}s response time"
+          description: "95th percentile response time is {{ $value }}s for {{ $labels.route }}, severely impacting user experience"
+          runbook_url: "https://docs.saas-idp.com/runbooks/p1-performance-degradation"
+          estimated_users_affected: "MANY"
+
+      # HIGH ERROR RATE
+      - alert: P1_HighErrorRate
+        expr: rate(saas_idp_errors_total[10m]) > 1
+        for: 5m
+        labels:
+          severity: warning
+          priority: P1
+          service: "{{ $labels.service }}"
+          component: "{{ $labels.component }}"
+          impact: reliability_degraded
+          sla_breach: "true"
+        annotations:
+          summary: "HIGH: High error rate - {{ $value }} errors/second"
+          description: "Error rate is {{ $value }} errors/second for {{ $labels.service }}, affecting user experience"
+          runbook_url: "https://docs.saas-idp.com/runbooks/p1-high-error-rate"
+
+      # RESOURCE EXHAUSTION WARNING
+      - alert: P1_ResourceExhaustionCritical
+        expr: saas_idp_cpu_usage_percent{component="system"} > 95 or (saas_idp_memory_usage_bytes{component="process", type="heap_used"} / saas_idp_memory_usage_bytes{component="process", type="heap_total"}) * 100 > 95
+        for: 3m
+        labels:
+          severity: warning
+          priority: P1
+          service: infrastructure
+          component: "{{ if eq $labels.component \"system\" }}cpu{{ else }}memory{{ end }}"
+          impact: capacity_exhausted
+          sla_breach: "false"
+        annotations:
+          summary: "HIGH: Resource exhaustion - {{ $labels.component }} at {{ $value }}%"
+          description: "System {{ $labels.component }} usage is at {{ $value }}% on {{ $labels.instance }}, immediate intervention required"
+          runbook_url: "https://docs.saas-idp.com/runbooks/p1-resource-exhaustion"
+
+      # PLUGIN CASCADING FAILURES
+      - alert: P1_PluginCascadingFailures
+        expr: count(saas_idp_plugin_health_status == 0) > 3
+        for: 5m
+        labels:
+          severity: warning
+          priority: P1
+          service: plugins
+          component: health
+          impact: features_degraded
+          sla_breach: "false"
+        annotations:
+          summary: "HIGH: Multiple plugin failures - {{ $value }} plugins unhealthy"
+          description: "{{ $value }} plugins are currently unhealthy, indicating systemic issues"
+          runbook_url: "https://docs.saas-idp.com/runbooks/p1-plugin-cascading-failures"
+
+      # AUTHENTICATION DEGRADATION
+      - alert: P1_AuthenticationDegradation
+        expr: histogram_quantile(0.95, rate(saas_idp_authentication_duration_seconds_bucket[10m])) > 10
+        for: 5m
+        labels:
+          severity: warning
+          priority: P1
+          service: authentication
+          component: "{{ $labels.provider }}"
+          impact: login_slow
+          sla_breach: "true"
+        annotations:
+          summary: "HIGH: Authentication severely slow - {{ $value }}s response time"
+          description: "95th percentile authentication time is {{ $value }}s for {{ $labels.provider }}, affecting login experience"
+          runbook_url: "https://docs.saas-idp.com/runbooks/p1-auth-degradation"
+
+      # DATABASE PERFORMANCE CRITICAL
+      - alert: P1_DatabasePerformanceCritical
+        expr: histogram_quantile(0.95, rate(saas_idp_database_query_duration_seconds_bucket[5m])) > 3
+        for: 5m
+        labels:
+          severity: warning
+          priority: P1
+          service: database
+          component: "{{ $labels.database }}"
+          impact: queries_slow
+          sla_breach: "true"
+        annotations:
+          summary: "HIGH: Database queries critically slow - {{ $value }}s"
+          description: "95th percentile query time is {{ $value }}s for {{ $labels.database }}, severely impacting application performance"
+          runbook_url: "https://docs.saas-idp.com/runbooks/p1-database-performance"
+
+  # P2 MEDIUM PRIORITY - CAPACITY/PERFORMANCE WARNINGS (< 1 hour)
+  - name: saas_idp_p2_medium
+    interval: 60s
+    rules:
+      # CAPACITY WARNINGS
+      - alert: P2_HighResourceUsage
+        expr: saas_idp_cpu_usage_percent{component="system"} > 80 or (saas_idp_memory_usage_bytes{component="process", type="heap_used"} / saas_idp_memory_usage_bytes{component="process", type="heap_total"}) * 100 > 85
+        for: 10m
+        labels:
+          severity: info
+          priority: P2
+          service: infrastructure
+          component: "{{ $labels.component }}"
+          impact: capacity_warning
+          sla_breach: "false"
+        annotations:
+          summary: "MEDIUM: High resource usage - {{ $labels.component }} at {{ $value }}%"
+          description: "{{ $labels.component }} usage is {{ $value }}% on {{ $labels.instance }}, approaching capacity limits"
+          runbook_url: "https://docs.saas-idp.com/runbooks/p2-high-resource-usage"
+
+      # PERFORMANCE DEGRADATION
+      - alert: P2_PerformanceDegradation
+        expr: histogram_quantile(0.95, rate(saas_idp_http_request_duration_seconds_bucket[10m])) > 2
+        for: 10m
+        labels:
+          severity: info
+          priority: P2
+          service: api
+          component: "{{ $labels.route }}"
+          impact: performance_warning
+          sla_breach: "false"
+        annotations:
+          summary: "MEDIUM: Performance degradation - {{ $value }}s response time"
+          description: "95th percentile response time is {{ $value }}s for {{ $labels.route }}, monitoring for further degradation"
+          runbook_url: "https://docs.saas-idp.com/runbooks/p2-performance-degradation"
+
+      # DATABASE CONNECTION POOL WARNING
+      - alert: P2_DatabaseConnectionsHigh
+        expr: saas_idp_database_connections_active > 70
+        for: 15m
+        labels:
+          severity: info
+          priority: P2
+          service: database
+          component: connections
+          impact: capacity_warning
+          sla_breach: "false"
+        annotations:
+          summary: "MEDIUM: High database connections - {{ $value }} active"
+          description: "{{ $value }} active connections to {{ $labels.database }}, approaching connection pool limit"
+          runbook_url: "https://docs.saas-idp.com/runbooks/p2-database-connections"
+
+      # CACHE PERFORMANCE WARNING
+      - alert: P2_LowCacheHitRate
+        expr: rate(saas_idp_cache_hits_total[15m]) / (rate(saas_idp_cache_hits_total[15m]) + rate(saas_idp_cache_misses_total[15m])) < 0.85
+        for: 20m
+        labels:
+          severity: info
+          priority: P2
+          service: cache
+          component: "{{ $labels.cache_name }}"
+          impact: performance_warning
+          sla_breach: "false"
+        annotations:
+          summary: "MEDIUM: Low cache hit rate - {{ $value | humanizePercentage }}"
+          description: "Cache {{ $labels.cache_name }} hit rate is {{ $value | humanizePercentage }}, affecting performance"
+          runbook_url: "https://docs.saas-idp.com/runbooks/p2-cache-performance"
+
+      # PLUGIN PERFORMANCE WARNING
+      - alert: P2_SlowPluginOperations
+        expr: histogram_quantile(0.95, rate(saas_idp_plugin_operation_duration_seconds_bucket[15m])) > 20
+        for: 10m
+        labels:
+          severity: info
+          priority: P2
+          service: plugins
+          component: "{{ $labels.plugin_id }}"
+          impact: performance_warning
+          sla_breach: "false"
+        annotations:
+          summary: "MEDIUM: Slow plugin operations - {{ $labels.plugin_id }}"
+          description: "Plugin {{ $labels.plugin_id }} operation {{ $labels.operation }} taking {{ $value }}s at 95th percentile"
+          runbook_url: "https://docs.saas-idp.com/runbooks/p2-slow-plugin-operations"
+
+      # WEBSOCKET CONNECTION WARNING
+      - alert: P2_HighWebSocketConnections
+        expr: saas_idp_websocket_connections_active > 800
+        for: 15m
+        labels:
+          severity: info
+          priority: P2
+          service: websocket
+          component: connections
+          impact: capacity_warning
+          sla_breach: "false"
+        annotations:
+          summary: "MEDIUM: High WebSocket connections - {{ $value }}"
+          description: "{{ $value }} active WebSocket connections in {{ $labels.namespace }}, approaching capacity limits"
+          runbook_url: "https://docs.saas-idp.com/runbooks/p2-websocket-connections"
+
+  # SECURITY ALERTS
+  - name: saas_idp_security
+    interval: 30s
+    rules:
+      # AUTHENTICATION ATTACK DETECTION
+      - alert: P1_BruteForceAttackDetected
+        expr: rate(saas_idp_authentication_failures_total[5m]) > 5
+        for: 2m
+        labels:
+          severity: warning
+          priority: P1
+          service: security
+          component: authentication
+          impact: security_threat
+          attack_type: brute_force
+        annotations:
+          summary: "SECURITY: Brute force attack detected - {{ $value }} failures/sec"
+          description: "{{ $value }} authentication failures/second detected for {{ $labels.provider }}, possible brute force attack"
+          runbook_url: "https://docs.saas-idp.com/runbooks/security-brute-force"
+          security_team: "true"
+
+      # SUSPICIOUS API USAGE
+      - alert: P1_SuspiciousAPIUsage
+        expr: rate(saas_idp_api_requests_total[5m]) > 100
+        for: 3m
+        labels:
+          severity: warning
+          priority: P1
+          service: security
+          component: api
+          impact: security_threat
+          attack_type: api_abuse
+        annotations:
+          summary: "SECURITY: Suspicious API usage - {{ $value }} req/sec"
+          description: "Unusually high API request rate: {{ $value }} req/sec from {{ $labels.client_id }}"
+          runbook_url: "https://docs.saas-idp.com/runbooks/security-api-abuse"
+          security_team: "true"
+
+      # PRIVILEGE ESCALATION ATTEMPT
+      - alert: P0_PrivilegeEscalationAttempt
+        expr: increase(saas_idp_privilege_escalation_attempts_total[5m]) > 0
+        for: 0s
+        labels:
+          severity: critical
+          priority: P0
+          service: security
+          component: rbac
+          impact: security_breach
+          attack_type: privilege_escalation
+        annotations:
+          summary: "CRITICAL SECURITY: Privilege escalation attempt detected"
+          description: "{{ $value }} privilege escalation attempts detected for user {{ $labels.user_id }}"
+          runbook_url: "https://docs.saas-idp.com/runbooks/security-privilege-escalation"
+          security_team: "true"
+          escalation: "immediately"
+
+  # BUSINESS METRICS ALERTS
+  - name: saas_idp_business
+    interval: 300s
+    rules:
+      # REVENUE IMPACT ALERTS
+      - alert: P1_RevenueAtRisk
+        expr: saas_idp_revenue_at_risk_dollars > 50000
+        for: 5m
+        labels:
+          severity: warning
+          priority: P1
+          service: business
+          component: revenue
+          impact: financial
+        annotations:
+          summary: "BUSINESS: High revenue at risk - ${{ $value }}"
+          description: "${{ $value }} revenue at risk due to system issues affecting {{ $labels.tenant_count }} tenants"
+          runbook_url: "https://docs.saas-idp.com/runbooks/business-revenue-risk"
+          business_team: "true"
+
+      # USER EXPERIENCE DEGRADATION
+      - alert: P2_UserSatisfactionDrop
+        expr: avg(saas_idp_customer_satisfaction_score) < 7
+        for: 30m
+        labels:
+          severity: info
+          priority: P2
+          service: business
+          component: user_experience
+          impact: satisfaction
+        annotations:
+          summary: "BUSINESS: User satisfaction dropped - {{ $value }}"
+          description: "Average customer satisfaction score is {{ $value }}, below acceptable threshold of 7"
+          runbook_url: "https://docs.saas-idp.com/runbooks/business-satisfaction"
+          business_team: "true"
+
+      # LOW FEATURE ADOPTION
+      - alert: P2_LowFeatureAdoption
+        expr: (sum(saas_idp_feature_usage_total{feature="template_creation"}) / sum(saas_idp_user_sessions_total)) * 100 < 20
+        for: 2h
+        labels:
+          severity: info
+          priority: P2
+          service: business
+          component: feature_adoption
+          impact: engagement
+        annotations:
+          summary: "BUSINESS: Low template creation adoption - {{ $value }}%"
+          description: "Template creation adoption rate is {{ $value }}%, significantly below expected 20%"
+          runbook_url: "https://docs.saas-idp.com/runbooks/business-feature-adoption"
+          product_team: "true"

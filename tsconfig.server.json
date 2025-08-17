@@ -1,0 +1,30 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "composite": true,
+    "declaration": true,
+    "declarationMap": true,
+    "outDir": ".next/cache/types/server",
+    "rootDir": "./src",
+    "tsBuildInfoFile": ".next/cache/server.tsbuildinfo",
+    "lib": ["esnext"],
+    "types": ["node"],
+    "target": "ES2022",
+    "module": "commonjs"
+  },
+  "include": [
+    "src/app/api/**/*.ts",
+    "src/lib/server/**/*.ts",
+    "src/services/**/*.ts",
+    "src/middleware/**/*.ts",
+    "prisma/**/*.ts"
+  ],
+  "exclude": [
+    "src/components/**/*",
+    "src/hooks/**/*",
+    "**/*.test.ts",
+    "**/*.test.tsx",
+    "**/*.spec.ts",
+    "**/*.spec.tsx"
+  ]
+}

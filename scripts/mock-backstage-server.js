@@ -13,7 +13,7 @@ app.get('/health', (req, res) => {
 // Catalog API endpoints will be defined later with plugin support
 
 // Scaffolder/Templates API endpoints
-app.get('/api/scaffolder/v2/templates', (req, res) => {
+app.get('/api/scaffolder/templates', (req, res) => {
  res.json({
  templates: [
  {
@@ -118,7 +118,133 @@ app.get('/api/scaffolder/v2/templates', (req, res) => {
  });
 });
 
+// Also support v2 endpoint for compatibility
+app.get('/api/scaffolder/v2/templates', (req, res) => {
+ res.json({
+ templates: [
+ {
+ apiVersion: 'scaffolder.backstage.io/v1beta3',
+ kind: 'Template',
+ metadata: {
+ name: 'nodejs-template',
+ title: 'Node.js Service',
+ description: 'Create a Node.js backend service',
+ tags: ['nodejs', 'backend', 'typescript'],
+ },
+ spec: {
+ type: 'service',
+ owner: 'platform-team',
+ parameters: {
+ required: ['name', 'description'],
+ properties: {
+ name: {
+ type: 'string',
+ title: 'Name',
+ description: 'Unique name of the service',
+ },
+ description: {
+ type: 'string',
+ title: 'Description',
+ description: 'Help others understand what this service is for',
+ },
+ },
+ },
+ steps: [
+ {
+ id: 'fetch',
+ name: 'Fetch Template',
+ action: 'fetch:template',
+ },
+ {
+ id: 'publish',
+ name: 'Publish',
+ action: 'publish:github',
+ },
+ ],
+ output: {
+ links: [
+ {
+ title: 'Repository',
+ url: '${{ steps.publish.output.remoteUrl }}',
+ },
+ ],
+ },
+ },
+ },
+ {
+ apiVersion: 'scaffolder.backstage.io/v1beta3',
+ kind: 'Template',
+ metadata: {
+ name: 'react-app',
+ title: 'React Application',
+ description: 'Create a React frontend application',
+ tags: ['react', 'frontend', 'typescript'],
+ },
+ spec: {
+ type: 'website',
+ owner: 'platform-team',
+ parameters: {
+ required: ['name', 'description'],
+ properties: {
+ name: {
+ type: 'string',
+ title: 'Name',
+ description: 'Unique name of the app',
+ },
+ description: {
+ type: 'string',
+ title: 'Description',
+ description: 'Help others understand what this app is for',
+ },
+ },
+ },
+ steps: [
+ {
+ id: 'fetch',
+ name: 'Fetch Template',
+ action: 'fetch:template',
+ },
+ {
+ id: 'publish',
+ name: 'Publish',
+ action: 'publish:github',
+ },
+ ],
+ output: {
+ links: [
+ {
+ title: 'Repository',
+ url: '${{ steps.publish.output.remoteUrl }}',
+ },
+ ],
+ },
+ },
+ },
+ ]
+ });
+});
+
 // Get single template
+app.get('/api/scaffolder/templates/:namespace/:name', (req, res) => {
+ res.json({
+ apiVersion: 'scaffolder.backstage.io/v1beta3',
+ kind: 'Template',
+ metadata: {
+ name: req.params.name,
+ namespace: req.params.namespace,
+ title: 'Template',
+ description: 'Template description',
+ },
+ spec: {
+ type: 'service',
+ owner: 'platform-team',
+ parameters: {},
+ steps: [],
+ },
+ });
+});
+
+// Get single template v2
 app.get('/api/scaffolder/v2/templates/:namespace/:name', (req, res) => {
  res.json({
  apiVersion: 'scaffolder.backstage.io/v1beta3',

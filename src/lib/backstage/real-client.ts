@@ -95,6 +95,29 @@ export class RealBackstageClient {
  }
 
  /**
+ * Generic request method for making HTTP calls to Backstage API
+ */
+ async request(path: string, options?: {
+ method?: 'GET' | 'POST' | 'PUT' | 'DELETE';
+ data?: any;
+ params?: Record<string, any>;
+ }): Promise<any> {
+ try {
+ const response = await this.client.request({
+ url: path,
+ method: options?.method || 'GET',
+ data: options?.data,
+ params: options?.params,
+ });
+ 
+ return response.data;
+ } catch (error) {
+ console.error(`[Backstage API] Request to ${path} failed:`, error);
+ throw error;
+ }
+ }
+
+ /**
  * Get entities from Backstage catalog
  */
  async getCatalogEntities(request: CatalogEntityRequest = {}): Promise<Entity[]> {

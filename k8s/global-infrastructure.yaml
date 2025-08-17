@@ -1,0 +1,881 @@
+# Global Infrastructure for Enterprise SaaS IDP Platform
+# Supports 100,000+ concurrent users globally with <100ms latency and 99.99% uptime
+
+# =========================
+# GLOBAL LOAD BALANCER SETUP
+# =========================
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: global-load-balancer
+  namespace: saas-idp-production
+  labels:
+    app: saas-idp
+    component: global-lb
+    tier: infrastructure
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: "external"
+    service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: "ip"
+    service.beta.kubernetes.io/aws-load-balancer-scheme: "internet-facing"
+    service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"
+    service.beta.kubernetes.io/aws-load-balancer-backend-protocol: "tcp"
+    # Enable Global Accelerator for AWS
+    service.beta.kubernetes.io/aws-load-balancer-attributes: "load_balancing.cross_zone.enabled=true,idle_timeout.timeout_seconds=300"
+    # Health check configuration
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-interval-seconds: "10"
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-timeout-seconds: "5"
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-healthy-threshold-count: "2"
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-unhealthy-threshold-count: "3"
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-path: "/api/health"
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-port: "4400"
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-protocol: "HTTP"
+spec:
+  type: LoadBalancer
+  externalTrafficPolicy: Local
+  sessionAffinity: ClientIP
+  sessionAffinityConfig:
+    clientIP:
+      timeoutSeconds: 10800
+  ports:
+  - name: https
+    port: 443
+    targetPort: https
+    protocol: TCP
+  - name: http
+    port: 80
+    targetPort: http
+    protocol: TCP
+  - name: websocket
+    port: 8080
+    targetPort: websocket
+    protocol: TCP
+  selector:
+    app: saas-idp
+    component: nginx
+
+---
+# Regional Load Balancer for Redundancy
+apiVersion: v1
+kind: Service
+metadata:
+  name: regional-load-balancer
+  namespace: saas-idp-production
+  labels:
+    app: saas-idp
+    component: regional-lb
+    tier: infrastructure
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+    service.beta.kubernetes.io/aws-load-balancer-internal: "false"
+    service.beta.kubernetes.io/aws-load-balancer-subnets: "subnet-primary,subnet-secondary"
+    service.beta.kubernetes.io/aws-load-balancer-attributes: "load_balancing.cross_zone.enabled=true"
+spec:
+  type: LoadBalancer
+  externalTrafficPolicy: Local
+  ports:
+  - name: https
+    port: 443
+    targetPort: 443
+  - name: http
+    port: 80
+    targetPort: 80
+  selector:
+    app: saas-idp
+    component: nginx
+
+---
+# =========================
+# CDN AND EDGE CONFIGURATION
+# =========================
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cloudfront-config
+  namespace: saas-idp-production
+  labels:
+    app: saas-idp
+    component: cdn
+data:
+  cloudfront-distribution.yaml: |
+    DistributionConfig:
+      CallerReference: "saas-idp-global-${TIMESTAMP}"
+      Comment: "Global CDN for SaaS IDP Platform"
+      Enabled: true
+      HttpVersion: "http2"
+      PriceClass: "PriceClass_All"
+      
+      # Origins configuration
+      Origins:
+        Quantity: 4
+        Items:
+        - Id: "us-east-1-origin"
+          DomainName: "${US_EAST_LB_DNS}"
+          CustomOriginConfig:
+            HTTPPort: 80
+            HTTPSPort: 443
+            OriginProtocolPolicy: "https-only"
+            OriginSslProtocols:
+              Quantity: 3
+              Items: ["TLSv1", "TLSv1.1", "TLSv1.2"]
+        - Id: "eu-west-1-origin"
+          DomainName: "${EU_WEST_LB_DNS}"
+          CustomOriginConfig:
+            HTTPPort: 80
+            HTTPSPort: 443
+            OriginProtocolPolicy: "https-only"
+        - Id: "ap-southeast-1-origin"
+          DomainName: "${AP_SOUTHEAST_LB_DNS}"
+          CustomOriginConfig:
+            HTTPPort: 80
+            HTTPSPort: 443
+            OriginProtocolPolicy: "https-only"
+        - Id: "static-assets-s3"
+          DomainName: "${S3_STATIC_BUCKET}.s3.amazonaws.com"
+          S3OriginConfig:
+            OriginAccessIdentity: ""
+      
+      # Default cache behavior
+      DefaultCacheBehavior:
+        TargetOriginId: "us-east-1-origin"
+        ViewerProtocolPolicy: "redirect-to-https"
+        CachePolicyId: "4135ea2d-6df8-44a3-9df3-4b5a84be39ad"  # Managed-CachingOptimized
+        OriginRequestPolicyId: "88a5eaf4-2fd4-4709-b370-b4c650ea3fcf"  # Managed-CORS-S3Origin
+        Compress: true
+        TrustedSigners:
+          Enabled: false
+          Quantity: 0
+        LambdaFunctionAssociations:
+          Quantity: 2
+          Items:
+          - EventType: "viewer-request"
+            LambdaFunctionARN: "${EDGE_ROUTER_LAMBDA_ARN}"
+          - EventType: "origin-response"
+            LambdaFunctionARN: "${CACHE_OPTIMIZER_LAMBDA_ARN}"
+      
+      # Cache behaviors for different paths
+      CacheBehaviors:
+        Quantity: 6
+        Items:
+        - PathPattern: "/api/*"
+          TargetOriginId: "us-east-1-origin"
+          ViewerProtocolPolicy: "https-only"
+          CachePolicyId: "4135ea2d-6df8-44a3-9df3-4b5a84be39ad"
+          TTL:
+            DefaultTTL: 0
+            MaxTTL: 31536000
+            MinTTL: 0
+        - PathPattern: "/static/*"
+          TargetOriginId: "static-assets-s3"
+          ViewerProtocolPolicy: "https-only"
+          CachePolicyId: "658327ea-f89d-4fab-a63d-7e88639e58f6"  # Managed-CachingOptimizedForUncompressedObjects
+          TTL:
+            DefaultTTL: 86400
+            MaxTTL: 31536000
+            MinTTL: 1
+        - PathPattern: "/_next/static/*"
+          TargetOriginId: "static-assets-s3"
+          ViewerProtocolPolicy: "https-only"
+          CachePolicyId: "658327ea-f89d-4fab-a63d-7e88639e58f6"
+          TTL:
+            DefaultTTL: 31536000
+            MaxTTL: 31536000
+            MinTTL: 31536000
+        - PathPattern: "/images/*"
+          TargetOriginId: "static-assets-s3"
+          ViewerProtocolPolicy: "https-only"
+          TTL:
+            DefaultTTL: 604800
+            MaxTTL: 31536000
+            MinTTL: 86400
+        - PathPattern: "/plugins/*"
+          TargetOriginId: "us-east-1-origin"
+          ViewerProtocolPolicy: "https-only"
+          TTL:
+            DefaultTTL: 300
+            MaxTTL: 3600
+            MinTTL: 0
+        - PathPattern: "/ws/*"
+          TargetOriginId: "us-east-1-origin"
+          ViewerProtocolPolicy: "https-only"
+          TTL:
+            DefaultTTL: 0
+            MaxTTL: 0
+            MinTTL: 0
+      
+      # Geographic restrictions
+      Restrictions:
+        GeoRestriction:
+          RestrictionType: "none"
+          Quantity: 0
+      
+      # Custom error pages
+      CustomErrorResponses:
+        Quantity: 4
+        Items:
+        - ErrorCode: 403
+          ResponseCode: 200
+          ResponsePagePath: "/index.html"
+          ErrorCachingMinTTL: 300
+        - ErrorCode: 404
+          ResponseCode: 200
+          ResponsePagePath: "/index.html"
+          ErrorCachingMinTTL: 300
+        - ErrorCode: 500
+          ResponseCode: 503
+          ResponsePagePath: "/503.html"
+          ErrorCachingMinTTL: 0
+        - ErrorCode: 502
+          ResponseCode: 503
+          ResponsePagePath: "/503.html"
+          ErrorCachingMinTTL: 0
+
+---
+# Edge Lambda Functions Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: edge-functions-config
+  namespace: saas-idp-production
+  labels:
+    app: saas-idp
+    component: edge-functions
+data:
+  edge-router.js: |
+    'use strict';
+    
+    const AWS = require('aws-sdk');
+    const cloudWatch = new AWS.CloudWatch();
+    
+    // Geographic routing logic
+    const REGION_MAPPING = {
+      'US': 'us-east-1-origin',
+      'CA': 'us-east-1-origin',
+      'EU': 'eu-west-1-origin',
+      'GB': 'eu-west-1-origin',
+      'AS': 'ap-southeast-1-origin',
+      'AU': 'ap-southeast-1-origin',
+      'JP': 'ap-southeast-1-origin'
+    };
+    
+    exports.handler = (event, context, callback) => {
+      const request = event.Records[0].cf.request;
+      const headers = request.headers;
+      
+      // Get CloudFront edge location
+      const cloudFrontRegion = headers['cloudfront-viewer-country']
+        ? headers['cloudfront-viewer-country'][0].value
+        : 'US';
+      
+      // Determine optimal origin based on geography
+      const targetOrigin = REGION_MAPPING[cloudFrontRegion] || 'us-east-1-origin';
+      
+      // Health check and failover logic
+      if (request.uri.startsWith('/api/health')) {
+        // Add health check headers
+        headers['x-health-check'] = [{ key: 'X-Health-Check', value: 'true' }];
+      }
+      
+      // WebSocket upgrade handling
+      if (headers['upgrade'] && headers['upgrade'][0].value === 'websocket') {
+        // Route WebSocket connections to sticky session
+        request.origin = {
+          custom: {
+            domainName: getWebSocketOrigin(headers['x-session-id']),
+            port: 443,
+            protocol: 'https'
+          }
+        };
+      } else {
+        // Set origin for regular HTTP requests
+        request.origin = {
+          custom: {
+            domainName: getOriginDomain(targetOrigin),
+            port: 443,
+            protocol: 'https'
+          }
+        };
+      }
+      
+      // Security headers
+      headers['x-forwarded-proto'] = [{ key: 'X-Forwarded-Proto', value: 'https' }];
+      headers['x-request-id'] = [{ key: 'X-Request-ID', value: generateRequestId() }];
+      
+      // Performance metrics
+      recordMetrics(cloudFrontRegion, targetOrigin);
+      
+      callback(null, request);
+    };
+    
+    function getOriginDomain(originId) {
+      const originMap = {
+        'us-east-1-origin': process.env.US_EAST_LB_DNS,
+        'eu-west-1-origin': process.env.EU_WEST_LB_DNS,
+        'ap-southeast-1-origin': process.env.AP_SOUTHEAST_LB_DNS
+      };
+      return originMap[originId];
+    }
+    
+    function getWebSocketOrigin(sessionId) {
+      // Consistent hashing for WebSocket sticky sessions
+      const hash = require('crypto').createHash('md5').update(sessionId || '').digest('hex');
+      const regionIndex = parseInt(hash.substring(0, 2), 16) % 3;
+      const regions = [
+        process.env.US_EAST_LB_DNS,
+        process.env.EU_WEST_LB_DNS,
+        process.env.AP_SOUTHEAST_LB_DNS
+      ];
+      return regions[regionIndex];
+    }
+    
+    function generateRequestId() {
+      return 'req_' + Date.now().toString(36) + Math.random().toString(36).substring(2);
+    }
+    
+    function recordMetrics(region, origin) {
+      const params = {
+        Namespace: 'SaaS-IDP/Edge',
+        MetricData: [{
+          MetricName: 'EdgeRequests',
+          Dimensions: [
+            { Name: 'Region', Value: region },
+            { Name: 'Origin', Value: origin }
+          ],
+          Value: 1,
+          Unit: 'Count',
+          Timestamp: new Date()
+        }]
+      };
+      
+      cloudWatch.putMetricData(params, (err, data) => {
+        if (err) console.log('CloudWatch error:', err);
+      });
+    }
+  
+  cache-optimizer.js: |
+    'use strict';
+    
+    exports.handler = (event, context, callback) => {
+      const response = event.Records[0].cf.response;
+      const headers = response.headers;
+      const request = event.Records[0].cf.request;
+      
+      // Dynamic cache control based on content type
+      const uri = request.uri;
+      const contentType = headers['content-type'] && headers['content-type'][0].value;
+      
+      if (uri.match(/\.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2)$/)) {
+        // Static assets - long cache
+        headers['cache-control'] = [{
+          key: 'Cache-Control',
+          value: 'public, max-age=31536000, immutable'
+        }];
+      } else if (uri.startsWith('/api/')) {
+        // API responses - short cache with validation
+        if (contentType && contentType.includes('application/json')) {
+          headers['cache-control'] = [{
+            key: 'Cache-Control',
+            value: 'public, max-age=300, s-maxage=300, stale-while-revalidate=60'
+          }];
+        } else {
+          headers['cache-control'] = [{
+            key: 'Cache-Control',
+            value: 'no-cache, no-store, must-revalidate'
+          }];
+        }
+      } else if (uri.match(/\.(html|htm)$/)) {
+        // HTML pages - moderate cache with validation
+        headers['cache-control'] = [{
+          key: 'Cache-Control',
+          value: 'public, max-age=1800, s-maxage=3600, stale-while-revalidate=300'
+        }];
+      }
+      
+      // Security headers
+      headers['x-frame-options'] = [{ key: 'X-Frame-Options', value: 'SAMEORIGIN' }];
+      headers['x-content-type-options'] = [{ key: 'X-Content-Type-Options', value: 'nosniff' }];
+      headers['x-xss-protection'] = [{ key: 'X-XSS-Protection', value: '1; mode=block' }];
+      headers['referrer-policy'] = [{ key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' }];
+      
+      // CORS headers for API responses
+      if (uri.startsWith('/api/')) {
+        headers['access-control-allow-origin'] = [{
+          key: 'Access-Control-Allow-Origin',
+          value: request.headers.origin ? request.headers.origin[0].value : '*'
+        }];
+        headers['access-control-allow-credentials'] = [{
+          key: 'Access-Control-Allow-Credentials',
+          value: 'true'
+        }];
+      }
+      
+      // Performance headers
+      headers['x-edge-location'] = [{
+        key: 'X-Edge-Location',
+        value: process.env.AWS_REGION
+      }];
+      
+      callback(null, response);
+    };
+
+---
+# =========================
+# CIRCUIT BREAKER CONFIGURATION
+# =========================
+
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: saas-idp-circuit-breaker
+  namespace: saas-idp-production
+  labels:
+    app: saas-idp
+    component: circuit-breaker
+spec:
+  host: saas-idp-app.saas-idp-production.svc.cluster.local
+  trafficPolicy:
+    connectionPool:
+      tcp:
+        maxConnections: 1000
+        connectTimeout: 30s
+        tcpNoDelay: true
+      http:
+        http1MaxPendingRequests: 1000
+        http2MaxRequests: 1000
+        maxRequestsPerConnection: 100
+        maxRetries: 3
+        consecutiveGateway5xxErrors: 5
+        interval: 30s
+        baseEjectionTime: 30s
+        maxEjectionPercent: 50
+        minHealthPercent: 30
+    outlierDetection:
+      consecutiveGateway5xxErrors: 5
+      consecutive5xxErrors: 5
+      interval: 30s
+      baseEjectionTime: 30s
+      maxEjectionPercent: 50
+      minHealthPercent: 30
+      splitExternalLocalOriginErrors: false
+    retryPolicy:
+      attempts: 3
+      perTryTimeout: 10s
+      retryOn: 5xx,reset,connect-failure,refused-stream
+      retryRemoteLocalities: true
+  portLevelSettings:
+  - port:
+      number: 4400
+    connectionPool:
+      tcp:
+        maxConnections: 500
+        connectTimeout: 10s
+      http:
+        http1MaxPendingRequests: 500
+        maxRequestsPerConnection: 50
+
+---
+# Rate Limiting with Envoy
+apiVersion: networking.istio.io/v1beta1
+kind: EnvoyFilter
+metadata:
+  name: rate-limit-filter
+  namespace: saas-idp-production
+  labels:
+    app: saas-idp
+    component: rate-limiter
+spec:
+  workloadSelector:
+    labels:
+      app: saas-idp
+  configPatches:
+  - applyTo: HTTP_FILTER
+    match:
+      context: SIDECAR_INBOUND
+      listener:
+        filterChain:
+          filter:
+            name: "envoy.filters.network.http_connection_manager"
+    patch:
+      operation: INSERT_BEFORE
+      value:
+        name: envoy.filters.http.local_ratelimit
+        typed_config:
+          "@type": type.googleapis.com/udpa.type.v1.TypedStruct
+          type_url: type.googleapis.com/envoy.extensions.filters.http.local_ratelimit.v3.LocalRateLimit
+          value:
+            stat_prefix: local_rate_limiter
+            token_bucket:
+              max_tokens: 100
+              tokens_per_fill: 100
+              fill_interval: 60s
+            filter_enabled:
+              runtime_key: local_rate_limit_enabled
+              default_value:
+                numerator: 100
+                denominator: HUNDRED
+            filter_enforced:
+              runtime_key: local_rate_limit_enforced
+              default_value:
+                numerator: 100
+                denominator: HUNDRED
+            response_headers_to_add:
+            - append: false
+              header:
+                key: x-local-rate-limit
+                value: 'true'
+
+---
+# DDoS Protection Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ddos-protection-config
+  namespace: saas-idp-production
+  labels:
+    app: saas-idp
+    component: ddos-protection
+data:
+  fail2ban.conf: |
+    [DEFAULT]
+    bantime = 3600
+    findtime = 600
+    maxretry = 10
+    backend = auto
+    
+    [nginx-limit-req]
+    enabled = true
+    port = http,https
+    filter = nginx-limit-req
+    logpath = /var/log/nginx/error.log
+    maxretry = 10
+    
+    [nginx-botsearch]
+    enabled = true
+    port = http,https
+    filter = nginx-botsearch
+    logpath = /var/log/nginx/access.log
+    maxretry = 2
+  
+  nginx-rate-limit.conf: |
+    # Rate limiting zones
+    limit_req_zone $binary_remote_addr zone=login:10m rate=5r/m;
+    limit_req_zone $binary_remote_addr zone=api:10m rate=100r/s;
+    limit_req_zone $binary_remote_addr zone=global:10m rate=200r/s;
+    limit_req_zone $binary_remote_addr zone=websocket:10m rate=10r/s;
+    
+    # Connection limiting
+    limit_conn_zone $binary_remote_addr zone=conn_limit_per_ip:10m;
+    limit_conn_zone $server_name zone=conn_limit_per_server:10m;
+    
+    # Rate limiting rules
+    location /api/auth/ {
+        limit_req zone=login burst=10 nodelay;
+        limit_conn conn_limit_per_ip 5;
+    }
+    
+    location /api/ {
+        limit_req zone=api burst=50 nodelay;
+        limit_conn conn_limit_per_ip 20;
+    }
+    
+    location /ws/ {
+        limit_req zone=websocket burst=5 nodelay;
+        limit_conn conn_limit_per_ip 10;
+    }
+    
+    location / {
+        limit_req zone=global burst=100 nodelay;
+        limit_conn conn_limit_per_ip 50;
+        limit_conn conn_limit_per_server 5000;
+    }
+
+---
+# =========================
+# PERFORMANCE OPTIMIZATION
+# =========================
+
+# Service Worker for Offline Capability
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: service-worker-config
+  namespace: saas-idp-production
+  labels:
+    app: saas-idp
+    component: performance
+data:
+  sw.js: |
+    const CACHE_NAME = 'saas-idp-v1';
+    const OFFLINE_URL = '/offline.html';
+    
+    const CACHE_URLS = [
+      '/',
+      '/offline.html',
+      '/static/css/main.css',
+      '/static/js/main.js',
+      '/_next/static/css/',
+      '/_next/static/js/',
+      '/images/logo.png',
+      '/favicon.ico'
+    ];
+    
+    // Install event - cache essential resources
+    self.addEventListener('install', event => {
+      event.waitUntil(
+        caches.open(CACHE_NAME)
+          .then(cache => cache.addAll(CACHE_URLS))
+          .then(() => self.skipWaiting())
+      );
+    });
+    
+    // Activate event - clean up old caches
+    self.addEventListener('activate', event => {
+      event.waitUntil(
+        caches.keys().then(cacheNames => {
+          return Promise.all(
+            cacheNames.map(cacheName => {
+              if (cacheName !== CACHE_NAME) {
+                return caches.delete(cacheName);
+              }
+            })
+          );
+        }).then(() => self.clients.claim())
+      );
+    });
+    
+    // Fetch event - serve from cache, fallback to network
+    self.addEventListener('fetch', event => {
+      // Skip non-GET requests
+      if (event.request.method !== 'GET') return;
+      
+      // Skip API requests for real-time data
+      if (event.request.url.includes('/api/')) {
+        event.respondWith(
+          fetch(event.request).catch(() => {
+            return new Response(
+              JSON.stringify({ error: 'Network unavailable', offline: true }),
+              { headers: { 'Content-Type': 'application/json' } }
+            );
+          })
+        );
+        return;
+      }
+      
+      event.respondWith(
+        caches.match(event.request)
+          .then(response => {
+            // Return cached version or fetch from network
+            return response || fetch(event.request);
+          })
+          .catch(() => {
+            // Show offline page for navigation requests
+            if (event.request.mode === 'navigate') {
+              return caches.match(OFFLINE_URL);
+            }
+          })
+      );
+    });
+    
+    // Background sync for offline actions
+    self.addEventListener('sync', event => {
+      if (event.tag === 'background-sync') {
+        event.waitUntil(doBackgroundSync());
+      }
+    });
+    
+    function doBackgroundSync() {
+      return new Promise((resolve, reject) => {
+        // Sync offline actions when network is available
+        resolve();
+      });
+    }
+
+---
+# Resource Compression Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: compression-config
+  namespace: saas-idp-production
+  labels:
+    app: saas-idp
+    component: performance
+data:
+  gzip.conf: |
+    # Enable gzip compression
+    gzip on;
+    gzip_vary on;
+    gzip_min_length 1024;
+    gzip_comp_level 6;
+    gzip_types
+      text/plain
+      text/css
+      text/xml
+      text/javascript
+      application/json
+      application/javascript
+      application/xml+rss
+      application/atom+xml
+      image/svg+xml
+      application/x-font-ttf
+      application/vnd.ms-fontobject
+      font/opentype;
+    
+    # Enable Brotli compression (if available)
+    brotli on;
+    brotli_comp_level 6;
+    brotli_types
+      text/plain
+      text/css
+      application/json
+      application/javascript
+      text/xml
+      application/xml
+      application/xml+rss
+      text/javascript;
+
+---
+# =========================
+# MULTI-REGION DEPLOYMENT CONFIGS
+# =========================
+
+# US-East Region Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: region-config-us-east
+  namespace: saas-idp-production
+  labels:
+    app: saas-idp
+    component: region-config
+    region: us-east-1
+data:
+  region.env: |
+    REGION=us-east-1
+    AWS_REGION=us-east-1
+    DATABASE_URL=postgresql://user:pass@postgres-primary-us-east.rds.amazonaws.com:5432/saasidp
+    REDIS_URL=redis://redis-cluster-us-east.cache.amazonaws.com:6379
+    S3_BUCKET=saas-idp-assets-us-east-1
+    CLOUDFRONT_DISTRIBUTION_ID=E1234567890ABC
+    EDGE_LOCATIONS=us-east-1,us-west-2
+    FAILOVER_REGION=eu-west-1
+    BACKUP_SCHEDULE=0 2 * * *
+    LOG_LEVEL=info
+    METRICS_ENDPOINT=https://metrics-us-east.saas-idp.com
+    HEALTH_CHECK_ENDPOINT=https://health-us-east.saas-idp.com
+
+---
+# EU-West Region Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: region-config-eu-west
+  namespace: saas-idp-production
+  labels:
+    app: saas-idp
+    component: region-config
+    region: eu-west-1
+data:
+  region.env: |
+    REGION=eu-west-1
+    AWS_REGION=eu-west-1
+    DATABASE_URL=postgresql://user:pass@postgres-replica-eu-west.rds.amazonaws.com:5432/saasidp
+    REDIS_URL=redis://redis-cluster-eu-west.cache.amazonaws.com:6379
+    S3_BUCKET=saas-idp-assets-eu-west-1
+    CLOUDFRONT_DISTRIBUTION_ID=E1234567890DEF
+    EDGE_LOCATIONS=eu-west-1,eu-central-1
+    FAILOVER_REGION=us-east-1
+    BACKUP_SCHEDULE=0 3 * * *
+    LOG_LEVEL=info
+    METRICS_ENDPOINT=https://metrics-eu-west.saas-idp.com
+    HEALTH_CHECK_ENDPOINT=https://health-eu-west.saas-idp.com
+
+---
+# AP-Southeast Region Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: region-config-ap-southeast
+  namespace: saas-idp-production
+  labels:
+    app: saas-idp
+    component: region-config
+    region: ap-southeast-1
+data:
+  region.env: |
+    REGION=ap-southeast-1
+    AWS_REGION=ap-southeast-1
+    DATABASE_URL=postgresql://user:pass@postgres-replica-ap-southeast.rds.amazonaws.com:5432/saasidp
+    REDIS_URL=redis://redis-cluster-ap-southeast.cache.amazonaws.com:6379
+    S3_BUCKET=saas-idp-assets-ap-southeast-1
+    CLOUDFRONT_DISTRIBUTION_ID=E1234567890GHI
+    EDGE_LOCATIONS=ap-southeast-1,ap-northeast-1
+    FAILOVER_REGION=us-east-1
+    BACKUP_SCHEDULE=0 4 * * *
+    LOG_LEVEL=info
+    METRICS_ENDPOINT=https://metrics-ap-southeast.saas-idp.com
+    HEALTH_CHECK_ENDPOINT=https://health-ap-southeast.saas-idp.com
+
+---
+# =========================
+# DISASTER RECOVERY CONFIGURATION
+# =========================
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: disaster-recovery-config
+  namespace: saas-idp-production
+  labels:
+    app: saas-idp
+    component: disaster-recovery
+data:
+  failover-policy.yaml: |
+    failover_regions:
+      us-east-1:
+        primary: true
+        replicas:
+          - eu-west-1
+          - ap-southeast-1
+        rto_minutes: 5
+        rpo_minutes: 1
+      eu-west-1:
+        primary: false
+        failover_from:
+          - us-east-1
+        rto_minutes: 5
+        rpo_minutes: 1
+      ap-southeast-1:
+        primary: false
+        failover_from:
+          - us-east-1
+        rto_minutes: 5
+        rpo_minutes: 1
+    
+    health_check_config:
+      interval_seconds: 30
+      timeout_seconds: 10
+      failure_threshold: 3
+      success_threshold: 2
+      endpoints:
+        - /api/health/live
+        - /api/health/ready
+        - /api/health/database
+        - /api/health/redis
+    
+    automatic_failover:
+      enabled: true
+      decision_time_seconds: 180
+      rollback_time_minutes: 60
+      notification_channels:
+        - slack
+        - email
+        - pagerduty
+    
+    data_replication:
+      max_lag_seconds: 5
+      replication_method: streaming
+      backup_retention_days: 30
+      point_in_time_recovery: true

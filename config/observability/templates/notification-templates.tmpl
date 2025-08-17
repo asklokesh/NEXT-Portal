@@ -1,0 +1,397 @@
+{{/* Notification Templates for SaaS IDP AlertManager */}}
+
+{{/* P0 CRITICAL EMAIL TEMPLATES */}}
+{{ define "email.p0.body" }}
+CRITICAL INCIDENT - IMMEDIATE ACTION REQUIRED
+
+{{ range .Alerts }}
+🚨 PRIORITY: P0 - CRITICAL
+📅 START TIME: {{ .StartsAt.Format "2006-01-02 15:04:05 UTC" }}
+⚡ ALERT: {{ .Annotations.summary }}
+📝 DESCRIPTION: {{ .Annotations.description }}
+
+🏷️ SERVICE: {{ .Labels.service }}
+🔧 COMPONENT: {{ .Labels.component }}
+🎯 IMPACT: {{ .Labels.impact }}
+{{ if .Annotations.estimated_users_affected }}👥 USERS AFFECTED: {{ .Annotations.estimated_users_affected }}{{ end }}
+{{ if .Annotations.revenue_impact_per_minute }}💰 REVENUE IMPACT: {{ .Annotations.revenue_impact_per_minute }}/minute{{ end }}
+{{ if .Labels.sla_breach }}🚫 SLA BREACH: {{ .Labels.sla_breach }}{{ end }}
+
+📖 RUNBOOK: {{ .Annotations.runbook_url }}
+📊 DASHBOARD: https://grafana.saas-idp.com/d/executive-overview
+🔗 STATUS PAGE: https://status.saas-idp.com
+💬 WAR ROOM: https://meet.google.com/war-room-p0
+
+{{ end }}
+
+⏰ RESPONSE TIME REQUIRED: < 5 minutes
+🚨 ESCALATION: If not acknowledged in 5 minutes, will auto-escalate to executives
+
+This is an automated alert from SaaS IDP Monitoring System.
+{{ end }}
+
+{{ define "email.p0.html" }}
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 0; padding: 20px; background-color: #f5f5f5; }
+        .container { background-color: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .critical { background-color: #dc3545; color: white; padding: 15px; border-radius: 5px; margin-bottom: 20px; }
+        .alert-box { border-left: 4px solid #dc3545; padding: 10px; margin: 10px 0; background-color: #f8f9fa; }
+        .detail { margin: 10px 0; }
+        .label { font-weight: bold; color: #333; }
+        .value { color: #666; }
+        .actions { background-color: #e9ecef; padding: 15px; border-radius: 5px; margin-top: 20px; }
+        .btn { display: inline-block; padding: 8px 16px; margin: 5px; text-decoration: none; border-radius: 4px; }
+        .btn-primary { background-color: #007bff; color: white; }
+        .btn-danger { background-color: #dc3545; color: white; }
+        .btn-warning { background-color: #ffc107; color: black; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="critical">
+            <h1>🚨 CRITICAL INCIDENT - P0</h1>
+            <p>IMMEDIATE ACTION REQUIRED</p>
+        </div>
+        
+        {{ range .Alerts }}
+        <div class="alert-box">
+            <h2>{{ .Annotations.summary }}</h2>
+            <div class="detail">
+                <span class="label">Start Time:</span> 
+                <span class="value">{{ .StartsAt.Format "2006-01-02 15:04:05 UTC" }}</span>
+            </div>
+            <div class="detail">
+                <span class="label">Description:</span> 
+                <span class="value">{{ .Annotations.description }}</span>
+            </div>
+            <div class="detail">
+                <span class="label">Service:</span> 
+                <span class="value">{{ .Labels.service }}</span>
+            </div>
+            <div class="detail">
+                <span class="label">Component:</span> 
+                <span class="value">{{ .Labels.component }}</span>
+            </div>
+            <div class="detail">
+                <span class="label">Impact:</span> 
+                <span class="value">{{ .Labels.impact }}</span>
+            </div>
+            {{ if .Annotations.estimated_users_affected }}
+            <div class="detail">
+                <span class="label">Users Affected:</span> 
+                <span class="value">{{ .Annotations.estimated_users_affected }}</span>
+            </div>
+            {{ end }}
+            {{ if .Annotations.revenue_impact_per_minute }}
+            <div class="detail">
+                <span class="label">Revenue Impact:</span> 
+                <span class="value">{{ .Annotations.revenue_impact_per_minute }}/minute</span>
+            </div>
+            {{ end }}
+        </div>
+        {{ end }}
+        
+        <div class="actions">
+            <h3>Immediate Actions Required:</h3>
+            <a href="https://grafana.saas-idp.com/d/executive-overview" class="btn btn-primary">📊 View Dashboard</a>
+            <a href="https://status.saas-idp.com/admin" class="btn btn-danger">🚨 Update Status Page</a>
+            <a href="https://meet.google.com/war-room-p0" class="btn btn-warning">💬 Join War Room</a>
+            {{ range .Alerts }}
+            <a href="{{ .Annotations.runbook_url }}" class="btn btn-primary">📖 View Runbook</a>
+            {{ end }}
+        </div>
+        
+        <p><strong>Response Time Required:</strong> &lt; 5 minutes</p>
+        <p><small>This is an automated alert from SaaS IDP Monitoring System.</small></p>
+    </div>
+</body>
+</html>
+{{ end }}
+
+{{/* EXECUTIVE EMAIL TEMPLATES */}}
+{{ define "email.executive.body" }}
+EXECUTIVE ALERT - CRITICAL PLATFORM INCIDENT
+
+{{ range .Alerts }}
+🔥 CRITICAL INCIDENT IN PROGRESS
+
+⏰ STARTED: {{ .StartsAt.Format "2006-01-02 15:04:05 UTC" }}
+🚨 ISSUE: {{ .Annotations.summary }}
+📄 DETAILS: {{ .Annotations.description }}
+
+💼 BUSINESS IMPACT:
+{{ if .Annotations.estimated_users_affected }}   • Users Affected: {{ .Annotations.estimated_users_affected }}{{ end }}
+{{ if .Annotations.revenue_impact_per_minute }}   • Revenue at Risk: {{ .Annotations.revenue_impact_per_minute }}/minute{{ end }}
+   • Service: {{ .Labels.service }}
+   • Component: {{ .Labels.component }}
+
+{{ end }}
+
+🏃‍♂️ RESPONSE STATUS:
+   • Engineering team has been paged
+   • War room is active: https://meet.google.com/war-room-p0
+   • Status page: https://status.saas-idp.com
+   • Live dashboard: https://grafana.saas-idp.com/d/executive-overview
+
+📞 NEXT UPDATE: In 15 minutes or upon resolution
+
+This incident requires immediate attention from the engineering team.
+{{ end }}
+
+{{ define "email.executive.html" }}
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 0; padding: 20px; background-color: #f5f5f5; }
+        .container { background-color: white; padding: 30px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        .executive-header { background: linear-gradient(135deg, #dc3545 0%, #c82333 100%); color: white; padding: 20px; border-radius: 5px; margin-bottom: 25px; text-align: center; }
+        .impact-section { background-color: #fff3cd; border: 1px solid #ffeaa7; padding: 15px; border-radius: 5px; margin: 15px 0; }
+        .status-section { background-color: #d1ecf1; border: 1px solid #bee5eb; padding: 15px; border-radius: 5px; margin: 15px 0; }
+        .metric { display: inline-block; margin: 10px 20px 10px 0; }
+        .metric-label { font-weight: bold; color: #333; }
+        .metric-value { color: #dc3545; font-size: 1.2em; }
+        .actions { text-align: center; margin: 25px 0; }
+        .btn { display: inline-block; padding: 12px 24px; margin: 8px; text-decoration: none; border-radius: 5px; font-weight: bold; }
+        .btn-primary { background-color: #007bff; color: white; }
+        .btn-danger { background-color: #dc3545; color: white; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="executive-header">
+            <h1>🔥 CRITICAL PLATFORM INCIDENT</h1>
+            <p>Executive Alert - Immediate Attention Required</p>
+        </div>
+        
+        {{ range .Alerts }}
+        <h2>{{ .Annotations.summary }}</h2>
+        <p><strong>Started:</strong> {{ .StartsAt.Format "2006-01-02 15:04:05 UTC" }}</p>
+        <p>{{ .Annotations.description }}</p>
+        
+        <div class="impact-section">
+            <h3>💼 Business Impact</h3>
+            {{ if .Annotations.estimated_users_affected }}
+            <div class="metric">
+                <div class="metric-label">Users Affected:</div>
+                <div class="metric-value">{{ .Annotations.estimated_users_affected }}</div>
+            </div>
+            {{ end }}
+            {{ if .Annotations.revenue_impact_per_minute }}
+            <div class="metric">
+                <div class="metric-label">Revenue at Risk:</div>
+                <div class="metric-value">{{ .Annotations.revenue_impact_per_minute }}/minute</div>
+            </div>
+            {{ end }}
+            <div class="metric">
+                <div class="metric-label">Service:</div>
+                <div class="metric-value">{{ .Labels.service }}</div>
+            </div>
+        </div>
+        {{ end }}
+        
+        <div class="status-section">
+            <h3>🏃‍♂️ Response Status</h3>
+            <ul>
+                <li>✅ Engineering team has been paged immediately</li>
+                <li>🚨 War room is active and engineers are responding</li>
+                <li>📢 Status page will be updated within 5 minutes</li>
+                <li>📊 Live monitoring dashboard is available</li>
+            </ul>
+        </div>
+        
+        <div class="actions">
+            <a href="https://status.saas-idp.com" class="btn btn-danger">📢 View Status Page</a>
+            <a href="https://grafana.saas-idp.com/d/executive-overview" class="btn btn-primary">📊 Live Dashboard</a>
+            <a href="https://meet.google.com/war-room-p0" class="btn btn-primary">💬 War Room</a>
+        </div>
+        
+        <p><strong>Next Update:</strong> In 15 minutes or upon resolution</p>
+        <p><small>This incident is being actively managed by our engineering team.</small></p>
+    </div>
+</body>
+</html>
+{{ end }}
+
+{{/* P1 EMAIL TEMPLATES */}}
+{{ define "email.p1.body" }}
+HIGH PRIORITY ALERT - P1
+
+{{ range .Alerts }}
+⚠️ PRIORITY: P1 - HIGH
+📅 START TIME: {{ .StartsAt.Format "2006-01-02 15:04:05 UTC" }}
+⚡ ALERT: {{ .Annotations.summary }}
+📝 DESCRIPTION: {{ .Annotations.description }}
+
+🏷️ SERVICE: {{ .Labels.service }}
+🔧 COMPONENT: {{ .Labels.component }}
+🎯 IMPACT: {{ .Labels.impact }}
+{{ if .Labels.sla_breach }}🚫 SLA BREACH: {{ .Labels.sla_breach }}{{ end }}
+
+📖 RUNBOOK: {{ .Annotations.runbook_url }}
+📊 DASHBOARD: https://grafana.saas-idp.com/d/technical-operations
+
+{{ end }}
+
+⏰ RESPONSE TIME TARGET: < 15 minutes
+{{ end }}
+
+{{/* P2 EMAIL TEMPLATES */}}
+{{ define "email.p2.body" }}
+MEDIUM PRIORITY ALERT - P2
+
+{{ range .Alerts }}
+ℹ️ PRIORITY: P2 - MEDIUM
+📅 START TIME: {{ .StartsAt.Format "2006-01-02 15:04:05 UTC" }}
+⚡ ALERT: {{ .Annotations.summary }}
+📝 DESCRIPTION: {{ .Annotations.description }}
+
+🏷️ SERVICE: {{ .Labels.service }}
+🔧 COMPONENT: {{ .Labels.component }}
+🎯 IMPACT: {{ .Labels.impact }}
+
+📖 RUNBOOK: {{ .Annotations.runbook_url }}
+
+{{ end }}
+
+⏰ RESPONSE TIME TARGET: < 1 hour
+{{ end }}
+
+{{/* SECURITY EMAIL TEMPLATES */}}
+{{ define "email.security.body" }}
+SECURITY ALERT
+
+{{ range .Alerts }}
+🔐 SECURITY ALERT
+📅 TIME: {{ .StartsAt.Format "2006-01-02 15:04:05 UTC" }}
+🚨 ALERT: {{ .Annotations.summary }}
+📝 DESCRIPTION: {{ .Annotations.description }}
+
+🔍 SECURITY CONTEXT:
+{{ if .Labels.attack_type }}   • Attack Type: {{ .Labels.attack_type }}{{ end }}
+{{ if .Labels.ip_address }}   • Source IP: {{ .Labels.ip_address }}{{ end }}
+{{ if .Labels.user_id }}   • User ID: {{ .Labels.user_id }}{{ end }}
+   • Service: {{ .Labels.service }}
+   • Component: {{ .Labels.component }}
+
+📖 SECURITY RUNBOOK: {{ .Annotations.runbook_url }}
+
+{{ end }}
+
+🚨 IMMEDIATE INVESTIGATION REQUIRED
+{{ end }}
+
+{{/* BUSINESS EMAIL TEMPLATES */}}
+{{ define "email.business.body" }}
+BUSINESS METRICS ALERT
+
+{{ range .Alerts }}
+📊 BUSINESS ALERT
+📅 TIME: {{ .StartsAt.Format "2006-01-02 15:04:05 UTC" }}
+📈 METRIC: {{ .Annotations.summary }}
+📝 DESCRIPTION: {{ .Annotations.description }}
+
+💼 BUSINESS IMPACT:
+{{ if .Annotations.estimated_users_affected }}   • Users Affected: {{ .Annotations.estimated_users_affected }}{{ end }}
+{{ if .Labels.tenant_count }}   • Tenants Affected: {{ .Labels.tenant_count }}{{ end }}
+   • Service: {{ .Labels.service }}
+   • Component: {{ .Labels.component }}
+
+📖 RUNBOOK: {{ .Annotations.runbook_url }}
+
+{{ end }}
+
+This alert indicates a potential impact to business metrics that may require attention.
+{{ end }}
+
+{{/* SLACK TEMPLATES */}}
+{{ define "slack.p0.text" }}
+🚨 *CRITICAL INCIDENT - P0*
+
+{{ range .Alerts }}
+*Alert:* {{ .Annotations.summary }}
+*Started:* {{ .StartsAt.Format "2006-01-02 15:04:05 UTC" }}
+*Service:* {{ .Labels.service }}
+*Component:* {{ .Labels.component }}
+*Impact:* {{ .Labels.impact }}
+
+{{ if .Annotations.estimated_users_affected }}*Users Affected:* {{ .Annotations.estimated_users_affected }}{{ end }}
+{{ if .Annotations.revenue_impact_per_minute }}*Revenue Impact:* {{ .Annotations.revenue_impact_per_minute }}/minute{{ end }}
+
+*Runbook:* <{{ .Annotations.runbook_url }}|View Runbook>
+{{ end }}
+
+<!channel> *IMMEDIATE ACTION REQUIRED*
+Response time target: < 5 minutes
+{{ end }}
+
+{{ define "slack.executive.text" }}
+🔥 *CRITICAL PLATFORM INCIDENT*
+
+{{ range .Alerts }}
+*Issue:* {{ .Annotations.summary }}
+*Started:* {{ .StartsAt.Format "15:04:05 UTC" }}
+{{ if .Annotations.estimated_users_affected }}*Users Affected:* {{ .Annotations.estimated_users_affected }}{{ end }}
+{{ if .Annotations.revenue_impact_per_minute }}*Revenue Impact:* {{ .Annotations.revenue_impact_per_minute }}/minute{{ end }}
+
+Engineering team has been paged and is responding.
+{{ end }}
+
+Status Page: <https://status.saas-idp.com|View Status>
+War Room: <https://meet.google.com/war-room-p0|Join War Room>
+{{ end }}
+
+{{ define "slack.p1.text" }}
+⚠️ *HIGH PRIORITY ALERT - P1*
+
+{{ range .Alerts }}
+*Alert:* {{ .Annotations.summary }}
+*Started:* {{ .StartsAt.Format "2006-01-02 15:04:05 UTC" }}
+*Service:* {{ .Labels.service }}
+*Component:* {{ .Labels.component }}
+*Impact:* {{ .Labels.impact }}
+
+*Runbook:* <{{ .Annotations.runbook_url }}|View Runbook>
+{{ end }}
+
+Response time target: < 15 minutes
+{{ end }}
+
+{{/* PAGERDUTY TEMPLATES */}}
+{{ define "pagerduty.default.description" }}
+{{ range .Alerts }}{{ .Annotations.summary }} - {{ .Labels.service }}/{{ .Labels.component }}{{ end }}
+{{ end }}
+
+{{/* RESOLVED TEMPLATES */}}
+{{ define "email.resolved.body" }}
+✅ RESOLVED: {{ .GroupLabels.alertname }}
+
+{{ range .Alerts }}
+✅ RESOLUTION CONFIRMED
+📅 RESOLVED AT: {{ .EndsAt.Format "2006-01-02 15:04:05 UTC" }}
+⏱️ DURATION: {{ .EndsAt.Sub .StartsAt }}
+⚡ ORIGINAL ALERT: {{ .Annotations.summary }}
+
+🏷️ SERVICE: {{ .Labels.service }}
+🔧 COMPONENT: {{ .Labels.component }}
+
+{{ end }}
+
+The issue has been resolved and services are operating normally.
+{{ end }}
+
+{{ define "slack.resolved.text" }}
+✅ *RESOLVED*
+
+{{ range .Alerts }}
+*Alert:* {{ .Annotations.summary }}
+*Resolved:* {{ .EndsAt.Format "2006-01-02 15:04:05 UTC" }}
+*Duration:* {{ .EndsAt.Sub .StartsAt }}
+*Service:* {{ .Labels.service }}
+{{ end }}
+
+All services are now operating normally.
+{{ end }}

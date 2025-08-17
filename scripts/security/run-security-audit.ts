@@ -1,0 +1,253 @@
+#!/usr/bin/env tsx
+
+/**
+ * Enterprise Security Audit Script
+ * Comprehensive security assessment for production deployment
+ */
+
+import SecurityAuditor from '../../src/lib/security/SecurityAuditor';
+import SecurityReportGenerator from '../../src/lib/security/SecurityReportGenerator';
+import * as path from 'path';
+import * as fs from 'fs/promises';
+
+interface AuditOptions {
+  outputDir?: string;
+  format?: 'html' | 'markdown' | 'both';
+  verbose?: boolean;
+  failOnCritical?: boolean;
+  includeCompliance?: boolean;
+}
+
+class SecurityAuditRunner {
+  private options: Required<AuditOptions>;
+
+  constructor(options: AuditOptions = {}) {
+    this.options = {
+      outputDir: options.outputDir || './security-reports',
+      format: options.format || 'both',
+      verbose: options.verbose || false,
+      failOnCritical: options.failOnCritical || true,
+      includeCompliance: options.includeCompliance || true
+    };
+  }
+
+  async run(): Promise<number> {
+    console.log('🚀 Starting Enterprise Security Audit...');
+    console.log('=====================================');
+
+    try {
+      // Initialize security auditor
+      const auditor = new SecurityAuditor();
+      
+      // Run comprehensive audit
+      console.log('🔍 Running security assessment...');
+      const auditResult = await auditor.runComprehensiveAudit();
+      
+      // Display results summary
+      this.displaySummary(auditResult);
+      
+      // Generate reports
+      console.log('\n📄 Generating security reports...');
+      const reportGenerator = new SecurityReportGenerator(auditResult);
+      
+      if (this.options.format === 'both' || this.options.format === 'html' || this.options.format === 'markdown') {
+        const reports = await reportGenerator.generateComprehensiveReport();
+        
+        // Save reports
+        const savedReports = await reportGenerator.saveReports(this.options.outputDir);
+        console.log(`✅ Reports saved to:`);
+        console.log(`   HTML: ${savedReports.htmlPath}`);
+        console.log(`   Markdown: ${savedReports.markdownPath}`);
+        
+        // Save raw audit data
+        const rawDataPath = path.join(this.options.outputDir, `audit-data-${new Date().toISOString().split('T')[0]}.json`);
+        await fs.writeFile(rawDataPath, JSON.stringify(auditResult, null, 2), 'utf8');
+        console.log(`   Raw Data: ${rawDataPath}`);
+      }
+      
+      // Display detailed findings if verbose
+      if (this.options.verbose) {
+        this.displayDetailedFindings(auditResult);
+      }
+      
+      // Check for critical vulnerabilities
+      if (this.options.failOnCritical && auditResult.metrics.criticalCount > 0) {
+        console.log('\n❌ CRITICAL VULNERABILITIES FOUND');
+        console.log('Deployment should be blocked until critical issues are resolved.');
+        return 1; // Exit with error code
+      }
+      
+      // Display compliance status
+      if (this.options.includeCompliance) {
+        this.displayComplianceStatus(auditResult);
+      }
+      
+      console.log('\n✅ Security audit completed successfully');
+      return 0; // Success
+      
+    } catch (error) {
+      console.error('❌ Security audit failed:', error);
+      return 1; // Exit with error code
+    }
+  }
+
+  private displaySummary(auditResult: any): void {
+    const { metrics, overallRisk } = auditResult;
+    
+    console.log(`\n📊 Security Assessment Summary`);
+    console.log(`===============================`);
+    console.log(`Overall Risk Level: ${this.colorizeRisk(overallRisk)}`);
+    console.log(`Total Vulnerabilities: ${metrics.totalVulnerabilities}`);
+    console.log(`Critical: ${this.colorize(metrics.criticalCount, 'red')}`);
+    console.log(`High: ${this.colorize(metrics.highCount, 'yellow')}`);
+    console.log(`Medium: ${this.colorize(metrics.mediumCount, 'blue')}`);
+    console.log(`Low: ${this.colorize(metrics.lowCount, 'green')}`);
+    console.log(`Remediation Score: ${this.colorizeScore(metrics.remediationScore)}%`);
+  }
+
+  private displayDetailedFindings(auditResult: any): void {
+    console.log(`\n🔍 Detailed Security Findings`);
+    console.log(`=============================`);
+    
+    const criticalAndHigh = auditResult.vulnerabilities.filter(
+      (v: any) => v.severity === 'critical' || v.severity === 'high'
+    );
+    
+    if (criticalAndHigh.length > 0) {
+      console.log(`\n⚠️  Critical & High Severity Issues:`);
+      criticalAndHigh.forEach((vuln: any, index: number) => {
+        console.log(`\n${index + 1}. ${vuln.title}`);
+        console.log(`   Severity: ${this.colorizeRisk(vuln.severity)}`);
+        console.log(`   Category: ${vuln.category}`);
+        console.log(`   Impact: ${vuln.impact}`);
+        console.log(`   Remediation: ${vuln.remediation}`);
+        if (vuln.cwe) console.log(`   CWE: ${vuln.cwe}`);
+      });
+    }
+    
+    // Group vulnerabilities by category
+    const byCategory = new Map();
+    auditResult.vulnerabilities.forEach((vuln: any) => {
+      if (!byCategory.has(vuln.category)) {
+        byCategory.set(vuln.category, []);
+      }
+      byCategory.get(vuln.category).push(vuln);
+    });
+    
+    console.log(`\n📋 Vulnerabilities by Category:`);
+    byCategory.forEach((vulns, category) => {
+      const severityCounts = vulns.reduce((acc: any, v: any) => {
+        acc[v.severity] = (acc[v.severity] || 0) + 1;
+        return acc;
+      }, {});
+      
+      console.log(`\n${category}: ${vulns.length} issues`);
+      Object.entries(severityCounts).forEach(([severity, count]) => {
+        console.log(`   ${severity}: ${count}`);
+      });
+    });
+  }
+
+  private displayComplianceStatus(auditResult: any): void {
+    console.log(`\n🏛️  Compliance Status`);
+    console.log(`====================`);
+    
+    const { complianceStatus } = auditResult;
+    Object.entries(complianceStatus).forEach(([standard, status]) => {
+      const statusText = status ? '✅ COMPLIANT' : '❌ NON-COMPLIANT';
+      const color = status ? 'green' : 'red';
+      console.log(`${standard.toUpperCase()}: ${this.colorize(statusText, color)}`);
+    });
+    
+    const compliantCount = Object.values(complianceStatus).filter(Boolean).length;
+    const totalCount = Object.keys(complianceStatus).length;
+    console.log(`\nOverall: ${compliantCount}/${totalCount} standards met`);
+  }
+
+  private colorize(text: string | number, color: 'red' | 'yellow' | 'green' | 'blue'): string {
+    const colors = {
+      red: '\x1b[31m',
+      yellow: '\x1b[33m',
+      green: '\x1b[32m',
+      blue: '\x1b[34m'
+    };
+    const reset = '\x1b[0m';
+    return `${colors[color]}${text}${reset}`;
+  }
+
+  private colorizeRisk(risk: string): string {
+    const riskColors = {
+      critical: 'red',
+      high: 'yellow', 
+      medium: 'blue',
+      low: 'green'
+    } as const;
+    
+    return this.colorize(risk.toUpperCase(), riskColors[risk.toLowerCase() as keyof typeof riskColors] || 'blue');
+  }
+
+  private colorizeScore(score: number): string {
+    if (score >= 90) return this.colorize(score, 'green');
+    if (score >= 70) return this.colorize(score, 'blue');
+    if (score >= 50) return this.colorize(score, 'yellow');
+    return this.colorize(score, 'red');
+  }
+}
+
+// CLI interface
+async function main() {
+  const args = process.argv.slice(2);
+  
+  const options: AuditOptions = {
+    outputDir: getArgValue(args, '--output', './security-reports'),
+    format: getArgValue(args, '--format', 'both') as any,
+    verbose: args.includes('--verbose') || args.includes('-v'),
+    failOnCritical: !args.includes('--no-fail-on-critical'),
+    includeCompliance: !args.includes('--no-compliance')
+  };
+
+  if (args.includes('--help') || args.includes('-h')) {
+    displayHelp();
+    process.exit(0);
+  }
+
+  const runner = new SecurityAuditRunner(options);
+  const exitCode = await runner.run();
+  process.exit(exitCode);
+}
+
+function getArgValue(args: string[], flag: string, defaultValue: string): string {
+  const index = args.indexOf(flag);
+  if (index !== -1 && index + 1 < args.length) {
+    return args[index + 1];
+  }
+  return defaultValue;
+}
+
+function displayHelp(): void {
+  console.log(`
+Enterprise Security Audit Tool
+
+Usage: tsx scripts/security/run-security-audit.ts [options]
+
+Options:
+  --output <dir>          Output directory for reports (default: ./security-reports)
+  --format <format>       Report format: html, markdown, both (default: both)
+  --verbose, -v           Display detailed findings
+  --no-fail-on-critical  Don't exit with error code on critical vulnerabilities
+  --no-compliance         Skip compliance status checks
+  --help, -h              Show this help message
+
+Examples:
+  tsx scripts/security/run-security-audit.ts
+  tsx scripts/security/run-security-audit.ts --verbose --output ./reports
+  tsx scripts/security/run-security-audit.ts --format html --no-fail-on-critical
+`);
+}
+
+// Run if called directly
+if (require.main === module) {
+  main().catch(console.error);
+}
+
+export default SecurityAuditRunner;

@@ -1,0 +1,1358 @@
+{
+  "plugins": [
+    {
+      "name": "datadog",
+      "title": "Datadog",
+      "category": "monitoring",
+      "vendor": "Datadog",
+      "id": "datadog",
+      "version": "2.6.0",
+      "state": "installed",
+      "installedAt": "2025-07-21T14:04:35.470Z",
+      "configuredBy": "platform-team",
+      "health": "healthy",
+      "usage": {
+        "activeUsers": 338,
+        "apiCalls": 31814,
+        "lastUsed": "2025-07-21T14:04:35.471Z"
+      },
+      "cost": {
+        "monthly": 4755,
+        "annual": 26383,
+        "users": 33
+      },
+      "features": [
+        "Real-time metrics",
+        "Custom dashboards",
+        "Alert management",
+        "Log aggregation"
+      ],
+      "integrations": [
+        "Metrics",
+        "Logs",
+        "APM",
+        "Synthetics"
+      ],
+      "benefits": "Reduce MTTR by 60% with real-time observability"
+    },
+    {
+      "name": "prometheus",
+      "title": "Prometheus",
+      "category": "monitoring",
+      "vendor": "CNCF",
+      "id": "prometheus",
+      "version": "latest",
+      "state": "available",
+      "installedAt": null,
+      "configuredBy": null,
+      "health": null,
+      "usage": null,
+      "cost": {
+        "monthly": 4633,
+        "annual": 47559,
+        "users": 102
+      },
+      "features": [
+        "Real-time metrics",
+        "Custom dashboards",
+        "Alert management",
+        "Log aggregation"
+      ],
+      "integrations": [],
+      "benefits": "Reduce MTTR by 60% with real-time observability"
+    },
+    {
+      "name": "grafana",
+      "title": "Grafana",
+      "category": "monitoring",
+      "vendor": "Grafana Labs",
+      "id": "grafana",
+      "version": "1.6.5",
+      "state": "installed",
+      "installedAt": "2025-07-24T14:04:35.471Z",
+      "configuredBy": "platform-team",
+      "health": "healthy",
+      "usage": {
+        "activeUsers": 64,
+        "apiCalls": 101255,
+        "lastUsed": "2025-07-15T14:04:35.471Z"
+      },
+      "cost": {
+        "monthly": 2719,
+        "annual": 25390,
+        "users": 80
+      },
+      "features": [
+        "Real-time metrics",
+        "Custom dashboards",
+        "Alert management",
+        "Log aggregation"
+      ],
+      "integrations": [],
+      "benefits": "Reduce MTTR by 60% with real-time observability"
+    },
+    {
+      "name": "new-relic",
+      "title": "New Relic",
+      "category": "monitoring",
+      "vendor": "New Relic",
+      "id": "new-relic",
+      "version": "latest",
+      "state": "available",
+      "installedAt": null,
+      "configuredBy": null,
+      "health": null,
+      "usage": null,
+      "cost": {
+        "monthly": 1466,
+        "annual": 17593,
+        "users": 63
+      },
+      "features": [
+        "Real-time metrics",
+        "Custom dashboards",
+        "Alert management",
+        "Log aggregation"
+      ],
+      "integrations": [],
+      "benefits": "Reduce MTTR by 60% with real-time observability"
+    },
+    {
+      "name": "elastic-apm",
+      "title": "Elastic APM",
+      "category": "monitoring",
+      "vendor": "Elastic",
+      "id": "elastic-apm",
+      "version": "2.6.2",
+      "state": "updating",
+      "installedAt": "2025-08-08T14:04:35.471Z",
+      "configuredBy": "platform-team",
+      "health": "healthy",
+      "usage": {
+        "activeUsers": 349,
+        "apiCalls": 81047,
+        "lastUsed": "2025-07-26T14:04:35.471Z"
+      },
+      "cost": {
+        "monthly": 3859,
+        "annual": 16353,
+        "users": 59
+      },
+      "features": [
+        "Real-time metrics",
+        "Custom dashboards",
+        "Alert management",
+        "Log aggregation"
+      ],
+      "integrations": [],
+      "benefits": "Reduce MTTR by 60% with real-time observability"
+    },
+    {
+      "name": "github-actions",
+      "title": "GitHub Actions",
+      "category": "ci-cd",
+      "vendor": "GitHub",
+      "id": "github-actions",
+      "version": "1.17.0",
+      "state": "installed",
+      "installedAt": "2025-08-01T14:04:35.471Z",
+      "configuredBy": "platform-team",
+      "health": "warning",
+      "usage": {
+        "activeUsers": 207,
+        "apiCalls": 65503,
+        "lastUsed": "2025-07-29T14:04:35.471Z"
+      },
+      "cost": {
+        "monthly": 784,
+        "annual": 13298,
+        "users": 24
+      },
+      "features": [
+        "Pipeline automation",
+        "Deployment tracking",
+        "Rollback support",
+        "Environment management"
+      ],
+      "integrations": [],
+      "benefits": "Deploy 10x faster with automated pipelines"
+    },
+    {
+      "name": "jenkins",
+      "title": "Jenkins",
+      "category": "ci-cd",
+      "vendor": "Jenkins",
+      "id": "jenkins",
+      "version": "latest",
+      "state": "available",
+      "installedAt": null,
+      "configuredBy": null,
+      "health": null,
+      "usage": null,
+      "cost": {
+        "monthly": 4501,
+        "annual": 31972,
+        "users": 29
+      },
+      "features": [
+        "Pipeline automation",
+        "Deployment tracking",
+        "Rollback support",
+        "Environment management"
+      ],
+      "integrations": [],
+      "benefits": "Deploy 10x faster with automated pipelines"
+    },
+    {
+      "name": "circleci",
+      "title": "CircleCI",
+      "category": "ci-cd",
+      "vendor": "CircleCI",
+      "id": "circleci",
+      "version": "2.13.2",
+      "state": "installed",
+      "installedAt": "2025-07-27T14:04:35.471Z",
+      "configuredBy": "platform-team",
+      "health": "healthy",
+      "usage": {
+        "activeUsers": 61,
+        "apiCalls": 92496,
+        "lastUsed": "2025-08-02T14:04:35.471Z"
+      },
+      "cost": {
+        "monthly": 2668,
+        "annual": 54686,
+        "users": 106
+      },
+      "features": [
+        "Pipeline automation",
+        "Deployment tracking",
+        "Rollback support",
+        "Environment management"
+      ],
+      "integrations": [],
+      "benefits": "Deploy 10x faster with automated pipelines"
+    },
+    {
+      "name": "gitlab-ci",
+      "title": "GitLab CI",
+      "category": "ci-cd",
+      "vendor": "GitLab",
+      "id": "gitlab-ci",
+      "version": "latest",
+      "state": "available",
+      "installedAt": null,
+      "configuredBy": null,
+      "health": null,
+      "usage": null,
+      "cost": {
+        "monthly": 5198,
+        "annual": 12638,
+        "users": 98
+      },
+      "features": [
+        "Pipeline automation",
+        "Deployment tracking",
+        "Rollback support",
+        "Environment management"
+      ],
+      "integrations": [],
+      "benefits": "Deploy 10x faster with automated pipelines"
+    },
+    {
+      "name": "argocd",
+      "title": "ArgoCD",
+      "category": "ci-cd",
+      "vendor": "CNCF",
+      "id": "argocd",
+      "version": "3.17.1",
+      "state": "updating",
+      "installedAt": "2025-07-17T14:04:35.471Z",
+      "configuredBy": "platform-team",
+      "health": "healthy",
+      "usage": {
+        "activeUsers": 415,
+        "apiCalls": 103510,
+        "lastUsed": "2025-07-27T14:04:35.471Z"
+      },
+      "cost": {
+        "monthly": 2103,
+        "annual": 20777,
+        "users": 69
+      },
+      "features": [
+        "Pipeline automation",
+        "Deployment tracking",
+        "Rollback support",
+        "Environment management"
+      ],
+      "integrations": [],
+      "benefits": "Deploy 10x faster with automated pipelines"
+    },
+    {
+      "name": "snyk",
+      "title": "Snyk Security",
+      "category": "security",
+      "vendor": "Snyk",
+      "id": "snyk",
+      "version": "2.12.2",
+      "state": "installed",
+      "installedAt": "2025-08-01T14:04:35.471Z",
+      "configuredBy": "platform-team",
+      "health": "healthy",
+      "usage": {
+        "activeUsers": 501,
+        "apiCalls": 104293,
+        "lastUsed": "2025-07-23T14:04:35.471Z"
+      },
+      "cost": {
+        "monthly": 2796,
+        "annual": 15202,
+        "users": 102
+      },
+      "features": [
+        "Vulnerability scanning",
+        "Secret management",
+        "Compliance reporting",
+        "Access control"
+      ],
+      "integrations": [],
+      "benefits": "Achieve 100% compliance with automated scanning"
+    },
+    {
+      "name": "sonarqube",
+      "title": "SonarQube",
+      "category": "security",
+      "vendor": "SonarSource",
+      "id": "sonarqube",
+      "version": "latest",
+      "state": "available",
+      "installedAt": null,
+      "configuredBy": null,
+      "health": null,
+      "usage": null,
+      "cost": {
+        "monthly": 2862,
+        "annual": 53666,
+        "users": 88
+      },
+      "features": [
+        "Vulnerability scanning",
+        "Secret management",
+        "Compliance reporting",
+        "Access control"
+      ],
+      "integrations": [],
+      "benefits": "Achieve 100% compliance with automated scanning"
+    },
+    {
+      "name": "vault",
+      "title": "HashiCorp Vault",
+      "category": "security",
+      "vendor": "HashiCorp",
+      "id": "vault",
+      "version": "3.10.0",
+      "state": "installed",
+      "installedAt": "2025-08-08T14:04:35.471Z",
+      "configuredBy": "platform-team",
+      "health": "healthy",
+      "usage": {
+        "activeUsers": 193,
+        "apiCalls": 66594,
+        "lastUsed": "2025-08-05T14:04:35.471Z"
+      },
+      "cost": {
+        "monthly": 3491,
+        "annual": 33189,
+        "users": 48
+      },
+      "features": [
+        "Vulnerability scanning",
+        "Secret management",
+        "Compliance reporting",
+        "Access control"
+      ],
+      "integrations": [],
+      "benefits": "Achieve 100% compliance with automated scanning"
+    },
+    {
+      "name": "aqua-security",
+      "title": "Aqua Security",
+      "category": "security",
+      "vendor": "Aqua",
+      "id": "aqua-security",
+      "version": "latest",
+      "state": "available",
+      "installedAt": null,
+      "configuredBy": null,
+      "health": null,
+      "usage": null,
+      "cost": {
+        "monthly": 4475,
+        "annual": 20115,
+        "users": 66
+      },
+      "features": [
+        "Vulnerability scanning",
+        "Secret management",
+        "Compliance reporting",
+        "Access control"
+      ],
+      "integrations": [],
+      "benefits": "Achieve 100% compliance with automated scanning"
+    },
+    {
+      "name": "twistlock",
+      "title": "Twistlock",
+      "category": "security",
+      "vendor": "Palo Alto",
+      "id": "twistlock",
+      "version": "1.14.5",
+      "state": "updating",
+      "installedAt": "2025-08-04T14:04:35.471Z",
+      "configuredBy": "platform-team",
+      "health": "warning",
+      "usage": {
+        "activeUsers": 80,
+        "apiCalls": 103642,
+        "lastUsed": "2025-07-24T14:04:35.471Z"
+      },
+      "cost": {
+        "monthly": 2534,
+        "annual": 34346,
+        "users": 79
+      },
+      "features": [
+        "Vulnerability scanning",
+        "Secret management",
+        "Compliance reporting",
+        "Access control"
+      ],
+      "integrations": [],
+      "benefits": "Achieve 100% compliance with automated scanning"
+    },
+    {
+      "name": "aws",
+      "title": "AWS Integration",
+      "category": "cloud",
+      "vendor": "Amazon",
+      "id": "aws",
+      "version": "2.7.6",
+      "state": "installed",
+      "installedAt": "2025-07-26T14:04:35.471Z",
+      "configuredBy": "platform-team",
+      "health": "warning",
+      "usage": {
+        "activeUsers": 529,
+        "apiCalls": 106614,
+        "lastUsed": "2025-07-31T14:04:35.471Z"
+      },
+      "cost": {
+        "monthly": 3332,
+        "annual": 33821,
+        "users": 44
+      },
+      "features": [
+        "Resource management",
+        "Cost tracking",
+        "Auto-scaling",
+        "Multi-region support"
+      ],
+      "integrations": [],
+      "benefits": "Reduce cloud costs by 30% with optimization"
+    },
+    {
+      "name": "gcp",
+      "title": "Google Cloud",
+      "category": "cloud",
+      "vendor": "Google",
+      "id": "gcp",
+      "version": "latest",
+      "state": "available",
+      "installedAt": null,
+      "configuredBy": null,
+      "health": null,
+      "usage": null,
+      "cost": {
+        "monthly": 2532,
+        "annual": 42971,
+        "users": 59
+      },
+      "features": [
+        "Resource management",
+        "Cost tracking",
+        "Auto-scaling",
+        "Multi-region support"
+      ],
+      "integrations": [],
+      "benefits": "Reduce cloud costs by 30% with optimization"
+    },
+    {
+      "name": "azure",
+      "title": "Microsoft Azure",
+      "category": "cloud",
+      "vendor": "Microsoft",
+      "id": "azure",
+      "version": "3.2.2",
+      "state": "installed",
+      "installedAt": "2025-07-10T14:04:35.471Z",
+      "configuredBy": "platform-team",
+      "health": "healthy",
+      "usage": {
+        "activeUsers": 456,
+        "apiCalls": 79152,
+        "lastUsed": "2025-07-17T14:04:35.471Z"
+      },
+      "cost": {
+        "monthly": 4747,
+        "annual": 9038,
+        "users": 67
+      },
+      "features": [
+        "Resource management",
+        "Cost tracking",
+        "Auto-scaling",
+        "Multi-region support"
+      ],
+      "integrations": [],
+      "benefits": "Reduce cloud costs by 30% with optimization"
+    },
+    {
+      "name": "kubernetes",
+      "title": "Kubernetes",
+      "category": "cloud",
+      "vendor": "CNCF",
+      "id": "kubernetes",
+      "version": "latest",
+      "state": "available",
+      "installedAt": null,
+      "configuredBy": null,
+      "health": null,
+      "usage": null,
+      "cost": {
+        "monthly": 4165,
+        "annual": 50882,
+        "users": 66
+      },
+      "features": [
+        "Resource management",
+        "Cost tracking",
+        "Auto-scaling",
+        "Multi-region support"
+      ],
+      "integrations": [
+        "Deployments",
+        "Services",
+        "Pods",
+        "ConfigMaps"
+      ],
+      "benefits": "Reduce cloud costs by 30% with optimization"
+    },
+    {
+      "name": "terraform",
+      "title": "Terraform",
+      "category": "cloud",
+      "vendor": "HashiCorp",
+      "id": "terraform",
+      "version": "3.1.3",
+      "state": "updating",
+      "installedAt": "2025-08-05T14:04:35.471Z",
+      "configuredBy": "platform-team",
+      "health": "healthy",
+      "usage": {
+        "activeUsers": 358,
+        "apiCalls": 14376,
+        "lastUsed": "2025-07-18T14:04:35.471Z"
+      },
+      "cost": {
+        "monthly": 599,
+        "annual": 21817,
+        "users": 86
+      },
+      "features": [
+        "Resource management",
+        "Cost tracking",
+        "Auto-scaling",
+        "Multi-region support"
+      ],
+      "integrations": [],
+      "benefits": "Reduce cloud costs by 30% with optimization"
+    },
+    {
+      "name": "slack",
+      "title": "Slack",
+      "category": "communication",
+      "vendor": "Slack",
+      "id": "slack",
+      "version": "1.4.6",
+      "state": "installed",
+      "installedAt": "2025-07-23T14:04:35.471Z",
+      "configuredBy": "platform-team",
+      "health": "healthy",
+      "usage": {
+        "activeUsers": 396,
+        "apiCalls": 16714,
+        "lastUsed": "2025-07-27T14:04:35.471Z"
+      },
+      "cost": {
+        "monthly": 1506,
+        "annual": 14759,
+        "users": 30
+      },
+      "features": [
+        "Real-time notifications",
+        "Incident management",
+        "Team collaboration",
+        "Status updates"
+      ],
+      "integrations": [
+        "Notifications",
+        "Commands",
+        "Workflows",
+        "Apps"
+      ],
+      "benefits": "Improve incident response by 50%"
+    },
+    {
+      "name": "teams",
+      "title": "Microsoft Teams",
+      "category": "communication",
+      "vendor": "Microsoft",
+      "id": "teams",
+      "version": "latest",
+      "state": "available",
+      "installedAt": null,
+      "configuredBy": null,
+      "health": null,
+      "usage": null,
+      "cost": {
+        "monthly": 1179,
+        "annual": 6844,
+        "users": 48
+      },
+      "features": [
+        "Real-time notifications",
+        "Incident management",
+        "Team collaboration",
+        "Status updates"
+      ],
+      "integrations": [],
+      "benefits": "Improve incident response by 50%"
+    },
+    {
+      "name": "pagerduty",
+      "title": "PagerDuty",
+      "category": "communication",
+      "vendor": "PagerDuty",
+      "id": "pagerduty",
+      "version": "1.18.0",
+      "state": "installed",
+      "installedAt": "2025-07-17T14:04:35.471Z",
+      "configuredBy": "platform-team",
+      "health": "healthy",
+      "usage": {
+        "activeUsers": 327,
+        "apiCalls": 64958,
+        "lastUsed": "2025-07-23T14:04:35.471Z"
+      },
+      "cost": {
+        "monthly": 1892,
+        "annual": 48493,
+        "users": 77
+      },
+      "features": [
+        "Real-time notifications",
+        "Incident management",
+        "Team collaboration",
+        "Status updates"
+      ],
+      "integrations": [],
+      "benefits": "Improve incident response by 50%"
+    },
+    {
+      "name": "opsgenie",
+      "title": "Opsgenie",
+      "category": "communication",
+      "vendor": "Atlassian",
+      "id": "opsgenie",
+      "version": "latest",
+      "state": "available",
+      "installedAt": null,
+      "configuredBy": null,
+      "health": null,
+      "usage": null,
+      "cost": {
+        "monthly": 4157,
+        "annual": 9888,
+        "users": 40
+      },
+      "features": [
+        "Real-time notifications",
+        "Incident management",
+        "Team collaboration",
+        "Status updates"
+      ],
+      "integrations": [],
+      "benefits": "Improve incident response by 50%"
+    },
+    {
+      "name": "discord",
+      "title": "Discord",
+      "category": "communication",
+      "vendor": "Discord",
+      "id": "discord",
+      "version": "3.10.1",
+      "state": "updating",
+      "installedAt": "2025-08-03T14:04:35.471Z",
+      "configuredBy": "platform-team",
+      "health": "healthy",
+      "usage": {
+        "activeUsers": 153,
+        "apiCalls": 19233,
+        "lastUsed": "2025-08-02T14:04:35.471Z"
+      },
+      "cost": {
+        "monthly": 2451,
+        "annual": 16846,
+        "users": 23
+      },
+      "features": [
+        "Real-time notifications",
+        "Incident management",
+        "Team collaboration",
+        "Status updates"
+      ],
+      "integrations": [],
+      "benefits": "Improve incident response by 50%"
+    },
+    {
+      "name": "snowflake",
+      "title": "Snowflake",
+      "category": "data",
+      "vendor": "Snowflake",
+      "id": "snowflake",
+      "version": "2.14.4",
+      "state": "installed",
+      "installedAt": "2025-07-22T14:04:35.471Z",
+      "configuredBy": "platform-team",
+      "health": "warning",
+      "usage": {
+        "activeUsers": 153,
+        "apiCalls": 31951,
+        "lastUsed": "2025-07-16T14:04:35.471Z"
+      },
+      "cost": {
+        "monthly": 2206,
+        "annual": 28825,
+        "users": 39
+      },
+      "features": [
+        "Data pipeline management",
+        "ETL orchestration",
+        "Data quality monitoring",
+        "Schema management"
+      ],
+      "integrations": [],
+      "benefits": "Process 100TB+ daily with managed pipelines"
+    },
+    {
+      "name": "databricks",
+      "title": "Databricks",
+      "category": "data",
+      "vendor": "Databricks",
+      "id": "databricks",
+      "version": "latest",
+      "state": "available",
+      "installedAt": null,
+      "configuredBy": null,
+      "health": null,
+      "usage": null,
+      "cost": {
+        "monthly": 872,
+        "annual": 52986,
+        "users": 63
+      },
+      "features": [
+        "Data pipeline management",
+        "ETL orchestration",
+        "Data quality monitoring",
+        "Schema management"
+      ],
+      "integrations": [],
+      "benefits": "Process 100TB+ daily with managed pipelines"
+    },
+    {
+      "name": "bigquery",
+      "title": "BigQuery",
+      "category": "data",
+      "vendor": "Google",
+      "id": "bigquery",
+      "version": "1.16.7",
+      "state": "installed",
+      "installedAt": "2025-07-25T14:04:35.471Z",
+      "configuredBy": "platform-team",
+      "health": "healthy",
+      "usage": {
+        "activeUsers": 260,
+        "apiCalls": 17944,
+        "lastUsed": "2025-08-03T14:04:35.471Z"
+      },
+      "cost": {
+        "monthly": 4908,
+        "annual": 6384,
+        "users": 105
+      },
+      "features": [
+        "Data pipeline management",
+        "ETL orchestration",
+        "Data quality monitoring",
+        "Schema management"
+      ],
+      "integrations": [],
+      "benefits": "Process 100TB+ daily with managed pipelines"
+    },
+    {
+      "name": "redshift",
+      "title": "Amazon Redshift",
+      "category": "data",
+      "vendor": "Amazon",
+      "id": "redshift",
+      "version": "latest",
+      "state": "available",
+      "installedAt": null,
+      "configuredBy": null,
+      "health": null,
+      "usage": null,
+      "cost": {
+        "monthly": 4869,
+        "annual": 20014,
+        "users": 27
+      },
+      "features": [
+        "Data pipeline management",
+        "ETL orchestration",
+        "Data quality monitoring",
+        "Schema management"
+      ],
+      "integrations": [],
+      "benefits": "Process 100TB+ daily with managed pipelines"
+    },
+    {
+      "name": "kafka",
+      "title": "Apache Kafka",
+      "category": "data",
+      "vendor": "Apache",
+      "id": "kafka",
+      "version": "1.18.2",
+      "state": "updating",
+      "installedAt": "2025-07-26T14:04:35.471Z",
+      "configuredBy": "platform-team",
+      "health": "healthy",
+      "usage": {
+        "activeUsers": 403,
+        "apiCalls": 93374,
+        "lastUsed": "2025-08-04T14:04:35.471Z"
+      },
+      "cost": {
+        "monthly": 4649,
+        "annual": 15629,
+        "users": 29
+      },
+      "features": [
+        "Data pipeline management",
+        "ETL orchestration",
+        "Data quality monitoring",
+        "Schema management"
+      ],
+      "integrations": [],
+      "benefits": "Process 100TB+ daily with managed pipelines"
+    },
+    {
+      "name": "jira",
+      "title": "Jira",
+      "category": "development",
+      "vendor": "Atlassian",
+      "id": "jira",
+      "version": "2.9.1",
+      "state": "installed",
+      "installedAt": "2025-07-25T14:04:35.471Z",
+      "configuredBy": "platform-team",
+      "health": "warning",
+      "usage": {
+        "activeUsers": 370,
+        "apiCalls": 29844,
+        "lastUsed": "2025-07-16T14:04:35.471Z"
+      },
+      "cost": {
+        "monthly": 2837,
+        "annual": 41322,
+        "users": 66
+      },
+      "features": [
+        "Core functionality",
+        "API access",
+        "Documentation",
+        "Support"
+      ],
+      "integrations": [],
+      "benefits": "Improve developer productivity"
+    },
+    {
+      "name": "confluence",
+      "title": "Confluence",
+      "category": "development",
+      "vendor": "Atlassian",
+      "id": "confluence",
+      "version": "latest",
+      "state": "available",
+      "installedAt": null,
+      "configuredBy": null,
+      "health": null,
+      "usage": null,
+      "cost": {
+        "monthly": 1507,
+        "annual": 13678,
+        "users": 67
+      },
+      "features": [
+        "Core functionality",
+        "API access",
+        "Documentation",
+        "Support"
+      ],
+      "integrations": [],
+      "benefits": "Improve developer productivity"
+    },
+    {
+      "name": "github",
+      "title": "GitHub",
+      "category": "development",
+      "vendor": "GitHub",
+      "id": "github",
+      "version": "1.15.9",
+      "state": "installed",
+      "installedAt": "2025-08-01T14:04:35.471Z",
+      "configuredBy": "platform-team",
+      "health": "warning",
+      "usage": {
+        "activeUsers": 382,
+        "apiCalls": 70454,
+        "lastUsed": "2025-07-28T14:04:35.471Z"
+      },
+      "cost": {
+        "monthly": 1529,
+        "annual": 48519,
+        "users": 11
+      },
+      "features": [
+        "Core functionality",
+        "API access",
+        "Documentation",
+        "Support"
+      ],
+      "integrations": [
+        "Pull requests",
+        "Issues",
+        "Actions",
+        "Releases"
+      ],
+      "benefits": "Improve developer productivity"
+    },
+    {
+      "name": "gitlab",
+      "title": "GitLab",
+      "category": "development",
+      "vendor": "GitLab",
+      "id": "gitlab",
+      "version": "latest",
+      "state": "available",
+      "installedAt": null,
+      "configuredBy": null,
+      "health": null,
+      "usage": null,
+      "cost": {
+        "monthly": 4559,
+        "annual": 40261,
+        "users": 75
+      },
+      "features": [
+        "Core functionality",
+        "API access",
+        "Documentation",
+        "Support"
+      ],
+      "integrations": [],
+      "benefits": "Improve developer productivity"
+    },
+    {
+      "name": "bitbucket",
+      "title": "Bitbucket",
+      "category": "development",
+      "vendor": "Atlassian",
+      "id": "bitbucket",
+      "version": "2.8.9",
+      "state": "updating",
+      "installedAt": "2025-08-04T14:04:35.471Z",
+      "configuredBy": "platform-team",
+      "health": "healthy",
+      "usage": {
+        "activeUsers": 528,
+        "apiCalls": 71093,
+        "lastUsed": "2025-07-20T14:04:35.471Z"
+      },
+      "cost": {
+        "monthly": 3428,
+        "annual": 49044,
+        "users": 93
+      },
+      "features": [
+        "Core functionality",
+        "API access",
+        "Documentation",
+        "Support"
+      ],
+      "integrations": [],
+      "benefits": "Improve developer productivity"
+    },
+    {
+      "name": "cloudability",
+      "title": "Cloudability",
+      "category": "finops",
+      "vendor": "Apptio",
+      "id": "cloudability",
+      "version": "2.9.5",
+      "state": "installed",
+      "installedAt": "2025-07-24T14:04:35.471Z",
+      "configuredBy": "platform-team",
+      "health": "warning",
+      "usage": {
+        "activeUsers": 502,
+        "apiCalls": 16465,
+        "lastUsed": "2025-07-28T14:04:35.471Z"
+      },
+      "cost": {
+        "monthly": 781,
+        "annual": 52331,
+        "users": 38
+      },
+      "features": [
+        "Core functionality",
+        "API access",
+        "Documentation",
+        "Support"
+      ],
+      "integrations": [],
+      "benefits": "Improve developer productivity"
+    },
+    {
+      "name": "cloudzero",
+      "title": "CloudZero",
+      "category": "finops",
+      "vendor": "CloudZero",
+      "id": "cloudzero",
+      "version": "latest",
+      "state": "available",
+      "installedAt": null,
+      "configuredBy": null,
+      "health": null,
+      "usage": null,
+      "cost": {
+        "monthly": 1761,
+        "annual": 50822,
+        "users": 85
+      },
+      "features": [
+        "Core functionality",
+        "API access",
+        "Documentation",
+        "Support"
+      ],
+      "integrations": [],
+      "benefits": "Improve developer productivity"
+    },
+    {
+      "name": "kubecost",
+      "title": "Kubecost",
+      "category": "finops",
+      "vendor": "Kubecost",
+      "id": "kubecost",
+      "version": "2.4.4",
+      "state": "installed",
+      "installedAt": "2025-07-27T14:04:35.471Z",
+      "configuredBy": "platform-team",
+      "health": "warning",
+      "usage": {
+        "activeUsers": 125,
+        "apiCalls": 20377,
+        "lastUsed": "2025-07-27T14:04:35.471Z"
+      },
+      "cost": {
+        "monthly": 4591,
+        "annual": 43029,
+        "users": 53
+      },
+      "features": [
+        "Core functionality",
+        "API access",
+        "Documentation",
+        "Support"
+      ],
+      "integrations": [],
+      "benefits": "Improve developer productivity"
+    },
+    {
+      "name": "launchdarkly",
+      "title": "LaunchDarkly",
+      "category": "features",
+      "vendor": "LaunchDarkly",
+      "id": "launchdarkly",
+      "version": "latest",
+      "state": "available",
+      "installedAt": null,
+      "configuredBy": null,
+      "health": null,
+      "usage": null,
+      "cost": {
+        "monthly": 1014,
+        "annual": 8961,
+        "users": 43
+      },
+      "features": [
+        "Core functionality",
+        "API access",
+        "Documentation",
+        "Support"
+      ],
+      "integrations": [],
+      "benefits": "Improve developer productivity"
+    },
+    {
+      "name": "split",
+      "title": "Split",
+      "category": "features",
+      "vendor": "Split",
+      "id": "split",
+      "version": "2.16.9",
+      "state": "updating",
+      "installedAt": "2025-07-17T14:04:35.471Z",
+      "configuredBy": "platform-team",
+      "health": "warning",
+      "usage": {
+        "activeUsers": 412,
+        "apiCalls": 11961,
+        "lastUsed": "2025-07-16T14:04:35.471Z"
+      },
+      "cost": {
+        "monthly": 3728,
+        "annual": 30528,
+        "users": 74
+      },
+      "features": [
+        "Core functionality",
+        "API access",
+        "Documentation",
+        "Support"
+      ],
+      "integrations": [],
+      "benefits": "Improve developer productivity"
+    },
+    {
+      "name": "optimizely",
+      "title": "Optimizely",
+      "category": "features",
+      "vendor": "Optimizely",
+      "id": "optimizely",
+      "version": "2.4.1",
+      "state": "installed",
+      "installedAt": "2025-07-16T14:04:35.471Z",
+      "configuredBy": "platform-team",
+      "health": "healthy",
+      "usage": {
+        "activeUsers": 545,
+        "apiCalls": 42500,
+        "lastUsed": "2025-07-21T14:04:35.471Z"
+      },
+      "cost": {
+        "monthly": 656,
+        "annual": 13154,
+        "users": 32
+      },
+      "features": [
+        "Core functionality",
+        "API access",
+        "Documentation",
+        "Support"
+      ],
+      "integrations": [],
+      "benefits": "Improve developer productivity"
+    },
+    {
+      "name": "selenium",
+      "title": "Selenium",
+      "category": "testing",
+      "vendor": "Selenium",
+      "id": "selenium",
+      "version": "latest",
+      "state": "available",
+      "installedAt": null,
+      "configuredBy": null,
+      "health": null,
+      "usage": null,
+      "cost": {
+        "monthly": 4903,
+        "annual": 16046,
+        "users": 85
+      },
+      "features": [
+        "Core functionality",
+        "API access",
+        "Documentation",
+        "Support"
+      ],
+      "integrations": [],
+      "benefits": "Improve developer productivity"
+    },
+    {
+      "name": "cypress",
+      "title": "Cypress",
+      "category": "testing",
+      "vendor": "Cypress",
+      "id": "cypress",
+      "version": "1.1.4",
+      "state": "installed",
+      "installedAt": "2025-08-02T14:04:35.471Z",
+      "configuredBy": "platform-team",
+      "health": "healthy",
+      "usage": {
+        "activeUsers": 425,
+        "apiCalls": 25618,
+        "lastUsed": "2025-07-17T14:04:35.471Z"
+      },
+      "cost": {
+        "monthly": 5085,
+        "annual": 39128,
+        "users": 51
+      },
+      "features": [
+        "Core functionality",
+        "API access",
+        "Documentation",
+        "Support"
+      ],
+      "integrations": [],
+      "benefits": "Improve developer productivity"
+    },
+    {
+      "name": "postman",
+      "title": "Postman",
+      "category": "testing",
+      "vendor": "Postman",
+      "id": "postman",
+      "version": "latest",
+      "state": "available",
+      "installedAt": null,
+      "configuredBy": null,
+      "health": null,
+      "usage": null,
+      "cost": {
+        "monthly": 1877,
+        "annual": 22739,
+        "users": 26
+      },
+      "features": [
+        "Core functionality",
+        "API access",
+        "Documentation",
+        "Support"
+      ],
+      "integrations": [],
+      "benefits": "Improve developer productivity"
+    },
+    {
+      "name": "vanta",
+      "title": "Vanta",
+      "category": "compliance",
+      "vendor": "Vanta",
+      "id": "vanta",
+      "version": "1.10.6",
+      "state": "updating",
+      "installedAt": "2025-07-27T14:04:35.471Z",
+      "configuredBy": "platform-team",
+      "health": "healthy",
+      "usage": {
+        "activeUsers": 152,
+        "apiCalls": 21477,
+        "lastUsed": "2025-07-23T14:04:35.471Z"
+      },
+      "cost": {
+        "monthly": 1678,
+        "annual": 29314,
+        "users": 73
+      },
+      "features": [
+        "Core functionality",
+        "API access",
+        "Documentation",
+        "Support"
+      ],
+      "integrations": [],
+      "benefits": "Improve developer productivity"
+    },
+    {
+      "name": "drata",
+      "title": "Drata",
+      "category": "compliance",
+      "vendor": "Drata",
+      "id": "drata",
+      "version": "1.12.5",
+      "state": "installed",
+      "installedAt": "2025-07-26T14:04:35.471Z",
+      "configuredBy": "platform-team",
+      "health": "warning",
+      "usage": {
+        "activeUsers": 415,
+        "apiCalls": 60869,
+        "lastUsed": "2025-08-02T14:04:35.471Z"
+      },
+      "cost": {
+        "monthly": 1694,
+        "annual": 7345,
+        "users": 53
+      },
+      "features": [
+        "Core functionality",
+        "API access",
+        "Documentation",
+        "Support"
+      ],
+      "integrations": [],
+      "benefits": "Improve developer productivity"
+    },
+    {
+      "name": "secureframe",
+      "title": "Secureframe",
+      "category": "compliance",
+      "vendor": "Secureframe",
+      "id": "secureframe",
+      "version": "latest",
+      "state": "available",
+      "installedAt": null,
+      "configuredBy": null,
+      "health": null,
+      "usage": null,
+      "cost": {
+        "monthly": 1071,
+        "annual": 18811,
+        "users": 72
+      },
+      "features": [
+        "Core functionality",
+        "API access",
+        "Documentation",
+        "Support"
+      ],
+      "integrations": [],
+      "benefits": "Improve developer productivity"
+    }
+  ]
+}

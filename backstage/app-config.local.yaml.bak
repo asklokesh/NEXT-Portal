@@ -1,0 +1,36 @@
+app:
+ title: Local Backstage Instance
+ baseUrl: http://localhost:4400 # UI wrapper URL
+
+backend:
+ baseUrl: http://localhost:7007
+ listen:
+ port: 7007
+ cors:
+ origin: http://localhost:4400
+ methods: [GET, HEAD, PATCH, POST, PUT, DELETE]
+ credentials: true
+ database:
+ client: pg
+ connection:
+ host: localhost
+ port: 5432
+ user: postgres
+ password: postgres
+ database: backstage
+
+auth:
+ providers:
+ guest:
+ dangerouslyAllowOutsideDevelopment: true
+
+catalog:
+ import:
+ entityFilename: catalog-info.yaml
+ pullRequestBranchName: backstage-integration
+
+integrations:
+ github:
+ - host: github.com
+ # Add your GitHub token here if needed
+ # token: ${GITHUB_TOKEN}

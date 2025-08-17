@@ -1,0 +1,29 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: saas-idp-production
+  labels:
+    name: saas-idp-production
+    environment: production
+    tier: enterprise
+  annotations:
+    kubernetes.io/managed-by: "platform-engineering"
+    contact.email: "platform-team@company.com"
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: saas-idp-monitoring
+  labels:
+    name: saas-idp-monitoring
+    environment: production
+    tier: monitoring
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: saas-idp-security
+  labels:
+    name: saas-idp-security
+    environment: production
+    tier: security

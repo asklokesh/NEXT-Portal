@@ -37,7 +37,7 @@ import {
   Users
 } from 'lucide-react';
 import { FeatureFlag, FlagType } from '@/lib/feature-flags/types';
-import { Skeleton } from '@/components/ui/skeleton';
+import { Skeleton } from '@/components/ui/Skeleton';
 
 interface FeatureFlagListProps {
   flags: FeatureFlag[];

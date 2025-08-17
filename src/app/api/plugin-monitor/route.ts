@@ -185,19 +185,23 @@ const getContainerMetrics = async (workDir: string): Promise<ContainerMetrics[]>
   }
 };
 
-// Get service health metrics
+// Get service health metrics (production mode: only check services that are actually configured)
 const getServiceMetrics = async (): Promise<ServiceMetrics[]> => {
-  const services = [
-    { name: 'frontend', url: 'http://localhost:3000' },
-    { name: 'backend', url: 'http://localhost:7007/api/health' },
-    { name: 'nginx', url: 'http://localhost/health' },
-    { name: 'grafana', url: 'http://localhost:3001/api/health' },
-    { name: 'prometheus', url: 'http://localhost:9090/-/healthy' }
+  // Production mode: services list comes from environment configuration
+  const configuredServices = [
+    ...(process.env.FRONTEND_URL ? [{ name: 'frontend', url: process.env.FRONTEND_URL }] : []),
+    ...(process.env.BACKSTAGE_BACKEND_URL ? [{ name: 'backstage', url: `${process.env.BACKSTAGE_BACKEND_URL}/api/health` }] : []),
+    ...(process.env.PROXY_URL ? [{ name: 'proxy', url: `${process.env.PROXY_URL}/health` }] : [])
   ];
+  
+  if (configuredServices.length === 0) {
+    console.warn('No services configured for monitoring. Set environment variables: FRONTEND_URL, BACKSTAGE_BACKEND_URL, etc.');
+    return [];
+  }
   
   const serviceMetrics: ServiceMetrics[] = [];
   
-  for (const service of services) {
+  for (const service of configuredServices) {
     const startTime = Date.now();
     let status: 'healthy' | 'unhealthy' | 'unknown' = 'unknown';
     
@@ -207,6 +211,7 @@ const getServiceMetrics = async (): Promise<ServiceMetrics[]> => {
       status = httpCode >= 200 && httpCode < 400 ? 'healthy' : 'unhealthy';
     } catch (error) {
       status = 'unhealthy';
+      console.warn(`Service ${service.name} health check failed:`, error instanceof Error ? error.message : 'Unknown error');
     }
     
     const responseTime = Date.now() - startTime;
@@ -217,7 +222,7 @@ const getServiceMetrics = async (): Promise<ServiceMetrics[]> => {
       status,
       responseTime,
       lastCheck: new Date().toISOString(),
-      errorCount: 0 // This would be tracked over time
+      errorCount: 0 // This would be tracked over time in production
     });
   }
   
@@ -369,6 +374,130 @@ const determineOverallStatus = (containers: ContainerMetrics[], services: Servic
   }
 };
 
+// Monitor database-installed plugin (production monitoring without mock data)
+const monitorDatabasePlugin = async (installId: string): Promise<PluginMetrics | null> => {
+  try {
+    // Get plugin information from database
+    const { getSafePrismaClient } = await import('@/lib/db/safe-client');
+    const prisma = getSafePrismaClient();
+    
+    const plugin = await prisma.plugin.findFirst({
+      where: { id: installId },
+      select: {
+        id: true,
+        name: true,
+        displayName: true,
+        status: true,
+        isEnabled: true,
+        isInstalled: true,
+        category: true,
+        installedAt: true,
+        updatedAt: true,
+        configurations: {
+          where: { environment: 'production' },
+          select: {
+            config: true,
+            isActive: true
+          }
+        }
+      }
+    });
+    
+    if (!plugin) {
+      return null;
+    }
+    
+    const now = new Date();
+    const pluginName = plugin.displayName || plugin.name;
+    
+    // Production mode: return basic status only, no mock metrics
+    const baseTime = plugin.installedAt ? new Date(plugin.installedAt) : new Date();
+    const uptimeMs = now.getTime() - baseTime.getTime();
+    const uptimeHours = Math.floor(uptimeMs / (1000 * 60 * 60));
+    const uptimeMins = Math.floor((uptimeMs % (1000 * 60 * 60)) / (1000 * 60));
+    
+    // Production containers: only show if actually monitored
+    const containers: ContainerMetrics[] = [];
+    
+    // Production services: only check endpoints that actually exist
+    const services: ServiceMetrics[] = [];
+    
+    // Production resources: zero until real monitoring is implemented
+    const resources: ResourceMetrics = {
+      totalCpu: 0,
+      totalMemory: 0,
+      totalStorage: 0,
+      networkIO: {
+        received: 0,
+        transmitted: 0
+      }
+    };
+    
+    // Production health checks: based only on database state
+    const healthChecks: HealthCheck[] = [
+      {
+        name: 'Database Connection',
+        status: plugin.isInstalled ? 'passing' : 'critical',
+        message: plugin.isInstalled ? 'Plugin record exists in database' : 'Plugin not found in database',
+        lastCheck: now.toISOString()
+      },
+      {
+        name: 'Plugin Status',
+        status: plugin.isEnabled ? 'passing' : 'warning',
+        message: plugin.isEnabled ? 'Plugin is enabled' : 'Plugin is disabled',
+        lastCheck: now.toISOString()
+      },
+      {
+        name: 'Configuration',
+        status: plugin.configurations.length > 0 ? 'passing' : 'warning',
+        message: plugin.configurations.length > 0 ? 'Configuration available' : 'No production configuration',
+        lastCheck: now.toISOString()
+      }
+    ];
+    
+    const health: HealthMetrics = {
+      overall: plugin.isEnabled && plugin.isInstalled ? 'healthy' : 'degraded',
+      checks: healthChecks
+    };
+    
+    // Production logs: basic status only
+    const logs: LogEntry[] = [
+      {
+        timestamp: now.toISOString(),
+        level: 'info',
+        service: 'plugin-monitor',
+        message: `Database plugin monitoring - status: ${plugin.isEnabled ? 'enabled' : 'disabled'}`
+      }
+    ];
+    
+    // Add installation timestamp if available
+    if (plugin.installedAt) {
+      logs.push({
+        timestamp: plugin.installedAt.toISOString(),
+        level: 'info',
+        service: 'plugin-installer',
+        message: `Plugin ${pluginName} installed`
+      });
+    }
+    
+    return {
+      installId,
+      pluginId: plugin.name,
+      status: plugin.isEnabled ? 'running' : 'stopped',
+      containers,
+      services,
+      resources,
+      health,
+      logs,
+      timestamp: now.toISOString()
+    };
+    
+  } catch (error) {
+    console.error(`Error monitoring database plugin ${installId}:`, error);
+    return null;
+  }
+};
+
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
@@ -392,7 +521,13 @@ export async function GET(request: NextRequest) {
       }, { status: 400 });
     }
 
-    const metrics = await monitorPlugin(installId);
+    // Try Docker/K8s plugin first
+    let metrics = await monitorPlugin(installId);
+    
+    // If not found as Docker plugin, check if it's a database plugin
+    if (!metrics) {
+      metrics = await monitorDatabasePlugin(installId);
+    }
 
     if (!metrics) {
       return NextResponse.json({

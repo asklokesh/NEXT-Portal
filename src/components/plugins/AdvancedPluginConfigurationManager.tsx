@@ -5,7 +5,10 @@ import {
   Settings, Save, RefreshCw, AlertTriangle, CheckCircle,
   Code, Eye, Copy, Download, Upload, Trash2, Plus,
   ChevronDown, ChevronRight, HelpCircle, ExternalLink,
-  Lock, Unlock, Key, Database, Server, Cloud
+  Lock, Unlock, Key, Database, Server, Cloud, 
+  MousePointer, Move, Layers, Palette, Wand2, 
+  Grid3X3, Layout, Maximize2, RotateCw, Zap,
+  Target, GitBranch, Package, Globe, Shield, BarChart3
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { JSONSchema7 } from 'json-schema';
@@ -50,11 +53,14 @@ export default function AdvancedPluginConfigurationManager({
   const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [viewMode, setViewMode] = useState<'form' | 'json'>('form');
+  const [viewMode, setViewMode] = useState<'form' | 'json' | 'visual'>('form');
   const [environment, setEnvironment] = useState<'development' | 'staging' | 'production'>('development');
   const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set());
   const [previewMode, setPreviewMode] = useState(false);
   const [templates, setTemplates] = useState<Record<string, any>>({});
+  const [visualComponents, setVisualComponents] = useState<any[]>([]);
+  const [selectedComponent, setSelectedComponent] = useState<string | null>(null);
+  const [draggedComponent, setDraggedComponent] = useState<any>(null);
 
   useEffect(() => {
     fetchConfigurations();
@@ -404,15 +410,24 @@ export default function AdvancedPluginConfigurationManager({
             <div className="flex border border-gray-300 dark:border-gray-600 rounded-lg">
               <button
                 onClick={() => setViewMode('form')}
-                className={`px-4 py-2 ${viewMode === 'form' ? 'bg-blue-600 text-white' : 'text-gray-600 dark:text-gray-400'} rounded-l-lg`}
+                className={`px-4 py-2 flex items-center gap-2 ${viewMode === 'form' ? 'bg-blue-600 text-white' : 'text-gray-600 dark:text-gray-400'} rounded-l-lg`}
               >
                 <Settings className="w-4 h-4" />
+                <span className="text-sm">Form</span>
+              </button>
+              <button
+                onClick={() => setViewMode('visual')}
+                className={`px-4 py-2 flex items-center gap-2 ${viewMode === 'visual' ? 'bg-blue-600 text-white' : 'text-gray-600 dark:text-gray-400'}`}
+              >
+                <Palette className="w-4 h-4" />
+                <span className="text-sm">Visual</span>
               </button>
               <button
                 onClick={() => setViewMode('json')}
-                className={`px-4 py-2 ${viewMode === 'json' ? 'bg-blue-600 text-white' : 'text-gray-600 dark:text-gray-400'} rounded-r-lg`}
+                className={`px-4 py-2 flex items-center gap-2 ${viewMode === 'json' ? 'bg-blue-600 text-white' : 'text-gray-600 dark:text-gray-400'} rounded-r-lg`}
               >
                 <Code className="w-4 h-4" />
+                <span className="text-sm">JSON</span>
               </button>
             </div>
             
@@ -565,6 +580,247 @@ export default function AdvancedPluginConfigurationManager({
                  </motion.div>
                );
              })}
+          </div>
+        )}
+
+        {/* Visual Configuration Builder */}
+        {viewMode === 'visual' && activeConfig && (
+          <div className="space-y-6">
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-medium text-gray-900 dark:text-gray-100">Visual Configuration Builder</h3>
+              <div className="flex items-center gap-2">
+                <button className="px-3 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded hover:bg-gray-50 dark:hover:bg-gray-700 flex items-center">
+                  <Wand2 className="w-4 h-4 mr-1" />
+                  Auto-Arrange
+                </button>
+                <button className="px-3 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded hover:bg-gray-50 dark:hover:bg-gray-700 flex items-center">
+                  <Grid3X3 className="w-4 h-4 mr-1" />
+                  Grid
+                </button>
+                <button className="px-3 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded hover:bg-gray-50 dark:hover:bg-gray-700 flex items-center">
+                  <Maximize2 className="w-4 h-4 mr-1" />
+                  Fullscreen
+                </button>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-12 gap-6 h-[600px]">
+              {/* Component Palette */}
+              <div className="col-span-3 bg-gray-50 dark:bg-gray-700 rounded-lg p-4 overflow-y-auto">
+                <h4 className="font-medium text-gray-900 dark:text-gray-100 mb-4">Component Palette</h4>
+                <div className="space-y-3">
+                  {[
+                    { type: 'database', label: 'Database Config', icon: Database, color: 'blue' },
+                    { type: 'api', label: 'API Endpoint', icon: Globe, color: 'green' },
+                    { type: 'auth', label: 'Authentication', icon: Shield, color: 'purple' },
+                    { type: 'cache', label: 'Cache Settings', icon: Zap, color: 'yellow' },
+                    { type: 'logging', label: 'Logging Config', icon: FileCheck2, color: 'indigo' },
+                    { type: 'metrics', label: 'Metrics', icon: BarChart3, color: 'pink' },
+                    { type: 'feature-flags', label: 'Feature Flags', icon: Target, color: 'orange' },
+                    { type: 'secrets', label: 'Secrets', icon: Lock, color: 'red' }
+                  ].map((component) => {
+                    const IconComponent = component.icon;
+                    return (
+                      <motion.div
+                        key={component.type}
+                        draggable
+                        onDragStart={() => setDraggedComponent(component)}
+                        onDragEnd={() => setDraggedComponent(null)}
+                        whileHover={{ scale: 1.02 }}
+                        className={`p-3 bg-white dark:bg-gray-800 rounded-lg border-2 border-dashed border-${component.color}-300 dark:border-${component.color}-600 cursor-grab active:cursor-grabbing transition-all hover:shadow-md`}
+                      >
+                        <div className="flex items-center gap-2">
+                          <div className={`p-2 bg-${component.color}-100 dark:bg-${component.color}-900/20 rounded`}>
+                            <IconComponent className={`h-4 w-4 text-${component.color}-600 dark:text-${component.color}-400`} />
+                          </div>
+                          <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                            {component.label}
+                          </span>
+                        </div>
+                      </motion.div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Canvas */}
+              <div 
+                className="col-span-7 bg-white dark:bg-gray-800 rounded-lg border-2 border-dashed border-gray-300 dark:border-gray-600 relative overflow-auto"
+                onDragOver={(e) => e.preventDefault()}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  if (draggedComponent) {
+                    const rect = e.currentTarget.getBoundingClientRect();
+                    const x = e.clientX - rect.left;
+                    const y = e.clientY - rect.top;
+                    
+                    const newComponent = {
+                      id: `${draggedComponent.type}-${Date.now()}`,
+                      type: draggedComponent.type,
+                      label: draggedComponent.label,
+                      icon: draggedComponent.icon,
+                      color: draggedComponent.color,
+                      x,
+                      y,
+                      config: {}
+                    };
+                    
+                    setVisualComponents(prev => [...prev, newComponent]);
+                    setDraggedComponent(null);
+                  }
+                }}
+              >
+                {visualComponents.length === 0 ? (
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    <div className="text-center text-gray-500">
+                      <Layout className="h-16 w-16 mx-auto mb-4 opacity-50" />
+                      <p className="text-lg font-medium mb-2">Visual Configuration Canvas</p>
+                      <p className="text-sm">Drag components from the palette to start building</p>
+                    </div>
+                  </div>
+                ) : (
+                  visualComponents.map((component) => {
+                    const IconComponent = component.icon;
+                    const isSelected = selectedComponent === component.id;
+                    
+                    return (
+                      <motion.div
+                        key={component.id}
+                        style={{ left: component.x, top: component.y }}
+                        className={`absolute w-48 p-4 bg-white dark:bg-gray-800 rounded-lg shadow-lg border-2 cursor-move ${
+                          isSelected ? 'border-blue-500 ring-2 ring-blue-200' : 'border-gray-200 dark:border-gray-700'
+                        }`}
+                        onClick={() => setSelectedComponent(isSelected ? null : component.id)}
+                        drag
+                        dragMomentum={false}
+                        onDrag={(e, info) => {
+                          setVisualComponents(prev =>
+                            prev.map(c =>
+                              c.id === component.id
+                                ? { ...c, x: info.point.x, y: info.point.y }
+                                : c
+                            )
+                          );
+                        }}
+                      >
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="flex items-center gap-2">
+                            <div className={`p-1 bg-${component.color}-100 dark:bg-${component.color}-900/20 rounded`}>
+                              <IconComponent className={`h-4 w-4 text-${component.color}-600 dark:text-${component.color}-400`} />
+                            </div>
+                            <span className="text-sm font-medium text-gray-900 dark:text-white">
+                              {component.label}
+                            </span>
+                          </div>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setVisualComponents(prev => prev.filter(c => c.id !== component.id));
+                            }}
+                            className="p-1 hover:bg-red-100 dark:hover:bg-red-900/20 rounded"
+                          >
+                            <Trash2 className="h-3 w-3 text-red-500" />
+                          </button>
+                        </div>
+                        
+                        <div className="space-y-2">
+                          <div className="text-xs text-gray-500 mb-1">Configuration:</div>
+                          {component.type === 'database' && (
+                            <div className="space-y-1">
+                              <input 
+                                placeholder="Host" 
+                                className="w-full text-xs p-1 border rounded" 
+                                onClick={(e) => e.stopPropagation()}
+                              />
+                              <input 
+                                placeholder="Port" 
+                                className="w-full text-xs p-1 border rounded" 
+                                onClick={(e) => e.stopPropagation()}
+                              />
+                            </div>
+                          )}
+                          {component.type === 'api' && (
+                            <input 
+                              placeholder="API Endpoint URL" 
+                              className="w-full text-xs p-1 border rounded" 
+                              onClick={(e) => e.stopPropagation()}
+                            />
+                          )}
+                          {component.type === 'auth' && (
+                            <select className="w-full text-xs p-1 border rounded" onClick={(e) => e.stopPropagation()}>
+                              <option>OAuth</option>
+                              <option>SAML</option>
+                              <option>OIDC</option>
+                            </select>
+                          )}
+                        </div>
+                        
+                        <div className="mt-2 pt-2 border-t border-gray-200 dark:border-gray-700">
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs text-gray-500">Status:</span>
+                            <div className="flex items-center gap-1">
+                              <div className="w-2 h-2 bg-green-500 rounded-full"></div>
+                              <span className="text-xs text-green-600">Connected</span>
+                            </div>
+                          </div>
+                        </div>
+                      </motion.div>
+                    );
+                  })
+                )}
+              </div>
+
+              {/* Properties Panel */}
+              <div className="col-span-2 bg-gray-50 dark:bg-gray-700 rounded-lg p-4">
+                <h4 className="font-medium text-gray-900 dark:text-gray-100 mb-4">Properties</h4>
+                {selectedComponent ? (
+                  <div className="space-y-3">
+                    <div>
+                      <label className="text-xs font-medium text-gray-600 dark:text-gray-400">Component Type</label>
+                      <div className="mt-1 text-sm text-gray-900 dark:text-white">
+                        {visualComponents.find(c => c.id === selectedComponent)?.type}
+                      </div>
+                    </div>
+                    <div>
+                      <label className="text-xs font-medium text-gray-600 dark:text-gray-400">Label</label>
+                      <input 
+                        type="text" 
+                        className="mt-1 w-full text-xs p-2 border rounded"
+                        defaultValue={visualComponents.find(c => c.id === selectedComponent)?.label}
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs font-medium text-gray-600 dark:text-gray-400">Position</label>
+                      <div className="mt-1 grid grid-cols-2 gap-2">
+                        <input 
+                          type="number" 
+                          placeholder="X"
+                          className="text-xs p-1 border rounded"
+                          value={Math.round(visualComponents.find(c => c.id === selectedComponent)?.x || 0)}
+                          readOnly
+                        />
+                        <input 
+                          type="number" 
+                          placeholder="Y"
+                          className="text-xs p-1 border rounded"
+                          value={Math.round(visualComponents.find(c => c.id === selectedComponent)?.y || 0)}
+                          readOnly
+                        />
+                      </div>
+                    </div>
+                    <button className="w-full px-3 py-2 bg-red-500 text-white text-xs rounded hover:bg-red-600 flex items-center justify-center gap-1">
+                      <Trash2 className="h-3 w-3" />
+                      Delete Component
+                    </button>
+                  </div>
+                ) : (
+                  <div className="text-center text-gray-500 text-sm">
+                    <MousePointer className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                    Select a component to edit its properties
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
         )}
 

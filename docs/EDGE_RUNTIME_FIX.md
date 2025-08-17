@@ -1,0 +1,125 @@
+# Edge Runtime Redis Middleware Fix
+
+## Problem
+The portal was failing to load at http://localhost:4400/ with the following error:
+```
+TypeError: Cannot read properties of undefined (reading 'charCodeAt')
+    at redis-errors/index.js
+```
+
+This error occurred because the Next.js middleware runs in the Edge Runtime environment, which has limited JavaScript APIs and doesn't support Node.js-specific modules like `ioredis`.
+
+## Root Cause
+The permission system (`PermissionCache` class) was importing and using `ioredis` for caching permission decisions. When this code was called from the middleware (which runs in Edge Runtime), it failed because:
+
+1. Edge Runtime doesn't have access to Node.js APIs
+2. `ioredis` and its dependencies (`redis-errors`) use Node.js-specific features
+3. The middleware was invoking permission checks that tried to initialize Redis
+
+## Solution
+Created Edge Runtime-compatible versions of the permission system components that use in-memory caching instead of Redis when running in the Edge Runtime context.
+
+### New Files Created
+
+1. **`src/lib/permissions/edge-cache.ts`**
+   - Pure memory-based cache implementation
+   - No Redis dependencies
+   - Singleton pattern for consistent caching across requests
+   - LRU eviction when cache size exceeds limits
+
+2. **`src/lib/permissions/permission-cache-edge.ts`**
+   - Simplified permission cache for Edge Runtime
+   - Memory-only implementation without Redis
+   - Compatible with Edge Runtime constraints
+
+3. **`src/lib/permissions/permission-engine-edge.ts`**
+   - Lightweight permission engine for middleware
+   - Works with JWT/session data instead of database queries
+   - Optimized for Edge Runtime performance
+
+4. **`src/lib/permissions/helpers-edge.ts`**
+   - Edge-compatible helper functions
+   - Same API as regular helpers but using Edge-compatible engine
+
+5. **`src/lib/permissions/cache-factory.ts`**
+   - Factory pattern to select appropriate implementation
+   - Detects runtime environment automatically
+   - Provides unified interface for both environments
+
+### Modified Files
+
+1. **`src/middleware/permission-check.ts`**
+   - Updated to use Edge-compatible helpers
+   - Passes roles from JWT token to permission context
+   - Works within Edge Runtime constraints
+
+2. **`src/lib/permissions/types.ts`**
+   - Added `roles` field to `PermissionContext` for Edge Runtime checks
+
+## Architecture
+
+### Server-Side (API Routes)
+```
+API Route → Permission Helpers → Permission Engine → Redis Cache
+                                                    ↓
+                                                Database
+```
+
+### Edge Runtime (Middleware)
+```
+Middleware → Edge Helpers → Edge Permission Engine → Memory Cache
+                                                    ↓
+                                                JWT/Session
+```
+
+## Key Differences
+
+| Feature | Server Environment | Edge Runtime |
+|---------|-------------------|--------------|
+| Cache Backend | Redis + Memory | Memory Only |
+| Permission Data | Database | JWT Claims |
+| Complexity | Full RBAC/ABAC | Simplified |
+| Performance | High with Redis | High with Memory |
+| Scalability | Redis Cluster | Per-Instance |
+
+## Testing
+
+1. **Portal Loading**: ✅ Successfully loads at http://localhost:4400/
+2. **Dashboard Access**: ✅ Returns 200 status
+3. **API Health Check**: ✅ Returns 200 status
+4. **Middleware Security**: ✅ Headers applied correctly
+5. **Permission Checks**: ✅ Working in Edge Runtime
+
+## Performance Considerations
+
+1. **Memory Usage**: Edge Runtime cache is limited to 10,000 entries with LRU eviction
+2. **TTL**: Default 5-minute TTL for cached decisions
+3. **Cleanup**: Automatic cleanup of expired entries every minute
+4. **Isolation**: Each Edge Runtime instance has its own cache
+
+## Future Improvements
+
+1. **Distributed Cache**: Consider using Edge-compatible distributed cache (e.g., Cloudflare KV, Vercel KV)
+2. **JWT Enhancement**: Include more permission data in JWT to reduce lookups
+3. **Cache Warming**: Pre-populate cache with common permission patterns
+4. **Monitoring**: Add metrics for cache hit rates and performance
+
+## Migration Notes
+
+When deploying to production:
+
+1. Ensure JWT tokens include necessary role information
+2. Configure appropriate cache TTLs based on security requirements
+3. Monitor memory usage in Edge Runtime instances
+4. Consider implementing distributed caching for multi-region deployments
+
+## Rollback Plan
+
+If issues arise, the original Redis-based implementation is preserved and can be restored by:
+1. Reverting changes to `src/middleware/permission-check.ts`
+2. Removing Edge-compatible files
+3. Ensuring Redis is properly configured for the environment
+
+## Conclusion
+
+The fix successfully resolves the Redis middleware error while maintaining security and performance. The dual-implementation approach ensures optimal performance in both Edge Runtime (middleware) and Node.js (API routes) contexts.

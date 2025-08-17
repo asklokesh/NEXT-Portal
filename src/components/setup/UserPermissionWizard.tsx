@@ -1,0 +1,1153 @@
+/**
+ * User Permission Setup Wizard
+ * Guided setup for user roles, permissions, and access control
+ */
+
+'use client';
+
+import { useState, useEffect } from 'react';
+import { 
+  Card, 
+  CardContent, 
+  CardDescription, 
+  CardHeader, 
+  CardTitle,
+  CardFooter
+} from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
+import { Progress } from '@/components/ui/progress';
+import { Badge } from '@/components/ui/badge';
+import { Separator } from '@/components/ui/separator';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { 
+  Select, 
+  SelectContent, 
+  SelectItem, 
+  SelectTrigger, 
+  SelectValue 
+} from '@/components/ui/select';
+import { Checkbox } from '@/components/ui/checkbox';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
+import { 
+  Users,
+  Shield,
+  Key,
+  UserCheck,
+  Settings,
+  CheckCircle2,
+  AlertTriangle,
+  Info,
+  ArrowRight,
+  ArrowLeft,
+  Eye,
+  Edit,
+  Trash2,
+  Lock,
+  Unlock,
+  Crown,
+  Star,
+  UserCog,
+  Building,
+  Database,
+  Globe,
+  RefreshCw,
+  Plus,
+  Minus,
+  Copy,
+  FileText,
+  Calendar,
+  Clock
+} from 'lucide-react';
+import { toast } from '@/components/ui/use-toast';
+
+interface Permission {
+  id: string;
+  name: string;
+  description: string;
+  category: string;
+  scope: 'GLOBAL' | 'TENANT' | 'RESOURCE';
+  level: 'READ' | 'WRITE' | 'ADMIN' | 'OWNER';
+  dangerous?: boolean;
+}
+
+interface Role {
+  id: string;
+  name: string;
+  description: string;
+  type: 'SYSTEM' | 'CUSTOM';
+  permissions: string[];
+  inheritsFrom?: string;
+  isEditable: boolean;
+  userCount?: number;
+}
+
+interface UserGroup {
+  id: string;
+  name: string;
+  description: string;
+  members: string[];
+  roles: string[];
+  autoAssignment?: {
+    enabled: boolean;
+    criteria: Record<string, any>;
+  };
+}
+
+interface PermissionPolicy {
+  id: string;
+  name: string;
+  description: string;
+  type: 'ALLOW' | 'DENY';
+  conditions: PolicyCondition[];
+  resources: string[];
+  actions: string[];
+  priority: number;
+}
+
+interface PolicyCondition {
+  field: string;
+  operator: 'EQUALS' | 'NOT_EQUALS' | 'CONTAINS' | 'REGEX';
+  value: string;
+}
+
+interface PermissionSetup {
+  organizationSettings: {
+    defaultRole: string;
+    autoApproval: boolean;
+    inviteExpiry: number; // days
+    multiFactorRequired: boolean;
+    passwordPolicy: {
+      minLength: number;
+      requireSpecialChars: boolean;
+      requireNumbers: boolean;
+      requireUppercase: boolean;
+    };
+  };
+  roles: Role[];
+  groups: UserGroup[];
+  policies: PermissionPolicy[];
+  integrations: {
+    ldap?: { enabled: boolean; syncRoles: boolean };
+    saml?: { enabled: boolean; roleMapping: Record<string, string> };
+    oauth?: { enabled: boolean; autoCreateUsers: boolean };
+  };
+}
+
+const SYSTEM_PERMISSIONS: Permission[] = [
+  // Catalog permissions
+  { id: 'catalog:read', name: 'View Catalog', description: 'View software catalog entities', category: 'Catalog', scope: 'TENANT', level: 'READ' },
+  { id: 'catalog:write', name: 'Edit Catalog', description: 'Create and edit catalog entities', category: 'Catalog', scope: 'TENANT', level: 'WRITE' },
+  { id: 'catalog:delete', name: 'Delete Catalog Items', description: 'Delete catalog entities', category: 'Catalog', scope: 'TENANT', level: 'ADMIN', dangerous: true },
+  
+  // User management permissions
+  { id: 'users:read', name: 'View Users', description: 'View user profiles and information', category: 'Users', scope: 'TENANT', level: 'READ' },
+  { id: 'users:invite', name: 'Invite Users', description: 'Send user invitations', category: 'Users', scope: 'TENANT', level: 'WRITE' },
+  { id: 'users:admin', name: 'Manage Users', description: 'Full user management capabilities', category: 'Users', scope: 'TENANT', level: 'ADMIN', dangerous: true },
+  
+  // Plugin permissions
+  { id: 'plugins:read', name: 'View Plugins', description: 'View installed plugins and marketplace', category: 'Plugins', scope: 'TENANT', level: 'READ' },
+  { id: 'plugins:install', name: 'Install Plugins', description: 'Install and configure plugins', category: 'Plugins', scope: 'TENANT', level: 'WRITE' },
+  { id: 'plugins:admin', name: 'Manage Plugins', description: 'Full plugin management including uninstall', category: 'Plugins', scope: 'TENANT', level: 'ADMIN' },
+  
+  // Settings permissions
+  { id: 'settings:read', name: 'View Settings', description: 'View organization settings', category: 'Settings', scope: 'TENANT', level: 'READ' },
+  { id: 'settings:write', name: 'Edit Settings', description: 'Modify organization settings', category: 'Settings', scope: 'TENANT', level: 'WRITE' },
+  { id: 'settings:admin', name: 'Admin Settings', description: 'Manage security and billing settings', category: 'Settings', scope: 'TENANT', level: 'ADMIN', dangerous: true },
+  
+  // System permissions
+  { id: 'system:read', name: 'System View', description: 'View system information and logs', category: 'System', scope: 'GLOBAL', level: 'READ' },
+  { id: 'system:admin', name: 'System Admin', description: 'Full system administration', category: 'System', scope: 'GLOBAL', level: 'OWNER', dangerous: true },
+  
+  // API permissions
+  { id: 'api:read', name: 'API Read', description: 'Read access to APIs', category: 'API', scope: 'TENANT', level: 'READ' },
+  { id: 'api:write', name: 'API Write', description: 'Write access to APIs', category: 'API', scope: 'TENANT', level: 'WRITE' },
+  
+  // Documentation permissions
+  { id: 'docs:read', name: 'Read Documentation', description: 'View documentation', category: 'Documentation', scope: 'TENANT', level: 'READ' },
+  { id: 'docs:write', name: 'Edit Documentation', description: 'Create and edit documentation', category: 'Documentation', scope: 'TENANT', level: 'WRITE' }
+];
+
+const DEFAULT_ROLES: Role[] = [
+  {
+    id: 'viewer',
+    name: 'Viewer',
+    description: 'Read-only access to most resources',
+    type: 'SYSTEM',
+    permissions: ['catalog:read', 'docs:read', 'api:read'],
+    isEditable: false,
+    userCount: 0
+  },
+  {
+    id: 'developer',
+    name: 'Developer',
+    description: 'Standard developer access with write permissions',
+    type: 'SYSTEM',
+    permissions: ['catalog:read', 'catalog:write', 'docs:read', 'docs:write', 'plugins:read', 'api:read', 'api:write'],
+    isEditable: false,
+    userCount: 0
+  },
+  {
+    id: 'maintainer',
+    name: 'Maintainer',
+    description: 'Extended permissions for project maintainers',
+    type: 'SYSTEM',
+    permissions: ['catalog:read', 'catalog:write', 'docs:read', 'docs:write', 'plugins:read', 'plugins:install', 'users:read', 'users:invite', 'api:read', 'api:write'],
+    isEditable: false,
+    userCount: 0
+  },
+  {
+    id: 'admin',
+    name: 'Administrator',
+    description: 'Full administrative access',
+    type: 'SYSTEM',
+    permissions: ['catalog:read', 'catalog:write', 'catalog:delete', 'users:read', 'users:invite', 'users:admin', 'plugins:read', 'plugins:install', 'plugins:admin', 'settings:read', 'settings:write', 'settings:admin', 'api:read', 'api:write', 'docs:read', 'docs:write'],
+    isEditable: false,
+    userCount: 0
+  }
+];
+
+export default function UserPermissionWizard() {
+  const [currentStep, setCurrentStep] = useState(1);
+  const [setup, setSetup] = useState<Partial<PermissionSetup>>({
+    organizationSettings: {
+      defaultRole: 'developer',
+      autoApproval: false,
+      inviteExpiry: 7,
+      multiFactorRequired: false,
+      passwordPolicy: {
+        minLength: 8,
+        requireSpecialChars: true,
+        requireNumbers: true,
+        requireUppercase: true
+      }
+    },
+    roles: [...DEFAULT_ROLES],
+    groups: [],
+    policies: [],
+    integrations: {}
+  });
+  const [selectedPermissions, setSelectedPermissions] = useState<Record<string, string[]>>({});
+  const [loading, setLoading] = useState(false);
+  const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});
+
+  const totalSteps = 6;
+  const progress = (currentStep / totalSteps) * 100;
+
+  const validateStep = (step: number): boolean => {
+    const errors: Record<string, string> = {};
+
+    switch (step) {
+      case 1:
+        if (!setup.organizationSettings?.defaultRole) {
+          errors.defaultRole = 'Please select a default role';
+        }
+        break;
+      case 2:
+        // Role configuration is optional as we have defaults
+        break;
+      case 3:
+        // Group configuration is optional
+        break;
+      case 4:
+        // Policy configuration is optional
+        break;
+      case 5:
+        // Integration configuration is optional
+        break;
+      case 6:
+        // Final review - no specific validation
+        break;
+    }
+
+    setValidationErrors(errors);
+    return Object.keys(errors).length === 0;
+  };
+
+  const handleNext = () => {
+    if (validateStep(currentStep)) {
+      setCurrentStep(prev => Math.min(prev + 1, totalSteps));
+    }
+  };
+
+  const handlePrevious = () => {
+    setCurrentStep(prev => Math.max(prev - 1, 1));
+  };
+
+  const addCustomRole = () => {
+    const newRole: Role = {
+      id: `custom-${Date.now()}`,
+      name: 'New Role',
+      description: 'Custom role description',
+      type: 'CUSTOM',
+      permissions: [],
+      isEditable: true,
+      userCount: 0
+    };
+
+    setSetup(prev => ({
+      ...prev,
+      roles: [...(prev.roles || []), newRole]
+    }));
+  };
+
+  const updateRole = (roleId: string, updates: Partial<Role>) => {
+    setSetup(prev => ({
+      ...prev,
+      roles: prev.roles?.map(role => 
+        role.id === roleId ? { ...role, ...updates } : role
+      )
+    }));
+  };
+
+  const deleteRole = (roleId: string) => {
+    setSetup(prev => ({
+      ...prev,
+      roles: prev.roles?.filter(role => role.id !== roleId)
+    }));
+  };
+
+  const addUserGroup = () => {
+    const newGroup: UserGroup = {
+      id: `group-${Date.now()}`,
+      name: 'New Group',
+      description: 'Group description',
+      members: [],
+      roles: []
+    };
+
+    setSetup(prev => ({
+      ...prev,
+      groups: [...(prev.groups || []), newGroup]
+    }));
+  };
+
+  const updateGroup = (groupId: string, updates: Partial<UserGroup>) => {
+    setSetup(prev => ({
+      ...prev,
+      groups: prev.groups?.map(group => 
+        group.id === groupId ? { ...group, ...updates } : group
+      )
+    }));
+  };
+
+  const deleteGroup = (groupId: string) => {
+    setSetup(prev => ({
+      ...prev,
+      groups: prev.groups?.filter(group => group.id !== groupId)
+    }));
+  };
+
+  const savePermissionSetup = async () => {
+    setLoading(true);
+    try {
+      const response = await fetch('/api/setup/permissions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          operation: 'save_setup',
+          data: setup
+        })
+      });
+
+      const result = await response.json();
+      
+      if (result.success) {
+        toast({
+          title: 'Success',
+          description: 'Permission setup saved successfully'
+        });
+      } else {
+        throw new Error(result.error || 'Failed to save setup');
+      }
+    } catch (error) {
+      toast({
+        title: 'Error',
+        description: 'Failed to save permission setup',
+        variant: 'destructive'
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const renderStepContent = () => {
+    switch (currentStep) {
+      case 1:
+        return (
+          <div className="space-y-6">
+            <div>
+              <h3 className="text-lg font-semibold mb-2">Organization Settings</h3>
+              <p className="text-gray-600 mb-4">
+                Configure basic security and user management settings
+              </p>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <Label htmlFor="defaultRole">Default Role for New Users</Label>
+                <Select
+                  value={setup.organizationSettings?.defaultRole}
+                  onValueChange={(value) => setSetup(prev => ({
+                    ...prev,
+                    organizationSettings: { ...prev.organizationSettings!, defaultRole: value }
+                  }))}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select default role" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {setup.roles?.map((role) => (
+                      <SelectItem key={role.id} value={role.id}>{role.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {validationErrors.defaultRole && (
+                  <p className="text-red-500 text-sm mt-1">{validationErrors.defaultRole}</p>
+                )}
+              </div>
+
+              <div>
+                <Label htmlFor="inviteExpiry">Invitation Expiry (Days)</Label>
+                <Input
+                  id="inviteExpiry"
+                  type="number"
+                  min="1"
+                  max="30"
+                  value={setup.organizationSettings?.inviteExpiry}
+                  onChange={(e) => setSetup(prev => ({
+                    ...prev,
+                    organizationSettings: { 
+                      ...prev.organizationSettings!, 
+                      inviteExpiry: parseInt(e.target.value) || 7 
+                    }
+                  }))}
+                />
+              </div>
+
+              <div className="space-y-3">
+                <div className="flex items-center space-x-2">
+                  <Checkbox
+                    id="autoApproval"
+                    checked={setup.organizationSettings?.autoApproval}
+                    onCheckedChange={(checked) => setSetup(prev => ({
+                      ...prev,
+                      organizationSettings: { 
+                        ...prev.organizationSettings!, 
+                        autoApproval: !!checked 
+                      }
+                    }))}
+                  />
+                  <Label htmlFor="autoApproval">Auto-approve user registrations</Label>
+                </div>
+
+                <div className="flex items-center space-x-2">
+                  <Checkbox
+                    id="multiFactorRequired"
+                    checked={setup.organizationSettings?.multiFactorRequired}
+                    onCheckedChange={(checked) => setSetup(prev => ({
+                      ...prev,
+                      organizationSettings: { 
+                        ...prev.organizationSettings!, 
+                        multiFactorRequired: !!checked 
+                      }
+                    }))}
+                  />
+                  <Label htmlFor="multiFactorRequired">Require multi-factor authentication</Label>
+                </div>
+              </div>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base">Password Policy</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <div>
+                    <Label htmlFor="minLength">Minimum Length</Label>
+                    <Input
+                      id="minLength"
+                      type="number"
+                      min="6"
+                      max="20"
+                      value={setup.organizationSettings?.passwordPolicy.minLength}
+                      onChange={(e) => setSetup(prev => ({
+                        ...prev,
+                        organizationSettings: { 
+                          ...prev.organizationSettings!, 
+                          passwordPolicy: {
+                            ...prev.organizationSettings!.passwordPolicy,
+                            minLength: parseInt(e.target.value) || 8
+                          }
+                        }
+                      }))}
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="flex items-center space-x-2">
+                      <Checkbox
+                        id="requireSpecialChars"
+                        checked={setup.organizationSettings?.passwordPolicy.requireSpecialChars}
+                        onCheckedChange={(checked) => setSetup(prev => ({
+                          ...prev,
+                          organizationSettings: { 
+                            ...prev.organizationSettings!, 
+                            passwordPolicy: {
+                              ...prev.organizationSettings!.passwordPolicy,
+                              requireSpecialChars: !!checked
+                            }
+                          }
+                        }))}
+                      />
+                      <Label htmlFor="requireSpecialChars">Special characters</Label>
+                    </div>
+
+                    <div className="flex items-center space-x-2">
+                      <Checkbox
+                        id="requireNumbers"
+                        checked={setup.organizationSettings?.passwordPolicy.requireNumbers}
+                        onCheckedChange={(checked) => setSetup(prev => ({
+                          ...prev,
+                          organizationSettings: { 
+                            ...prev.organizationSettings!, 
+                            passwordPolicy: {
+                              ...prev.organizationSettings!.passwordPolicy,
+                              requireNumbers: !!checked
+                            }
+                          }
+                        }))}
+                      />
+                      <Label htmlFor="requireNumbers">Numbers</Label>
+                    </div>
+
+                    <div className="flex items-center space-x-2">
+                      <Checkbox
+                        id="requireUppercase"
+                        checked={setup.organizationSettings?.passwordPolicy.requireUppercase}
+                        onCheckedChange={(checked) => setSetup(prev => ({
+                          ...prev,
+                          organizationSettings: { 
+                            ...prev.organizationSettings!, 
+                            passwordPolicy: {
+                              ...prev.organizationSettings!.passwordPolicy,
+                              requireUppercase: !!checked
+                            }
+                          }
+                        }))}
+                      />
+                      <Label htmlFor="requireUppercase">Uppercase letters</Label>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+          </div>
+        );
+
+      case 2:
+        return (
+          <div className="space-y-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-lg font-semibold mb-2">Role Management</h3>
+                <p className="text-gray-600">
+                  Configure roles and their permissions
+                </p>
+              </div>
+              <Button onClick={addCustomRole}>
+                <Plus className="h-4 w-4 mr-2" />
+                Add Custom Role
+              </Button>
+            </div>
+
+            <div className="space-y-4">
+              {setup.roles?.map((role) => (
+                <Card key={role.id}>
+                  <CardHeader>
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <div>
+                          {role.isEditable ? (
+                            <Input
+                              value={role.name}
+                              onChange={(e) => updateRole(role.id, { name: e.target.value })}
+                              className="font-medium w-auto"
+                            />
+                          ) : (
+                            <CardTitle className="text-base">{role.name}</CardTitle>
+                          )}
+                          {role.isEditable ? (
+                            <Textarea
+                              value={role.description}
+                              onChange={(e) => updateRole(role.id, { description: e.target.value })}
+                              className="text-sm text-gray-600 mt-1"
+                              rows={2}
+                            />
+                          ) : (
+                            <CardDescription>{role.description}</CardDescription>
+                          )}
+                        </div>
+                        <div className="flex gap-2">
+                          <Badge variant={role.type === 'SYSTEM' ? 'default' : 'secondary'}>
+                            {role.type}
+                          </Badge>
+                          {role.userCount !== undefined && (
+                            <Badge variant="outline">
+                              {role.userCount} users
+                            </Badge>
+                          )}
+                        </div>
+                      </div>
+                      {role.isEditable && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => deleteRole(role.id)}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      )}
+                    </div>
+                  </CardHeader>
+                  <CardContent>
+                    <div>
+                      <Label className="text-sm font-medium">Permissions</Label>
+                      <div className="grid grid-cols-2 gap-2 mt-2 max-h-40 overflow-y-auto">
+                        {SYSTEM_PERMISSIONS.map((permission) => (
+                          <div key={permission.id} className="flex items-center space-x-2">
+                            <Checkbox
+                              id={`${role.id}-${permission.id}`}
+                              checked={role.permissions.includes(permission.id)}
+                              onCheckedChange={(checked) => {
+                                const permissions = checked 
+                                  ? [...role.permissions, permission.id]
+                                  : role.permissions.filter(p => p !== permission.id);
+                                updateRole(role.id, { permissions });
+                              }}
+                              disabled={!role.isEditable}
+                            />
+                            <Label 
+                              htmlFor={`${role.id}-${permission.id}`} 
+                              className={`text-sm ${permission.dangerous ? 'text-red-600' : ''}`}
+                            >
+                              {permission.name}
+                              {permission.dangerous && <span className="ml-1">⚠️</span>}
+                            </Label>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          </div>
+        );
+
+      case 3:
+        return (
+          <div className="space-y-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-lg font-semibold mb-2">User Groups</h3>
+                <p className="text-gray-600">
+                  Create groups to manage permissions for multiple users
+                </p>
+              </div>
+              <Button onClick={addUserGroup}>
+                <Plus className="h-4 w-4 mr-2" />
+                Add Group
+              </Button>
+            </div>
+
+            <div className="space-y-4">
+              {setup.groups?.map((group) => (
+                <Card key={group.id}>
+                  <CardHeader>
+                    <div className="flex items-center justify-between">
+                      <div className="flex-1">
+                        <Input
+                          value={group.name}
+                          onChange={(e) => updateGroup(group.id, { name: e.target.value })}
+                          className="font-medium mb-2"
+                        />
+                        <Textarea
+                          value={group.description}
+                          onChange={(e) => updateGroup(group.id, { description: e.target.value })}
+                          placeholder="Group description"
+                          rows={2}
+                        />
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => deleteGroup(group.id)}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div>
+                      <Label>Assigned Roles</Label>
+                      <div className="grid grid-cols-2 gap-2 mt-2">
+                        {setup.roles?.map((role) => (
+                          <div key={role.id} className="flex items-center space-x-2">
+                            <Checkbox
+                              id={`${group.id}-${role.id}`}
+                              checked={group.roles.includes(role.id)}
+                              onCheckedChange={(checked) => {
+                                const roles = checked 
+                                  ? [...group.roles, role.id]
+                                  : group.roles.filter(r => r !== role.id);
+                                updateGroup(group.id, { roles });
+                              }}
+                            />
+                            <Label htmlFor={`${group.id}-${role.id}`} className="text-sm">
+                              {role.name}
+                            </Label>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div>
+                      <div className="flex items-center space-x-2 mb-2">
+                        <Checkbox
+                          id={`${group.id}-auto`}
+                          checked={group.autoAssignment?.enabled}
+                          onCheckedChange={(checked) => updateGroup(group.id, {
+                            autoAssignment: {
+                              enabled: !!checked,
+                              criteria: group.autoAssignment?.criteria || {}
+                            }
+                          })}
+                        />
+                        <Label htmlFor={`${group.id}-auto`}>Auto-assign users</Label>
+                      </div>
+                      {group.autoAssignment?.enabled && (
+                        <Input
+                          placeholder="e.g., email domain: @company.com"
+                          className="text-sm"
+                        />
+                      )}
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
+
+              {setup.groups?.length === 0 && (
+                <div className="text-center py-8 text-gray-500">
+                  <Users className="h-12 w-12 mx-auto mb-2" />
+                  <p>No groups created yet</p>
+                  <p className="text-sm">Groups help organize users and manage permissions at scale</p>
+                </div>
+              )}
+            </div>
+          </div>
+        );
+
+      case 4:
+        return (
+          <div className="space-y-6">
+            <div>
+              <h3 className="text-lg font-semibold mb-2">Permission Policies</h3>
+              <p className="text-gray-600 mb-4">
+                Create advanced permission policies for fine-grained access control
+              </p>
+            </div>
+
+            <Alert>
+              <Info className="h-4 w-4" />
+              <AlertDescription>
+                Permission policies provide advanced access control beyond basic roles. 
+                You can skip this step and configure policies later if needed.
+              </AlertDescription>
+            </Alert>
+
+            <div className="space-y-4">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base">Policy-Based Access Control (PBAC)</CardTitle>
+                  <CardDescription>
+                    Define conditional access rules based on user attributes, resources, and context
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-center">
+                    <div className="p-4 border rounded-lg">
+                      <Shield className="h-8 w-8 mx-auto mb-2 text-blue-500" />
+                      <h4 className="font-medium">Attribute-Based</h4>
+                      <p className="text-sm text-gray-600">Control access based on user attributes</p>
+                    </div>
+                    <div className="p-4 border rounded-lg">
+                      <Clock className="h-8 w-8 mx-auto mb-2 text-green-500" />
+                      <h4 className="font-medium">Time-Based</h4>
+                      <p className="text-sm text-gray-600">Restrict access during specific hours</p>
+                    </div>
+                    <div className="p-4 border rounded-lg">
+                      <Globe className="h-8 w-8 mx-auto mb-2 text-purple-500" />
+                      <h4 className="font-medium">Location-Based</h4>
+                      <p className="text-sm text-gray-600">Control access by IP or geolocation</p>
+                    </div>
+                  </div>
+
+                  <div>
+                    <h5 className="font-medium mb-2">Example Policies</h5>
+                    <div className="space-y-2 text-sm">
+                      <div className="p-2 bg-gray-50 rounded">
+                        <strong>Admin Hours:</strong> Admin actions only allowed during business hours (9 AM - 6 PM)
+                      </div>
+                      <div className="p-2 bg-gray-50 rounded">
+                        <strong>Department Access:</strong> Users can only access resources from their department
+                      </div>
+                      <div className="p-2 bg-gray-50 rounded">
+                        <strong>Sensitive Operations:</strong> High-risk actions require additional approval
+                      </div>
+                    </div>
+                  </div>
+
+                  <Button variant="outline" className="w-full">
+                    <Plus className="h-4 w-4 mr-2" />
+                    Create Advanced Policy
+                  </Button>
+                </CardContent>
+              </Card>
+            </div>
+          </div>
+        );
+
+      case 5:
+        return (
+          <div className="space-y-6">
+            <div>
+              <h3 className="text-lg font-semibold mb-2">Authentication Integration</h3>
+              <p className="text-gray-600 mb-4">
+                Configure external authentication providers and user synchronization
+              </p>
+            </div>
+
+            <div className="space-y-4">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base">LDAP/Active Directory</CardTitle>
+                  <CardDescription>
+                    Integrate with your existing directory service
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="flex items-center space-x-2">
+                    <Checkbox
+                      id="ldap-enabled"
+                      checked={setup.integrations?.ldap?.enabled}
+                      onCheckedChange={(checked) => setSetup(prev => ({
+                        ...prev,
+                        integrations: {
+                          ...prev.integrations,
+                          ldap: { enabled: !!checked, syncRoles: false }
+                        }
+                      }))}
+                    />
+                    <Label htmlFor="ldap-enabled">Enable LDAP integration</Label>
+                  </div>
+
+                  {setup.integrations?.ldap?.enabled && (
+                    <div className="space-y-3 pl-6">
+                      <div className="flex items-center space-x-2">
+                        <Checkbox
+                          id="ldap-sync"
+                          checked={setup.integrations.ldap.syncRoles}
+                          onCheckedChange={(checked) => setSetup(prev => ({
+                            ...prev,
+                            integrations: {
+                              ...prev.integrations,
+                              ldap: { ...prev.integrations!.ldap!, syncRoles: !!checked }
+                            }
+                          }))}
+                        />
+                        <Label htmlFor="ldap-sync">Automatically sync user roles from LDAP groups</Label>
+                      </div>
+                      <Alert>
+                        <Info className="h-4 w-4" />
+                        <AlertDescription>
+                          LDAP configuration requires additional setup in your app-config.yaml file.
+                        </AlertDescription>
+                      </Alert>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base">SAML Single Sign-On</CardTitle>
+                  <CardDescription>
+                    Enterprise SSO with role mapping
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="flex items-center space-x-2">
+                    <Checkbox
+                      id="saml-enabled"
+                      checked={setup.integrations?.saml?.enabled}
+                      onCheckedChange={(checked) => setSetup(prev => ({
+                        ...prev,
+                        integrations: {
+                          ...prev.integrations,
+                          saml: { enabled: !!checked, roleMapping: {} }
+                        }
+                      }))}
+                    />
+                    <Label htmlFor="saml-enabled">Enable SAML SSO</Label>
+                  </div>
+
+                  {setup.integrations?.saml?.enabled && (
+                    <div className="pl-6">
+                      <Alert>
+                        <Info className="h-4 w-4" />
+                        <AlertDescription>
+                          SAML configuration requires coordination with your identity provider administrator.
+                        </AlertDescription>
+                      </Alert>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base">OAuth Providers</CardTitle>
+                  <CardDescription>
+                    GitHub, Google, and other OAuth providers
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="flex items-center space-x-2">
+                    <Checkbox
+                      id="oauth-enabled"
+                      checked={setup.integrations?.oauth?.enabled}
+                      onCheckedChange={(checked) => setSetup(prev => ({
+                        ...prev,
+                        integrations: {
+                          ...prev.integrations,
+                          oauth: { enabled: !!checked, autoCreateUsers: true }
+                        }
+                      }))}
+                    />
+                    <Label htmlFor="oauth-enabled">Enable OAuth authentication</Label>
+                  </div>
+
+                  {setup.integrations?.oauth?.enabled && (
+                    <div className="space-y-3 pl-6">
+                      <div className="flex items-center space-x-2">
+                        <Checkbox
+                          id="oauth-auto-create"
+                          checked={setup.integrations.oauth.autoCreateUsers}
+                          onCheckedChange={(checked) => setSetup(prev => ({
+                            ...prev,
+                            integrations: {
+                              ...prev.integrations,
+                              oauth: { ...prev.integrations!.oauth!, autoCreateUsers: !!checked }
+                            }
+                          }))}
+                        />
+                        <Label htmlFor="oauth-auto-create">Automatically create users on first login</Label>
+                      </div>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            </div>
+          </div>
+        );
+
+      case 6:
+        return (
+          <div className="space-y-6">
+            <div>
+              <h3 className="text-lg font-semibold mb-2">Review Permission Setup</h3>
+              <p className="text-gray-600 mb-4">
+                Review your permission configuration before applying
+              </p>
+            </div>
+
+            <div className="space-y-4">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base">Organization Settings</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="grid grid-cols-2 gap-4 text-sm">
+                    <div>
+                      <span className="text-gray-600">Default Role:</span>
+                      <span className="ml-2 font-medium">
+                        {setup.roles?.find(r => r.id === setup.organizationSettings?.defaultRole)?.name}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-gray-600">Auto Approval:</span>
+                      <span className="ml-2 font-medium">
+                        {setup.organizationSettings?.autoApproval ? 'Enabled' : 'Disabled'}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-gray-600">Invite Expiry:</span>
+                      <span className="ml-2 font-medium">{setup.organizationSettings?.inviteExpiry} days</span>
+                    </div>
+                    <div>
+                      <span className="text-gray-600">MFA Required:</span>
+                      <span className="ml-2 font-medium">
+                        {setup.organizationSettings?.multiFactorRequired ? 'Yes' : 'No'}
+                      </span>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base">Roles ({setup.roles?.length || 0})</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-2">
+                    {setup.roles?.map((role) => (
+                      <div key={role.id} className="flex items-center justify-between text-sm">
+                        <div>
+                          <span className="font-medium">{role.name}</span>
+                          <span className="text-gray-600 ml-2">({role.permissions.length} permissions)</span>
+                        </div>
+                        <Badge variant={role.type === 'SYSTEM' ? 'default' : 'secondary'}>
+                          {role.type}
+                        </Badge>
+                      </div>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base">User Groups ({setup.groups?.length || 0})</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  {setup.groups?.length ? (
+                    <div className="space-y-2">
+                      {setup.groups.map((group) => (
+                        <div key={group.id} className="flex items-center justify-between text-sm">
+                          <span className="font-medium">{group.name}</span>
+                          <span className="text-gray-600">
+                            {group.roles.length} roles assigned
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-gray-500 text-sm">No groups configured</p>
+                  )}
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base">Authentication Integration</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-2 text-sm">
+                    <div className="flex items-center justify-between">
+                      <span>LDAP Integration:</span>
+                      <Badge variant={setup.integrations?.ldap?.enabled ? 'default' : 'secondary'}>
+                        {setup.integrations?.ldap?.enabled ? 'Enabled' : 'Disabled'}
+                      </Badge>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span>SAML SSO:</span>
+                      <Badge variant={setup.integrations?.saml?.enabled ? 'default' : 'secondary'}>
+                        {setup.integrations?.saml?.enabled ? 'Enabled' : 'Disabled'}
+                      </Badge>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span>OAuth Providers:</span>
+                      <Badge variant={setup.integrations?.oauth?.enabled ? 'default' : 'secondary'}>
+                        {setup.integrations?.oauth?.enabled ? 'Enabled' : 'Disabled'}
+                      </Badge>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Alert>
+                <CheckCircle2 className="h-4 w-4" />
+                <AlertDescription>
+                  Your permission setup is ready to be applied. Users can be invited and managed through the User Management dashboard.
+                </AlertDescription>
+              </Alert>
+            </div>
+          </div>
+        );
+
+      default:
+        return null;
+    }
+  };
+
+  return (
+    <div className="max-w-4xl mx-auto space-y-6">
+      <div className="text-center">
+        <h1 className="text-3xl font-bold mb-2">User Permission Setup</h1>
+        <p className="text-gray-600">
+          Configure roles, permissions, and access control for your developer portal
+        </p>
+      </div>
+
+      <div className="space-y-4">
+        <div className="flex items-center justify-between text-sm">
+          <span>Step {currentStep} of {totalSteps}</span>
+          <span>{Math.round(progress)}% Complete</span>
+        </div>
+        <Progress value={progress} className="w-full" />
+      </div>
+
+      <Card>
+        <CardContent className="p-6">
+          {renderStepContent()}
+        </CardContent>
+        <CardFooter className="flex justify-between">
+          <Button
+            variant="outline"
+            onClick={handlePrevious}
+            disabled={currentStep === 1}
+          >
+            <ArrowLeft className="h-4 w-4 mr-2" />
+            Previous
+          </Button>
+
+          <div className="flex gap-2">
+            {currentStep === totalSteps ? (
+              <Button
+                onClick={savePermissionSetup}
+                disabled={loading}
+              >
+                {loading ? (
+                  <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <CheckCircle2 className="h-4 w-4 mr-2" />
+                )}
+                Apply Configuration
+              </Button>
+            ) : (
+              <Button
+                onClick={handleNext}
+                disabled={!validateStep(currentStep)}
+              >
+                Next
+                <ArrowRight className="h-4 w-4 ml-2" />
+              </Button>
+            )}
+          </div>
+        </CardFooter>
+      </Card>
+    </div>
+  );
+}

@@ -1,0 +1,512 @@
+{
+  "dashboard": {
+    "id": null,
+    "title": "SaaS IDP - Overview Dashboard",
+    "tags": ["saas-idp", "overview", "production"],
+    "style": "dark",
+    "timezone": "browser",
+    "editable": true,
+    "graphTooltip": 1,
+    "time": {
+      "from": "now-1h",
+      "to": "now"
+    },
+    "timepicker": {
+      "refresh_intervals": ["5s", "10s", "30s", "1m", "5m", "15m", "30m", "1h", "2h", "1d"],
+      "time_options": ["5m", "15m", "1h", "6h", "12h", "24h", "2d", "7d", "30d"]
+    },
+    "refresh": "30s",
+    "version": 1,
+    "panels": [
+      {
+        "id": 1,
+        "title": "System Health Score",
+        "type": "stat",
+        "gridPos": {"h": 8, "w": 4, "x": 0, "y": 0},
+        "fieldConfig": {
+          "defaults": {
+            "mappings": [],
+            "thresholds": {
+              "steps": [
+                {"color": "red", "value": null},
+                {"color": "yellow", "value": 70},
+                {"color": "green", "value": 90}
+              ]
+            },
+            "min": 0,
+            "max": 100,
+            "unit": "percent"
+          }
+        },
+        "options": {
+          "colorMode": "background",
+          "graphMode": "area",
+          "justifyMode": "center",
+          "orientation": "horizontal",
+          "reduceOptions": {
+            "values": false,
+            "calcs": ["lastNotNull"],
+            "fields": ""
+          }
+        },
+        "targets": [
+          {
+            "expr": "saas_idp_system_health_score{component=\"overall\"}",
+            "legendFormat": "Health Score",
+            "refId": "A"
+          }
+        ]
+      },
+      {
+        "id": 2,
+        "title": "Active User Sessions",
+        "type": "stat",
+        "gridPos": {"h": 4, "w": 4, "x": 4, "y": 0},
+        "fieldConfig": {
+          "defaults": {
+            "mappings": [],
+            "thresholds": {
+              "steps": [
+                {"color": "green", "value": null}
+              ]
+            },
+            "unit": "short"
+          }
+        },
+        "options": {
+          "colorMode": "value",
+          "graphMode": "area",
+          "justifyMode": "center",
+          "orientation": "horizontal",
+          "reduceOptions": {
+            "values": false,
+            "calcs": ["lastNotNull"],
+            "fields": ""
+          }
+        },
+        "targets": [
+          {
+            "expr": "sum(saas_idp_user_sessions_active)",
+            "legendFormat": "Active Sessions",
+            "refId": "A"
+          }
+        ]
+      },
+      {
+        "id": 3,
+        "title": "Error Rate (5m)",
+        "type": "stat",
+        "gridPos": {"h": 4, "w": 4, "x": 8, "y": 0},
+        "fieldConfig": {
+          "defaults": {
+            "mappings": [],
+            "thresholds": {
+              "steps": [
+                {"color": "green", "value": null},
+                {"color": "yellow", "value": 1},
+                {"color": "red", "value": 5}
+              ]
+            },
+            "unit": "percent"
+          }
+        },
+        "options": {
+          "colorMode": "background",
+          "graphMode": "area",
+          "justifyMode": "center",
+          "orientation": "horizontal",
+          "reduceOptions": {
+            "values": false,
+            "calcs": ["lastNotNull"],
+            "fields": ""
+          }
+        },
+        "targets": [
+          {
+            "expr": "rate(saas_idp_errors_total[5m]) * 100",
+            "legendFormat": "Error Rate",
+            "refId": "A"
+          }
+        ]
+      },
+      {
+        "id": 4,
+        "title": "Response Time P95",
+        "type": "stat",
+        "gridPos": {"h": 4, "w": 4, "x": 12, "y": 0},
+        "fieldConfig": {
+          "defaults": {
+            "mappings": [],
+            "thresholds": {
+              "steps": [
+                {"color": "green", "value": null},
+                {"color": "yellow", "value": 0.5},
+                {"color": "red", "value": 2}
+              ]
+            },
+            "unit": "s"
+          }
+        },
+        "options": {
+          "colorMode": "background",
+          "graphMode": "area",
+          "justifyMode": "center",
+          "orientation": "horizontal",
+          "reduceOptions": {
+            "values": false,
+            "calcs": ["lastNotNull"],
+            "fields": ""
+          }
+        },
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, rate(saas_idp_http_request_duration_seconds_bucket[5m]))",
+            "legendFormat": "P95 Response Time",
+            "refId": "A"
+          }
+        ]
+      },
+      {
+        "id": 5,
+        "title": "HTTP Requests per Second",
+        "type": "graph",
+        "gridPos": {"h": 8, "w": 8, "x": 16, "y": 0},
+        "yAxes": [
+          {
+            "label": "requests/sec",
+            "min": 0,
+            "show": true
+          },
+          {
+            "show": false
+          }
+        ],
+        "targets": [
+          {
+            "expr": "rate(saas_idp_http_requests_total[1m])",
+            "legendFormat": "{{method}} {{route}}",
+            "refId": "A"
+          }
+        ],
+        "legend": {
+          "avg": false,
+          "current": false,
+          "max": false,
+          "min": false,
+          "show": true,
+          "total": false,
+          "values": false
+        }
+      },
+      {
+        "id": 6,
+        "title": "Plugin Operations",
+        "type": "graph",
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+        "yAxes": [
+          {
+            "label": "operations/sec",
+            "min": 0,
+            "show": true
+          },
+          {
+            "show": false
+          }
+        ],
+        "targets": [
+          {
+            "expr": "rate(saas_idp_plugin_operations_total[5m])",
+            "legendFormat": "{{plugin_id}} - {{operation}}",
+            "refId": "A"
+          }
+        ],
+        "legend": {
+          "avg": false,
+          "current": false,
+          "max": false,
+          "min": false,
+          "show": true,
+          "total": false,
+          "values": false
+        }
+      },
+      {
+        "id": 7,
+        "title": "System Resource Usage",
+        "type": "graph",
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+        "yAxes": [
+          {
+            "label": "percent",
+            "min": 0,
+            "max": 100,
+            "show": true
+          },
+          {
+            "label": "bytes",
+            "min": 0,
+            "show": true
+          }
+        ],
+        "targets": [
+          {
+            "expr": "saas_idp_cpu_usage_percent{component=\"system\"}",
+            "legendFormat": "CPU Usage",
+            "refId": "A"
+          },
+          {
+            "expr": "saas_idp_memory_usage_bytes{component=\"process\", type=\"heap_usage_percent\"}",
+            "legendFormat": "Memory Usage",
+            "refId": "B"
+          }
+        ],
+        "legend": {
+          "avg": true,
+          "current": true,
+          "max": true,
+          "min": false,
+          "show": true,
+          "total": false,
+          "values": true
+        }
+      },
+      {
+        "id": 8,
+        "title": "Database Performance",
+        "type": "graph",
+        "gridPos": {"h": 8, "w": 8, "x": 0, "y": 16},
+        "yAxes": [
+          {
+            "label": "seconds",
+            "min": 0,
+            "show": true
+          },
+          {
+            "label": "connections",
+            "min": 0,
+            "show": true
+          }
+        ],
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, rate(saas_idp_database_query_duration_seconds_bucket[5m]))",
+            "legendFormat": "P95 Query Time - {{database}}",
+            "refId": "A"
+          },
+          {
+            "expr": "saas_idp_database_connections_active",
+            "legendFormat": "Active Connections - {{database}}",
+            "refId": "B",
+            "yAxis": 2
+          }
+        ],
+        "legend": {
+          "avg": true,
+          "current": true,
+          "max": true,
+          "min": false,
+          "show": true,
+          "total": false,
+          "values": true
+        }
+      },
+      {
+        "id": 9,
+        "title": "Cache Performance",
+        "type": "graph",
+        "gridPos": {"h": 8, "w": 8, "x": 8, "y": 16},
+        "yAxes": [
+          {
+            "label": "hits/sec",
+            "min": 0,
+            "show": true
+          },
+          {
+            "label": "bytes",
+            "min": 0,
+            "show": true
+          }
+        ],
+        "targets": [
+          {
+            "expr": "rate(saas_idp_cache_hits_total[5m])",
+            "legendFormat": "Cache Hits - {{cache_name}}",
+            "refId": "A"
+          },
+          {
+            "expr": "rate(saas_idp_cache_misses_total[5m])",
+            "legendFormat": "Cache Misses - {{cache_name}}",
+            "refId": "B"
+          },
+          {
+            "expr": "saas_idp_cache_size_bytes",
+            "legendFormat": "Cache Size - {{cache_name}}",
+            "refId": "C",
+            "yAxis": 2
+          }
+        ],
+        "legend": {
+          "avg": true,
+          "current": true,
+          "max": true,
+          "min": false,
+          "show": true,
+          "total": false,
+          "values": true
+        }
+      },
+      {
+        "id": 10,
+        "title": "WebSocket Connections",
+        "type": "graph",
+        "gridPos": {"h": 8, "w": 8, "x": 16, "y": 16},
+        "yAxes": [
+          {
+            "label": "connections",
+            "min": 0,
+            "show": true
+          },
+          {
+            "label": "messages/sec",
+            "min": 0,
+            "show": true
+          }
+        ],
+        "targets": [
+          {
+            "expr": "saas_idp_websocket_connections_active",
+            "legendFormat": "Active Connections - {{namespace}}",
+            "refId": "A"
+          },
+          {
+            "expr": "rate(saas_idp_websocket_messages_total[5m])",
+            "legendFormat": "Messages/sec - {{type}}",
+            "refId": "B",
+            "yAxis": 2
+          }
+        ],
+        "legend": {
+          "avg": true,
+          "current": true,
+          "max": true,
+          "min": false,
+          "show": true,
+          "total": false,
+          "values": true
+        }
+      },
+      {
+        "id": 11,
+        "title": "Authentication Metrics",
+        "type": "graph",
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 24},
+        "yAxes": [
+          {
+            "label": "auth/sec",
+            "min": 0,
+            "show": true
+          },
+          {
+            "show": false
+          }
+        ],
+        "targets": [
+          {
+            "expr": "rate(saas_idp_authentication_success_total[5m])",
+            "legendFormat": "Success - {{provider}}",
+            "refId": "A"
+          },
+          {
+            "expr": "rate(saas_idp_authentication_failures_total[5m])",
+            "legendFormat": "Failures - {{provider}} ({{failure_reason}})",
+            "refId": "B"
+          }
+        ],
+        "legend": {
+          "avg": false,
+          "current": true,
+          "max": false,
+          "min": false,
+          "show": true,
+          "total": false,
+          "values": true
+        }
+      },
+      {
+        "id": 12,
+        "title": "Developer Productivity",
+        "type": "graph",
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 24},
+        "yAxes": [
+          {
+            "label": "count",
+            "min": 0,
+            "show": true
+          },
+          {
+            "show": false
+          }
+        ],
+        "targets": [
+          {
+            "expr": "saas_idp_developers_active_daily",
+            "legendFormat": "Daily Active Developers - {{tenant_id}}",
+            "refId": "A"
+          },
+          {
+            "expr": "increase(saas_idp_templates_created_total[1h])",
+            "legendFormat": "Templates Created (1h) - {{template_type}}",
+            "refId": "B"
+          },
+          {
+            "expr": "increase(saas_idp_services_deployed_total[1h])",
+            "legendFormat": "Services Deployed (1h) - {{environment}}",
+            "refId": "C"
+          }
+        ],
+        "legend": {
+          "avg": false,
+          "current": true,
+          "max": false,
+          "min": false,
+          "show": true,
+          "total": false,
+          "values": true
+        }
+      }
+    ],
+    "templating": {
+      "list": [
+        {
+          "name": "tenant",
+          "type": "query",
+          "query": "label_values(saas_idp_http_requests_total, tenant_id)",
+          "refresh": 1,
+          "includeAll": true,
+          "multi": true
+        },
+        {
+          "name": "instance",
+          "type": "query",
+          "query": "label_values(saas_idp_http_requests_total, instance)",
+          "refresh": 1,
+          "includeAll": true,
+          "multi": true
+        }
+      ]
+    },
+    "annotations": {
+      "list": [
+        {
+          "builtIn": 1,
+          "datasource": "-- Grafana --",
+          "enable": true,
+          "hide": true,
+          "iconColor": "rgba(0, 211, 255, 1)",
+          "name": "Annotations & Alerts",
+          "type": "dashboard"
+        }
+      ]
+    }
+  }
+}

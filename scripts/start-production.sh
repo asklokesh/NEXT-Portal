@@ -27,11 +27,11 @@ echo -e "\n${YELLOW}1. Starting Docker services...${NC}"
 cd "$PROJECT_ROOT"
 
 # Start PostgreSQL and Redis
-docker compose up -d postgres redis
+docker compose up -d db redis
 
 # Wait for PostgreSQL
 echo -n "Waiting for PostgreSQL..."
-until docker compose exec -T postgres pg_isready -U postgres > /dev/null 2>&1; do
+until docker compose exec -T db pg_isready -U postgres > /dev/null 2>&1; do
     echo -n "."
     sleep 1
 done
@@ -53,8 +53,7 @@ export PORT=4400
 # 3. Run database migrations
 echo -e "\n${YELLOW}3. Running database migrations...${NC}"
 if [ -f "prisma/schema.prisma" ]; then
-    npx prisma migrate deploy
-    npx prisma generate
+    npx prisma db push --force-reset --accept-data-loss && npx prisma migrate deploy && npx prisma generate
 fi
 
 # 4. Start Mock Backstage (since we don't have real Backstage)

@@ -1,0 +1,924 @@
+name: Comprehensive Testing Pipeline
+
+on:
+  push:
+    branches: [ main, develop, 'release/*' ]
+  pull_request:
+    branches: [ main, develop ]
+  schedule:
+    # Run nightly comprehensive tests at 2 AM UTC
+    - cron: '0 2 * * *'
+
+env:
+  NODE_VERSION: '18.x'
+  POSTGRES_VERSION: '15'
+  REDIS_VERSION: '7'
+
+jobs:
+  # Job 1: Code Quality and Static Analysis
+  code-quality:
+    name: Code Quality & Static Analysis
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run ESLint
+        run: npm run lint
+        continue-on-error: false
+
+      - name: Run Prettier check
+        run: npm run format:check
+        continue-on-error: false
+
+      - name: TypeScript check
+        run: npm run typecheck
+        continue-on-error: false
+
+      - name: Security audit
+        run: npm audit --audit-level=high
+        continue-on-error: true
+
+      - name: Upload lint results
+        uses: actions/upload-artifact@v3
+        if: failure()
+        with:
+          name: lint-results
+          path: |
+            eslint-report.json
+            prettier-report.json
+
+  # Job 2: Unit Tests
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: code-quality
+    
+    strategy:
+      matrix:
+        test-group: [api, components, services, hooks, utils]
+    
+    services:
+      postgres:
+        image: postgres:${{ env.POSTGRES_VERSION }}
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_USER: postgres
+          POSTGRES_DB: nextportal_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+      
+      redis:
+        image: redis:${{ env.REDIS_VERSION }}
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Setup test environment
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/nextportal_test
+          REDIS_URL: redis://localhost:6379
+        run: |
+          npx prisma generate
+          npx prisma db push
+
+      - name: Run unit tests
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/nextportal_test
+          REDIS_URL: redis://localhost:6379
+          NODE_ENV: test
+        run: |
+          case "${{ matrix.test-group }}" in
+            api)
+              npm test -- --testPathPattern="src/app/api|tests/unit/api" --coverage --coverageDirectory=coverage/api
+              ;;
+            components)
+              npm test -- --testPathPattern="src/components" --coverage --coverageDirectory=coverage/components
+              ;;
+            services)
+              npm test -- --testPathPattern="src/services" --coverage --coverageDirectory=coverage/services
+              ;;
+            hooks)
+              npm test -- --testPathPattern="src/hooks" --coverage --coverageDirectory=coverage/hooks
+              ;;
+            utils)
+              npm test -- --testPathPattern="src/lib|src/utils" --coverage --coverageDirectory=coverage/utils
+              ;;
+          esac
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: unit-test-results-${{ matrix.test-group }}
+          path: |
+            coverage/${{ matrix.test-group }}
+            junit.xml
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v3
+        with:
+          file: coverage/${{ matrix.test-group }}/lcov.info
+          flags: unit-tests-${{ matrix.test-group }}
+          name: ${{ matrix.test-group }}-coverage
+
+  # Job 3: Integration Tests
+  integration-tests:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: unit-tests
+    
+    services:
+      postgres:
+        image: postgres:${{ env.POSTGRES_VERSION }}
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_USER: postgres
+          POSTGRES_DB: nextportal_integration_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+      
+      redis:
+        image: redis:${{ env.REDIS_VERSION }}
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Setup integration test environment
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/nextportal_integration_test
+          REDIS_URL: redis://localhost:6379
+        run: |
+          npx prisma generate
+          npx prisma db push
+          npm run db:seed
+
+      - name: Start application for integration tests
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/nextportal_integration_test
+          REDIS_URL: redis://localhost:6379
+          NODE_ENV: test
+          PORT: 4400
+        run: |
+          npm run build
+          npm start &
+          sleep 30
+          curl -f http://localhost:4400/api/health || exit 1
+
+      - name: Run integration tests
+        env:
+          TEST_API_URL: http://localhost:4400
+          TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/nextportal_integration_test
+          TEST_REDIS_URL: redis://localhost:6379
+        run: |
+          npm run test -- --testPathPattern="tests/integration" --runInBand
+
+      - name: Upload integration test results
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: integration-test-results
+          path: |
+            integration-test-report.json
+            logs/
+
+  # Job 4: End-to-End Tests
+  e2e-tests:
+    name: End-to-End Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    needs: integration-tests
+    
+    strategy:
+      matrix:
+        browser: [chromium, firefox, webkit]
+        viewport: [desktop, mobile]
+        exclude:
+          - browser: webkit
+            viewport: mobile
+    
+    services:
+      postgres:
+        image: postgres:${{ env.POSTGRES_VERSION }}
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_USER: postgres
+          POSTGRES_DB: nextportal_e2e_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+      
+      redis:
+        image: redis:${{ env.REDIS_VERSION }}
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright
+        run: npx playwright install --with-deps ${{ matrix.browser }}
+
+      - name: Setup E2E test environment
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/nextportal_e2e_test
+          REDIS_URL: redis://localhost:6379
+        run: |
+          npx prisma generate
+          npx prisma db push
+          npm run db:seed
+
+      - name: Build and start application
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/nextportal_e2e_test
+          REDIS_URL: redis://localhost:6379
+          NODE_ENV: production
+          PORT: 4400
+        run: |
+          npm run build
+          npm start &
+          sleep 45
+          curl -f http://localhost:4400/api/health || exit 1
+
+      - name: Run E2E tests
+        env:
+          PLAYWRIGHT_BROWSER: ${{ matrix.browser }}
+          VIEWPORT_MODE: ${{ matrix.viewport }}
+          BASE_URL: http://localhost:4400
+        run: |
+          if [ "${{ matrix.viewport }}" = "mobile" ]; then
+            npm run test:e2e -- --project="Mobile ${{ matrix.browser }}"
+          else
+            npm run test:e2e -- --project="Desktop ${{ matrix.browser }}"
+          fi
+
+      - name: Upload E2E test results
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: e2e-results-${{ matrix.browser }}-${{ matrix.viewport }}
+          path: |
+            playwright-report/
+            test-results/
+
+      - name: Upload failure screenshots
+        uses: actions/upload-artifact@v3
+        if: failure()
+        with:
+          name: e2e-failures-${{ matrix.browser }}-${{ matrix.viewport }}
+          path: test-results/
+
+  # Job 5: Performance Tests
+  performance-tests:
+    name: Performance Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    needs: e2e-tests
+    if: github.event_name == 'schedule' || contains(github.event.pull_request.labels.*.name, 'performance-test')
+    
+    services:
+      postgres:
+        image: postgres:${{ env.POSTGRES_VERSION }}
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_USER: postgres
+          POSTGRES_DB: nextportal_perf_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+      
+      redis:
+        image: redis:${{ env.REDIS_VERSION }}
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install k6
+        run: |
+          sudo gpg --no-default-keyring --keyring /usr/share/keyrings/k6-archive-keyring.gpg --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
+          echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" | sudo tee /etc/apt/sources.list.d/k6.list
+          sudo apt-get update
+          sudo apt-get install k6
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Setup performance test environment
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/nextportal_perf_test
+          REDIS_URL: redis://localhost:6379
+        run: |
+          npx prisma generate
+          npx prisma db push
+          npm run db:seed
+
+      - name: Build and start application
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/nextportal_perf_test
+          REDIS_URL: redis://localhost:6379
+          NODE_ENV: production
+          PORT: 4400
+        run: |
+          npm run build
+          npm start &
+          sleep 60
+          curl -f http://localhost:4400/api/health || exit 1
+
+      - name: Run performance tests
+        env:
+          BASE_URL: http://localhost:4400
+          ADMIN_EMAIL: admin@test.com
+          ADMIN_PASSWORD: testpassword
+          K6_TEST_TYPE: load
+        run: |
+          k6 run tests/performance/load-tests/api-endpoints.js \
+            --out json=performance-results.json \
+            --summary-export=performance-summary.json
+
+      - name: Upload performance results
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: performance-test-results
+          path: |
+            performance-results.json
+            performance-summary.json
+            performance-report.html
+
+      - name: Comment performance results on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const fs = require('fs');
+            const summary = JSON.parse(fs.readFileSync('performance-summary.json', 'utf8'));
+            
+            const comment = `## Performance Test Results 📊
+            
+            **Overall Status:** ${summary.metrics.http_req_failed.rate < 0.05 ? '✅ PASS' : '❌ FAIL'}
+            
+            **Key Metrics:**
+            - Response Time (95th): ${Math.round(summary.metrics.http_req_duration.p95)}ms
+            - Error Rate: ${(summary.metrics.http_req_failed.rate * 100).toFixed(2)}%
+            - Total Requests: ${summary.metrics.http_reqs.count}
+            - Virtual Users: ${summary.state.vusMax}
+            
+            **Thresholds:**
+            - Response Time: ${summary.metrics.http_req_duration.p95 < 2000 ? '✅' : '❌'} < 2000ms
+            - Error Rate: ${summary.metrics.http_req_failed.rate < 0.05 ? '✅' : '❌'} < 5%
+            `;
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: comment
+            });
+
+  # Job 6: Security Tests
+  security-tests:
+    name: Security Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    needs: unit-tests
+    
+    services:
+      postgres:
+        image: postgres:${{ env.POSTGRES_VERSION }}
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_USER: postgres
+          POSTGRES_DB: nextportal_security_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+      
+      redis:
+        image: redis:${{ env.REDIS_VERSION }}
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Setup security test environment
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/nextportal_security_test
+          REDIS_URL: redis://localhost:6379
+        run: |
+          npx prisma generate
+          npx prisma db push
+
+      - name: Run security tests
+        env:
+          TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/nextportal_security_test
+          TEST_REDIS_URL: redis://localhost:6379
+          NODE_ENV: test
+        run: |
+          npm test -- --testPathPattern="tests/security" --runInBand
+
+      - name: Run OWASP ZAP security scan
+        if: github.event_name == 'schedule' || contains(github.event.pull_request.labels.*.name, 'security-scan')
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/nextportal_security_test
+          REDIS_URL: redis://localhost:6379
+          NODE_ENV: production
+          PORT: 4400
+        run: |
+          # Start application
+          npm run build
+          npm start &
+          sleep 60
+          
+          # Run ZAP scan
+          docker run -v $(pwd):/zap/wrk/:rw \
+            -t owasp/zap2docker-stable zap-full-scan.py \
+            -t http://host.docker.internal:4400 \
+            -J security-report.json \
+            -r security-report.html || true
+
+      - name: Upload security results
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: security-test-results
+          path: |
+            security-report.json
+            security-report.html
+            security-audit-*.json
+
+  # Job 7: Visual Regression Tests
+  visual-regression:
+    name: Visual Regression Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: e2e-tests
+    if: github.event_name == 'pull_request'
+    
+    services:
+      postgres:
+        image: postgres:${{ env.POSTGRES_VERSION }}
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_USER: postgres
+          POSTGRES_DB: nextportal_visual_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+      
+      redis:
+        image: redis:${{ env.REDIS_VERSION }}
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright
+        run: npx playwright install --with-deps chromium
+
+      - name: Setup visual test environment
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/nextportal_visual_test
+          REDIS_URL: redis://localhost:6379
+        run: |
+          npx prisma generate
+          npx prisma db push
+          npm run db:seed
+
+      - name: Build and start application
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/nextportal_visual_test
+          REDIS_URL: redis://localhost:6379
+          NODE_ENV: production
+          PORT: 4400
+        run: |
+          npm run build
+          npm start &
+          sleep 45
+          curl -f http://localhost:4400/api/health || exit 1
+
+      - name: Run visual regression tests
+        env:
+          BASE_URL: http://localhost:4400
+        run: npm run test:visual
+
+      - name: Upload visual diff results
+        uses: actions/upload-artifact@v3
+        if: failure()
+        with:
+          name: visual-diff-results
+          path: |
+            test-results/
+            visual-regression-report/
+
+  # Job 8: Accessibility Tests
+  accessibility-tests:
+    name: Accessibility Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: e2e-tests
+    
+    services:
+      postgres:
+        image: postgres:${{ env.POSTGRES_VERSION }}
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_USER: postgres
+          POSTGRES_DB: nextportal_a11y_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+      
+      redis:
+        image: redis:${{ env.REDIS_VERSION }}
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright
+        run: npx playwright install --with-deps chromium
+
+      - name: Setup accessibility test environment
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/nextportal_a11y_test
+          REDIS_URL: redis://localhost:6379
+        run: |
+          npx prisma generate
+          npx prisma db push
+          npm run db:seed
+
+      - name: Build and start application
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/nextportal_a11y_test
+          REDIS_URL: redis://localhost:6379
+          NODE_ENV: production
+          PORT: 4400
+        run: |
+          npm run build
+          npm start &
+          sleep 45
+          curl -f http://localhost:4400/api/health || exit 1
+
+      - name: Run accessibility tests
+        env:
+          BASE_URL: http://localhost:4400
+        run: npm run test:accessibility
+
+      - name: Upload accessibility results
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: accessibility-results
+          path: |
+            accessibility-report.json
+            accessibility-report.html
+
+  # Job 9: Production Readiness Check
+  production-readiness:
+    name: Production Readiness Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: [integration-tests, security-tests]
+    if: github.ref == 'refs/heads/main' || github.event_name == 'schedule'
+    
+    services:
+      postgres:
+        image: postgres:${{ env.POSTGRES_VERSION }}
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_USER: postgres
+          POSTGRES_DB: nextportal_prod_check
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+      
+      redis:
+        image: redis:${{ env.REDIS_VERSION }}
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Setup production readiness environment
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/nextportal_prod_check
+          REDIS_URL: redis://localhost:6379
+        run: |
+          npx prisma generate
+          npx prisma db push
+          npm run db:seed
+
+      - name: Build and start application
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/nextportal_prod_check
+          REDIS_URL: redis://localhost:6379
+          NODE_ENV: production
+          PORT: 4400
+        run: |
+          npm run build
+          npm start &
+          sleep 60
+          curl -f http://localhost:4400/api/health || exit 1
+
+      - name: Run production readiness checks
+        env:
+          API_URL: http://localhost:4400
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/nextportal_prod_check
+          REDIS_URL: redis://localhost:6379
+          ADMIN_EMAIL: admin@test.com
+          ADMIN_PASSWORD: testpassword
+          NODE_ENV: production
+        run: |
+          npx tsx scripts/production-validation/deployment-health-check.ts
+
+      - name: Upload production readiness report
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: production-readiness-report
+          path: |
+            deployment-reports/
+            health-check-*.json
+
+      - name: Notify on production readiness failure
+        if: failure() && github.ref == 'refs/heads/main'
+        uses: actions/github-script@v6
+        with:
+          script: |
+            github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: '🚨 Production Readiness Check Failed',
+              body: `Production readiness check failed for commit ${context.sha}.
+              
+              Please review the deployment reports and fix issues before proceeding with deployment.
+              
+              **Workflow Run:** ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+              labels: ['production', 'urgent', 'deployment-blocker']
+            });
+
+  # Job 10: Test Results Summary
+  test-summary:
+    name: Test Results Summary
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: [unit-tests, integration-tests, e2e-tests, security-tests, accessibility-tests]
+    if: always()
+    
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v3
+
+      - name: Generate comprehensive test report
+        run: |
+          echo "# 🧪 Comprehensive Test Results Summary" > test-summary.md
+          echo "" >> test-summary.md
+          echo "**Commit:** ${{ github.sha }}" >> test-summary.md
+          echo "**Branch:** ${{ github.ref_name }}" >> test-summary.md
+          echo "**Workflow:** ${{ github.workflow }}" >> test-summary.md
+          echo "**Run ID:** ${{ github.run_id }}" >> test-summary.md
+          echo "" >> test-summary.md
+          
+          echo "## Test Results Overview" >> test-summary.md
+          echo "" >> test-summary.md
+          
+          # Unit Tests
+          echo "### 🔬 Unit Tests" >> test-summary.md
+          echo "${{ needs.unit-tests.result == 'success' && '✅ PASSED' || '❌ FAILED' }}" >> test-summary.md
+          echo "" >> test-summary.md
+          
+          # Integration Tests
+          echo "### 🔗 Integration Tests" >> test-summary.md
+          echo "${{ needs.integration-tests.result == 'success' && '✅ PASSED' || '❌ FAILED' }}" >> test-summary.md
+          echo "" >> test-summary.md
+          
+          # E2E Tests
+          echo "### 🎭 End-to-End Tests" >> test-summary.md
+          echo "${{ needs.e2e-tests.result == 'success' && '✅ PASSED' || '❌ FAILED' }}" >> test-summary.md
+          echo "" >> test-summary.md
+          
+          # Security Tests
+          echo "### 🛡️ Security Tests" >> test-summary.md
+          echo "${{ needs.security-tests.result == 'success' && '✅ PASSED' || '❌ FAILED' }}" >> test-summary.md
+          echo "" >> test-summary.md
+          
+          # Accessibility Tests
+          echo "### ♿ Accessibility Tests" >> test-summary.md
+          echo "${{ needs.accessibility-tests.result == 'success' && '✅ PASSED' || '❌ FAILED' }}" >> test-summary.md
+          echo "" >> test-summary.md
+          
+          echo "## 📊 Artifacts Generated" >> test-summary.md
+          echo "- Unit test coverage reports" >> test-summary.md
+          echo "- Integration test results" >> test-summary.md
+          echo "- E2E test reports and screenshots" >> test-summary.md
+          echo "- Security scan results" >> test-summary.md
+          echo "- Accessibility audit reports" >> test-summary.md
+          if [ -d "performance-test-results" ]; then
+            echo "- Performance test results" >> test-summary.md
+          fi
+          if [ -d "visual-diff-results" ]; then
+            echo "- Visual regression test results" >> test-summary.md
+          fi
+
+      - name: Comment test summary on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const fs = require('fs');
+            const summary = fs.readFileSync('test-summary.md', 'utf8');
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: summary
+            });
+
+      - name: Upload test summary
+        uses: actions/upload-artifact@v3
+        with:
+          name: test-results-summary
+          path: test-summary.md
+
+      - name: Set workflow status
+        if: needs.unit-tests.result == 'failure' || needs.integration-tests.result == 'failure' || needs.security-tests.result == 'failure'
+        run: |
+          echo "Critical tests failed - blocking deployment"
+          exit 1

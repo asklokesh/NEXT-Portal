@@ -1,0 +1,678 @@
+# Automated Rollback System
+# Enterprise-grade rollback automation for 99.99% uptime SLA
+
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: automated-rollback-workflow
+  namespace: saas-idp-production
+  annotations:
+    workflows.argoproj.io/description: "Automated rollback workflow for production failures"
+    workflows.argoproj.io/maintainer: "platform-team@company.com"
+spec:
+  entrypoint: rollback-decision-tree
+  arguments:
+    parameters:
+    - name: failure-type
+      value: "performance-degradation"
+    - name: severity-level
+      value: "high"
+    - name: rollback-strategy
+      value: "intelligent"
+    - name: notification-channels
+      value: "slack,pagerduty,email"
+
+  templates:
+  # Main rollback decision tree
+  - name: rollback-decision-tree
+    dag:
+      tasks:
+      - name: assess-failure
+        template: failure-assessment
+        arguments:
+          parameters:
+          - name: failure-type
+            value: "{{workflow.parameters.failure-type}}"
+          - name: severity-level
+            value: "{{workflow.parameters.severity-level}}"
+
+      - name: check-rollback-eligibility
+        template: rollback-eligibility-check
+        dependencies: [assess-failure]
+        arguments:
+          parameters:
+          - name: assessment-result
+            value: "{{tasks.assess-failure.outputs.parameters.assessment-result}}"
+
+      - name: execute-rollback
+        template: intelligent-rollback
+        dependencies: [check-rollback-eligibility]
+        when: "{{tasks.check-rollback-eligibility.outputs.parameters.rollback-approved}} == true"
+        arguments:
+          parameters:
+          - name: rollback-strategy
+            value: "{{workflow.parameters.rollback-strategy}}"
+
+      - name: post-rollback-validation
+        template: post-rollback-checks
+        dependencies: [execute-rollback]
+        arguments:
+          parameters:
+          - name: rollback-version
+            value: "{{tasks.execute-rollback.outputs.parameters.rollback-version}}"
+
+      - name: send-notifications
+        template: notification-dispatcher
+        dependencies: [post-rollback-validation]
+        arguments:
+          parameters:
+          - name: rollback-status
+            value: "{{tasks.post-rollback-validation.outputs.parameters.validation-status}}"
+          - name: notification-channels
+            value: "{{workflow.parameters.notification-channels}}"
+
+  # Failure assessment template
+  - name: failure-assessment
+    inputs:
+      parameters:
+      - name: failure-type
+      - name: severity-level
+    script:
+      image: failure-analyzer:latest
+      command: [python]
+      source: |
+        import json
+        import requests
+        import sys
+        from datetime import datetime, timedelta
+
+        def assess_failure(failure_type, severity_level):
+            # Query Prometheus for current metrics
+            prometheus_url = "http://prometheus.monitoring.svc.cluster.local:9090"
+            
+            # Define assessment criteria
+            assessment_criteria = {
+                "performance-degradation": {
+                    "metrics": ["response_time_p95", "response_time_p99", "error_rate"],
+                    "thresholds": {"response_time_p95": 200, "response_time_p99": 500, "error_rate": 0.005}
+                },
+                "high-error-rate": {
+                    "metrics": ["error_rate", "success_rate"],
+                    "thresholds": {"error_rate": 0.01, "success_rate": 0.99}
+                },
+                "resource-exhaustion": {
+                    "metrics": ["cpu_usage", "memory_usage", "disk_usage"],
+                    "thresholds": {"cpu_usage": 0.9, "memory_usage": 0.9, "disk_usage": 0.9}
+                },
+                "service-unavailable": {
+                    "metrics": ["availability", "health_check_failures"],
+                    "thresholds": {"availability": 0.9999, "health_check_failures": 3}
+                }
+            }
+            
+            # Get current metrics
+            current_time = datetime.now()
+            time_range = "5m"  # Look at last 5 minutes
+            
+            metrics_data = {}
+            criteria = assessment_criteria.get(failure_type, assessment_criteria["performance-degradation"])
+            
+            for metric in criteria["metrics"]:
+                query = get_prometheus_query(metric)
+                response = requests.get(f"{prometheus_url}/api/v1/query", params={"query": query})
+                if response.status_code == 200:
+                    result = response.json()
+                    if result["data"]["result"]:
+                        metrics_data[metric] = float(result["data"]["result"][0]["value"][1])
+            
+            # Assess severity and impact
+            assessment = {
+                "failure_type": failure_type,
+                "severity_level": severity_level,
+                "metrics": metrics_data,
+                "assessment_time": current_time.isoformat(),
+                "rollback_recommended": False,
+                "rollback_urgency": "low"
+            }
+            
+            # Determine rollback necessity
+            violations = 0
+            critical_violations = 0
+            
+            for metric, value in metrics_data.items():
+                threshold = criteria["thresholds"].get(metric)
+                if threshold:
+                    if metric in ["error_rate", "cpu_usage", "memory_usage", "disk_usage", "health_check_failures"]:
+                        if value > threshold:
+                            violations += 1
+                            if value > threshold * 1.5:  # Critical threshold
+                                critical_violations += 1
+                    else:  # For metrics where lower is better
+                        if value < threshold:
+                            violations += 1
+                            if value < threshold * 0.7:  # Critical threshold
+                                critical_violations += 1
+            
+            # Decision logic
+            if critical_violations > 0 or violations >= 2:
+                assessment["rollback_recommended"] = True
+                assessment["rollback_urgency"] = "critical" if critical_violations > 0 else "high"
+            elif violations == 1 and severity_level in ["critical", "high"]:
+                assessment["rollback_recommended"] = True
+                assessment["rollback_urgency"] = "medium"
+            
+            # Save assessment result
+            with open("/tmp/assessment-result.json", "w") as f:
+                json.dump(assessment, f, indent=2)
+            
+            print(f"Assessment completed. Rollback recommended: {assessment['rollback_recommended']}")
+            return assessment
+
+        def get_prometheus_query(metric):
+            queries = {
+                "response_time_p95": 'histogram_quantile(0.95, sum(rate(istio_request_duration_milliseconds_bucket{destination_service_name="saas-idp"}[5m])) by (le))',
+                "response_time_p99": 'histogram_quantile(0.99, sum(rate(istio_request_duration_milliseconds_bucket{destination_service_name="saas-idp"}[5m])) by (le))',
+                "error_rate": 'sum(rate(istio_requests_total{destination_service_name="saas-idp",response_code=~"5.*"}[5m])) / sum(rate(istio_requests_total{destination_service_name="saas-idp"}[5m]))',
+                "success_rate": 'sum(rate(istio_requests_total{destination_service_name="saas-idp",response_code!~"5.*"}[5m])) / sum(rate(istio_requests_total{destination_service_name="saas-idp"}[5m]))',
+                "cpu_usage": 'sum(rate(container_cpu_usage_seconds_total{container="saas-idp",namespace="saas-idp-production"}[5m])) / sum(container_spec_cpu_quota{container="saas-idp",namespace="saas-idp-production"} / container_spec_cpu_period{container="saas-idp",namespace="saas-idp-production"})',
+                "memory_usage": 'sum(container_memory_working_set_bytes{container="saas-idp",namespace="saas-idp-production"}) / sum(container_spec_memory_limit_bytes{container="saas-idp",namespace="saas-idp-production"})',
+                "availability": 'avg_over_time(up{job="saas-idp"}[5m])',
+                "health_check_failures": 'increase(probe_failed_total{job="saas-idp"}[5m])'
+            }
+            return queries.get(metric, 'up')
+
+        # Execute assessment
+        failure_type = "{{inputs.parameters.failure-type}}"
+        severity_level = "{{inputs.parameters.severity-level}}"
+        
+        result = assess_failure(failure_type, severity_level)
+        
+        # Output results for next step
+        with open("/tmp/assessment-result.json", "r") as f:
+            assessment_data = json.load(f)
+        
+        print(json.dumps(assessment_data))
+
+    outputs:
+      parameters:
+      - name: assessment-result
+        valueFrom:
+          path: /tmp/assessment-result.json
+
+  # Rollback eligibility check
+  - name: rollback-eligibility-check
+    inputs:
+      parameters:
+      - name: assessment-result
+    script:
+      image: rollback-controller:latest
+      command: [bash]
+      source: |
+        #!/bin/bash
+        set -e
+        
+        echo "Checking rollback eligibility..."
+        
+        # Parse assessment result
+        ASSESSMENT='{{inputs.parameters.assessment-result}}'
+        echo "$ASSESSMENT" > /tmp/assessment.json
+        
+        # Extract key values
+        ROLLBACK_RECOMMENDED=$(echo "$ASSESSMENT" | jq -r '.rollback_recommended')
+        ROLLBACK_URGENCY=$(echo "$ASSESSMENT" | jq -r '.rollback_urgency')
+        FAILURE_TYPE=$(echo "$ASSESSMENT" | jq -r '.failure_type')
+        
+        echo "Rollback recommended: $ROLLBACK_RECOMMENDED"
+        echo "Rollback urgency: $ROLLBACK_URGENCY"
+        echo "Failure type: $FAILURE_TYPE"
+        
+        # Check rollback conditions
+        ROLLBACK_APPROVED="false"
+        ROLLBACK_REASON=""
+        
+        # Check if rollback window is valid (not during maintenance)
+        CURRENT_HOUR=$(date +%H)
+        MAINTENANCE_HOURS="02,03,04"  # Avoid rollbacks during maintenance window
+        
+        if [[ "$MAINTENANCE_HOURS" == *"$CURRENT_HOUR"* ]] && [[ "$ROLLBACK_URGENCY" != "critical" ]]; then
+            ROLLBACK_REASON="Rollback postponed - maintenance window"
+            echo "$ROLLBACK_REASON"
+        elif [[ "$ROLLBACK_RECOMMENDED" == "true" ]]; then
+            # Check if previous version is stable
+            PREVIOUS_VERSION=$(kubectl get deployment saas-idp -n saas-idp-production -o jsonpath='{.metadata.annotations.deployment\.kubernetes\.io/revision}')
+            PREVIOUS_VERSION=$((PREVIOUS_VERSION - 1))
+            
+            if [[ $PREVIOUS_VERSION -gt 0 ]]; then
+                # Check previous version stability
+                PREVIOUS_VERSION_STABLE=$(kubectl rollout history deployment/saas-idp -n saas-idp-production --revision=$PREVIOUS_VERSION | grep -c "Stable" || echo "0")
+                
+                if [[ $PREVIOUS_VERSION_STABLE -gt 0 ]] || [[ "$ROLLBACK_URGENCY" == "critical" ]]; then
+                    ROLLBACK_APPROVED="true"
+                    ROLLBACK_REASON="Conditions met for automatic rollback"
+                else
+                    ROLLBACK_REASON="Previous version not stable"
+                fi
+            else
+                ROLLBACK_REASON="No previous version available"
+            fi
+        else
+            ROLLBACK_REASON="Assessment does not recommend rollback"
+        fi
+        
+        # Generate rollback decision
+        DECISION=$(cat <<EOF
+        {
+          "rollback_approved": $ROLLBACK_APPROVED,
+          "rollback_reason": "$ROLLBACK_REASON",
+          "rollback_urgency": "$ROLLBACK_URGENCY",
+          "failure_type": "$FAILURE_TYPE",
+          "decision_time": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        }
+        EOF
+        )
+        
+        echo "$DECISION" > /tmp/rollback-decision.json
+        echo "Rollback eligibility check completed: $ROLLBACK_APPROVED"
+        
+    outputs:
+      parameters:
+      - name: rollback-approved
+        valueFrom:
+          path: /tmp/rollback-decision.json
+          jqFilter: '.rollback_approved'
+      - name: rollback-decision
+        valueFrom:
+          path: /tmp/rollback-decision.json
+
+  # Intelligent rollback execution
+  - name: intelligent-rollback
+    inputs:
+      parameters:
+      - name: rollback-strategy
+    script:
+      image: kubectl-argo:latest
+      command: [bash]
+      source: |
+        #!/bin/bash
+        set -e
+        
+        echo "Executing intelligent rollback with strategy: {{inputs.parameters.rollback-strategy}}"
+        
+        NAMESPACE="saas-idp-production"
+        DEPLOYMENT="saas-idp"
+        STRATEGY="{{inputs.parameters.rollback-strategy}}"
+        
+        # Get current and previous versions
+        CURRENT_REVISION=$(kubectl get deployment $DEPLOYMENT -n $NAMESPACE -o jsonpath='{.metadata.annotations.deployment\.kubernetes\.io/revision}')
+        PREVIOUS_REVISION=$((CURRENT_REVISION - 1))
+        
+        echo "Current revision: $CURRENT_REVISION"
+        echo "Rolling back to revision: $PREVIOUS_REVISION"
+        
+        # Pre-rollback snapshot
+        kubectl get deployment $DEPLOYMENT -n $NAMESPACE -o yaml > /tmp/pre-rollback-snapshot.yaml
+        
+        # Execute rollback based on strategy
+        case $STRATEGY in
+          "immediate")
+            echo "Executing immediate rollback..."
+            kubectl rollout undo deployment/$DEPLOYMENT -n $NAMESPACE --to-revision=$PREVIOUS_REVISION
+            ;;
+          "intelligent")
+            echo "Executing intelligent rollback with validation..."
+            # First, scale down canary if exists
+            kubectl argo rollouts abort saas-idp-production-canary -n $NAMESPACE || true
+            
+            # Gradual rollback
+            kubectl patch deployment $DEPLOYMENT -n $NAMESPACE -p '{"spec":{"strategy":{"rollingUpdate":{"maxUnavailable":1,"maxSurge":"25%"}}}}'
+            kubectl rollout undo deployment/$DEPLOYMENT -n $NAMESPACE --to-revision=$PREVIOUS_REVISION
+            ;;
+          "blue-green")
+            echo "Executing blue-green rollback..."
+            kubectl argo rollouts set image saas-idp-bluegreen -n $NAMESPACE saas-idp=$(kubectl rollout history deployment/$DEPLOYMENT -n $NAMESPACE --revision=$PREVIOUS_REVISION | grep "Image" | awk '{print $2}')
+            kubectl argo rollouts promote saas-idp-bluegreen -n $NAMESPACE
+            ;;
+        esac
+        
+        # Wait for rollback completion
+        kubectl rollout status deployment/$DEPLOYMENT -n $NAMESPACE --timeout=300s
+        
+        # Verify rollback success
+        ROLLBACK_SUCCESS="false"
+        ROLLBACK_VERSION=""
+        
+        # Check if deployment is stable
+        for i in {1..30}; do
+          READY_REPLICAS=$(kubectl get deployment $DEPLOYMENT -n $NAMESPACE -o jsonpath='{.status.readyReplicas}')
+          DESIRED_REPLICAS=$(kubectl get deployment $DEPLOYMENT -n $NAMESPACE -o jsonpath='{.spec.replicas}')
+          
+          if [[ "$READY_REPLICAS" == "$DESIRED_REPLICAS" ]]; then
+            ROLLBACK_SUCCESS="true"
+            ROLLBACK_VERSION=$(kubectl get deployment $DEPLOYMENT -n $NAMESPACE -o jsonpath='{.spec.template.spec.containers[0].image}')
+            break
+          fi
+          
+          echo "Waiting for rollback to complete... ($i/30)"
+          sleep 10
+        done
+        
+        # Generate rollback result
+        ROLLBACK_RESULT=$(cat <<EOF
+        {
+          "rollback_success": $ROLLBACK_SUCCESS,
+          "rollback_version": "$ROLLBACK_VERSION",
+          "previous_revision": $PREVIOUS_REVISION,
+          "current_revision": $CURRENT_REVISION,
+          "rollback_strategy": "$STRATEGY",
+          "rollback_time": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        }
+        EOF
+        )
+        
+        echo "$ROLLBACK_RESULT" > /tmp/rollback-result.json
+        echo "Rollback execution completed: $ROLLBACK_SUCCESS"
+        
+    outputs:
+      parameters:
+      - name: rollback-success
+        valueFrom:
+          path: /tmp/rollback-result.json
+          jqFilter: '.rollback_success'
+      - name: rollback-version
+        valueFrom:
+          path: /tmp/rollback-result.json
+          jqFilter: '.rollback_version'
+      - name: rollback-result
+        valueFrom:
+          path: /tmp/rollback-result.json
+
+  # Post-rollback validation
+  - name: post-rollback-checks
+    inputs:
+      parameters:
+      - name: rollback-version
+    script:
+      image: test-runner:latest
+      command: [bash]
+      source: |
+        #!/bin/bash
+        set -e
+        
+        echo "Performing post-rollback validation..."
+        
+        NAMESPACE="saas-idp-production"
+        BASE_URL="https://app.saas-idp.company.com"
+        ROLLBACK_VERSION="{{inputs.parameters.rollback-version}}"
+        
+        # Wait for services to be ready
+        sleep 30
+        
+        # Health check validation
+        echo "Validating health endpoints..."
+        HEALTH_CHECK_PASSED="false"
+        
+        for i in {1..10}; do
+          if curl -f "$BASE_URL/health" -m 10; then
+            echo "Health check passed"
+            HEALTH_CHECK_PASSED="true"
+            break
+          fi
+          echo "Health check failed, retrying... ($i/10)"
+          sleep 5
+        done
+        
+        # API functionality validation
+        echo "Validating API functionality..."
+        API_CHECK_PASSED="false"
+        
+        if curl -f "$BASE_URL/api/health" -m 10; then
+          echo "API health check passed"
+          API_CHECK_PASSED="true"
+        fi
+        
+        # Database connectivity validation
+        echo "Validating database connectivity..."
+        DB_CHECK_PASSED="false"
+        
+        if kubectl exec -n $NAMESPACE deployment/saas-idp -- npm run db:check; then
+          echo "Database connectivity check passed"
+          DB_CHECK_PASSED="true"
+        fi
+        
+        # Performance validation (basic)
+        echo "Validating basic performance..."
+        PERFORMANCE_CHECK_PASSED="false"
+        
+        RESPONSE_TIME=$(curl -o /dev/null -s -w '%{time_total}' "$BASE_URL/api/health")
+        if (( $(echo "$RESPONSE_TIME < 2.0" | bc -l) )); then
+          echo "Performance check passed (${RESPONSE_TIME}s)"
+          PERFORMANCE_CHECK_PASSED="true"
+        else
+          echo "Performance check failed (${RESPONSE_TIME}s)"
+        fi
+        
+        # Overall validation status
+        VALIDATION_SUCCESS="false"
+        if [[ "$HEALTH_CHECK_PASSED" == "true" ]] && [[ "$API_CHECK_PASSED" == "true" ]] && [[ "$DB_CHECK_PASSED" == "true" ]]; then
+          VALIDATION_SUCCESS="true"
+        fi
+        
+        # Generate validation report
+        VALIDATION_REPORT=$(cat <<EOF
+        {
+          "validation_success": $VALIDATION_SUCCESS,
+          "rollback_version": "$ROLLBACK_VERSION",
+          "health_check": $HEALTH_CHECK_PASSED,
+          "api_check": $API_CHECK_PASSED,
+          "database_check": $DB_CHECK_PASSED,
+          "performance_check": $PERFORMANCE_CHECK_PASSED,
+          "response_time": $RESPONSE_TIME,
+          "validation_time": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        }
+        EOF
+        )
+        
+        echo "$VALIDATION_REPORT" > /tmp/validation-report.json
+        echo "Post-rollback validation completed: $VALIDATION_SUCCESS"
+        
+    outputs:
+      parameters:
+      - name: validation-status
+        valueFrom:
+          path: /tmp/validation-report.json
+          jqFilter: '.validation_success'
+      - name: validation-report
+        valueFrom:
+          path: /tmp/validation-report.json
+
+  # Notification dispatcher
+  - name: notification-dispatcher
+    inputs:
+      parameters:
+      - name: rollback-status
+      - name: notification-channels
+    script:
+      image: notification-sender:latest
+      command: [python]
+      source: |
+        import json
+        import requests
+        import smtplib
+        from email.mime.text import MIMEText
+        from email.mime.multipart import MIMEMultipart
+        
+        def send_slack_notification(webhook_url, message):
+            response = requests.post(webhook_url, json={"text": message})
+            return response.status_code == 200
+        
+        def send_pagerduty_alert(integration_key, summary, severity):
+            payload = {
+                "routing_key": integration_key,
+                "event_action": "trigger",
+                "payload": {
+                    "summary": summary,
+                    "severity": severity,
+                    "source": "saas-idp-rollback-automation",
+                    "component": "production-deployment"
+                }
+            }
+            response = requests.post("https://events.pagerduty.com/v2/enqueue", json=payload)
+            return response.status_code == 202
+        
+        # Get environment variables
+        import os
+        slack_webhook = os.getenv('SLACK_WEBHOOK_URL')
+        pagerduty_key = os.getenv('PAGERDUTY_INTEGRATION_KEY')
+        
+        rollback_status = "{{inputs.parameters.rollback-status}}"
+        channels = "{{inputs.parameters.notification-channels}}".split(',')
+        
+        # Create notification message
+        if rollback_status == "true":
+            message = "✅ Automated rollback completed successfully for SaaS IDP Production"
+            severity = "info"
+        else:
+            message = "❌ Automated rollback failed for SaaS IDP Production - Manual intervention required"
+            severity = "critical"
+        
+        # Send notifications
+        notifications_sent = []
+        
+        for channel in channels:
+            channel = channel.strip()
+            if channel == "slack" and slack_webhook:
+                if send_slack_notification(slack_webhook, message):
+                    notifications_sent.append("slack")
+            elif channel == "pagerduty" and pagerduty_key:
+                if send_pagerduty_alert(pagerduty_key, message, severity):
+                    notifications_sent.append("pagerduty")
+        
+        print(f"Notifications sent to: {', '.join(notifications_sent)}")
+        
+        # Save notification result
+        with open("/tmp/notification-result.json", "w") as f:
+            json.dump({
+                "notifications_sent": notifications_sent,
+                "message": message,
+                "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            }, f)
+      env:
+      - name: SLACK_WEBHOOK_URL
+        valueFrom:
+          secretKeyRef:
+            name: notification-secrets
+            key: slack-webhook-url
+      - name: PAGERDUTY_INTEGRATION_KEY
+        valueFrom:
+          secretKeyRef:
+            name: notification-secrets
+            key: pagerduty-integration-key
+    outputs:
+      parameters:
+      - name: notifications-sent
+        valueFrom:
+          path: /tmp/notification-result.json
+
+---
+# Rollback Trigger Service
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rollback-trigger-service
+  namespace: saas-idp-production
+  labels:
+    app: rollback-trigger-service
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: rollback-trigger-service
+  template:
+    metadata:
+      labels:
+        app: rollback-trigger-service
+    spec:
+      serviceAccountName: rollback-service-account
+      containers:
+      - name: trigger-service
+        image: rollback-trigger:latest
+        ports:
+        - containerPort: 8080
+        env:
+        - name: PROMETHEUS_URL
+          value: "http://prometheus.monitoring.svc.cluster.local:9090"
+        - name: ARGO_WORKFLOWS_URL
+          value: "https://argo-workflows.argo.svc.cluster.local:2746"
+        - name: ROLLBACK_THRESHOLD_ERROR_RATE
+          value: "0.01"  # 1% error rate
+        - name: ROLLBACK_THRESHOLD_RESPONSE_TIME_P95
+          value: "500"   # 500ms P95
+        - name: ROLLBACK_THRESHOLD_RESPONSE_TIME_P99
+          value: "1000"  # 1s P99
+        - name: EVALUATION_WINDOW
+          value: "5m"
+        - name: COOLDOWN_PERIOD
+          value: "30m"
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 5
+
+---
+# Service Account for Rollback Operations
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: rollback-service-account
+  namespace: saas-idp-production
+
+---
+# RBAC for Rollback Service
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  namespace: saas-idp-production
+  name: rollback-operator
+rules:
+- apiGroups: ["apps"]
+  resources: ["deployments", "replicasets"]
+  verbs: ["get", "list", "watch", "update", "patch"]
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["argoproj.io"]
+  resources: ["rollouts", "workflows"]
+  verbs: ["get", "list", "watch", "create", "update", "patch"]
+- apiGroups: ["flagger.app"]
+  resources: ["canaries"]
+  verbs: ["get", "list", "watch", "update", "patch"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: rollback-operator-binding
+  namespace: saas-idp-production
+subjects:
+- kind: ServiceAccount
+  name: rollback-service-account
+  namespace: saas-idp-production
+roleRef:
+  kind: Role
+  name: rollback-operator
+  apiGroup: rbac.authorization.k8s.io

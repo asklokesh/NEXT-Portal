@@ -1,0 +1,1026 @@
+#!/usr/bin/env tsx
+
+/**
+ * Production Deployment Health Check Script
+ * Validates deployment readiness and system health before production release
+ */
+
+import axios, { AxiosInstance } from 'axios';
+import { PrismaClient } from '@prisma/client';
+import Redis from 'ioredis';
+import { WebSocket } from 'ws';
+import { exec } from 'child_process';
+import { promisify } from 'util';
+import fs from 'fs/promises';
+import path from 'path';
+
+const execAsync = promisify(exec);
+
+interface HealthCheckConfig {
+  apiUrl: string;
+  databaseUrl: string;
+  redisUrl: string;
+  adminEmail: string;
+  adminPassword: string;
+  environment: 'staging' | 'production';
+  timeout: number;
+  retries: number;
+}
+
+interface HealthCheckResult {
+  component: string;
+  status: 'healthy' | 'degraded' | 'unhealthy';
+  responseTime: number;
+  error?: string;
+  details?: Record<string, any>;
+}
+
+interface ValidationReport {
+  timestamp: string;
+  environment: string;
+  overallStatus: 'pass' | 'fail';
+  totalChecks: number;
+  passedChecks: number;
+  failedChecks: number;
+  results: HealthCheckResult[];
+  recommendations: string[];
+}
+
+class ProductionHealthChecker {
+  private config: HealthCheckConfig;
+  private api: AxiosInstance;
+  private prisma: PrismaClient;
+  private redis: Redis;
+  private results: HealthCheckResult[] = [];
+  private recommendations: string[] = [];
+
+  constructor(config: HealthCheckConfig) {
+    this.config = config;
+    this.api = axios.create({
+      baseURL: config.apiUrl,
+      timeout: config.timeout,
+      validateStatus: () => true,
+    });
+    this.prisma = new PrismaClient({
+      datasources: { db: { url: config.databaseUrl } },
+    });
+    this.redis = new Redis(config.redisUrl);
+  }
+
+  async runAllChecks(): Promise<ValidationReport> {
+    console.log(`🚀 Starting production health checks for ${this.config.environment}...`);
+    
+    const startTime = Date.now();
+    
+    try {
+      // Core Infrastructure Checks
+      await this.checkDatabaseHealth();
+      await this.checkRedisHealth();
+      await this.checkApiHealth();
+      await this.checkAuthenticationSystem();
+      
+      // Application-Specific Checks
+      await this.checkPluginMarketplace();
+      await this.checkMultiTenantIsolation();
+      await this.checkRealtimeFeatures();
+      await this.checkPerformanceMetrics();
+      
+      // Security and Compliance Checks
+      await this.checkSecurityHeaders();
+      await this.checkDataEncryption();
+      await this.checkRateLimiting();
+      
+      // Monitoring and Observability
+      await this.checkMonitoringStack();
+      await this.checkAlerting();
+      await this.checkLogging();
+      
+      // External Dependencies
+      await this.checkExternalServices();
+      await this.checkCDNHealth();
+      
+      // Business Logic Validation
+      await this.checkCriticalWorkflows();
+      await this.checkDataIntegrity();
+      
+    } catch (error) {
+      console.error('Health check execution failed:', error);
+      this.addResult('overall', 'unhealthy', Date.now() - startTime, error.message);
+    }
+    
+    const report = this.generateReport();
+    await this.saveReport(report);
+    
+    return report;
+  }
+
+  private async checkDatabaseHealth(): Promise<void> {
+    const startTime = Date.now();
+    
+    try {
+      // Test basic connectivity
+      await this.prisma.$queryRaw`SELECT 1`;
+      
+      // Check connection pool
+      const poolStatus = await this.prisma.$queryRaw`
+        SELECT 
+          count(*) as total_connections,
+          sum(case when state = 'active' then 1 else 0 end) as active_connections
+        FROM pg_stat_activity 
+        WHERE datname = current_database()
+      ` as any[];
+      
+      // Check database size and performance
+      const dbStats = await this.prisma.$queryRaw`
+        SELECT 
+          pg_size_pretty(pg_database_size(current_database())) as size,
+          (SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public') as table_count
+      ` as any[];
+      
+      // Test critical table access
+      const tenantCount = await this.prisma.tenant.count();
+      const userCount = await this.prisma.user.count();
+      const pluginCount = await this.prisma.pluginInstallation.count();
+      
+      const responseTime = Date.now() - startTime;
+      
+      if (responseTime > 1000) {
+        this.addResult('database', 'degraded', responseTime, 'Slow database response', {
+          connectionPool: poolStatus[0],
+          stats: dbStats[0],
+          counts: { tenants: tenantCount, users: userCount, plugins: pluginCount },
+        });
+        this.recommendations.push('Database response time is slow. Consider optimizing queries or scaling database.');
+      } else {
+        this.addResult('database', 'healthy', responseTime, undefined, {
+          connectionPool: poolStatus[0],
+          stats: dbStats[0],
+          counts: { tenants: tenantCount, users: userCount, plugins: pluginCount },
+        });
+      }
+      
+    } catch (error) {
+      this.addResult('database', 'unhealthy', Date.now() - startTime, error.message);
+    }
+  }
+
+  private async checkRedisHealth(): Promise<void> {
+    const startTime = Date.now();
+    
+    try {
+      // Test basic connectivity
+      await this.redis.ping();
+      
+      // Test read/write operations
+      const testKey = `health-check-${Date.now()}`;
+      await this.redis.setex(testKey, 60, 'test-value');
+      const value = await this.redis.get(testKey);
+      await this.redis.del(testKey);
+      
+      if (value !== 'test-value') {
+        throw new Error('Redis read/write test failed');
+      }
+      
+      // Check Redis info
+      const info = await this.redis.info();
+      const memory = await this.redis.info('memory');
+      
+      const responseTime = Date.now() - startTime;
+      
+      this.addResult('redis', 'healthy', responseTime, undefined, {
+        connected: true,
+        memoryInfo: memory.split('\n').slice(1, 5).join(', '),
+      });
+      
+    } catch (error) {
+      this.addResult('redis', 'unhealthy', Date.now() - startTime, error.message);
+    }
+  }
+
+  private async checkApiHealth(): Promise<void> {
+    const startTime = Date.now();
+    
+    try {
+      // Check health endpoint
+      const healthResponse = await this.api.get('/api/health');
+      
+      if (healthResponse.status !== 200) {
+        throw new Error(`Health endpoint returned ${healthResponse.status}`);
+      }
+      
+      // Check API versioning
+      const versionResponse = await this.api.get('/api/version');
+      
+      // Check error handling
+      const notFoundResponse = await this.api.get('/api/nonexistent');
+      if (notFoundResponse.status !== 404) {
+        this.recommendations.push('API error handling may not be properly configured');
+      }
+      
+      const responseTime = Date.now() - startTime;
+      
+      this.addResult('api', 'healthy', responseTime, undefined, {
+        version: versionResponse.data?.version,
+        health: healthResponse.data,
+      });
+      
+    } catch (error) {
+      this.addResult('api', 'unhealthy', Date.now() - startTime, error.message);
+    }
+  }
+
+  private async checkAuthenticationSystem(): Promise<void> {
+    const startTime = Date.now();
+    
+    try {
+      // Test login flow
+      const loginResponse = await this.api.post('/api/auth/login', {
+        email: this.config.adminEmail,
+        password: this.config.adminPassword,
+      });
+      
+      if (loginResponse.status !== 200 || !loginResponse.data.token) {
+        throw new Error('Authentication login failed');
+      }
+      
+      const token = loginResponse.data.token;
+      
+      // Test authenticated request
+      const meResponse = await this.api.get('/api/auth/me', {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      
+      if (meResponse.status !== 200) {
+        throw new Error('Authenticated request failed');
+      }
+      
+      // Test token validation
+      const invalidTokenResponse = await this.api.get('/api/auth/me', {
+        headers: { Authorization: 'Bearer invalid-token' },
+      });
+      
+      if (invalidTokenResponse.status !== 401) {
+        throw new Error('Invalid token was accepted');
+      }
+      
+      const responseTime = Date.now() - startTime;
+      
+      this.addResult('authentication', 'healthy', responseTime, undefined, {
+        loginSuccessful: true,
+        tokenValidation: true,
+        userInfo: meResponse.data.user,
+      });
+      
+    } catch (error) {
+      this.addResult('authentication', 'unhealthy', Date.now() - startTime, error.message);
+    }
+  }
+
+  private async checkPluginMarketplace(): Promise<void> {
+    const startTime = Date.now();
+    
+    try {
+      // Get admin token
+      const loginResponse = await this.api.post('/api/auth/login', {
+        email: this.config.adminEmail,
+        password: this.config.adminPassword,
+      });
+      const token = loginResponse.data.token;
+      const headers = { Authorization: `Bearer ${token}` };
+      
+      // Test plugin search
+      const searchResponse = await this.api.get('/api/plugins?search=catalog&includeQuality=true', { headers });
+      
+      if (searchResponse.status !== 200 || !Array.isArray(searchResponse.data.plugins)) {
+        throw new Error('Plugin search failed');
+      }
+      
+      // Test plugin categories
+      const categoriesResponse = await this.api.get('/api/plugins/categories', { headers });
+      
+      if (categoriesResponse.status !== 200) {
+        throw new Error('Plugin categories endpoint failed');
+      }
+      
+      // Test plugin installation workflow (dry run)
+      const installResponse = await this.api.post('/api/plugins', {
+        action: 'install',
+        pluginId: '@backstage/plugin-catalog',
+        dryRun: true,
+      }, { headers });
+      
+      if (![200, 202].includes(installResponse.status)) {
+        this.recommendations.push('Plugin installation workflow may have issues');
+      }
+      
+      const responseTime = Date.now() - startTime;
+      
+      this.addResult('plugin-marketplace', 'healthy', responseTime, undefined, {
+        searchResults: searchResponse.data.plugins.length,
+        categoriesAvailable: categoriesResponse.data.length,
+        installationWorkflow: installResponse.status,
+      });
+      
+    } catch (error) {
+      this.addResult('plugin-marketplace', 'unhealthy', Date.now() - startTime, error.message);
+    }
+  }
+
+  private async checkMultiTenantIsolation(): Promise<void> {
+    const startTime = Date.now();
+    
+    try {
+      // Create test tenants if they don't exist
+      const testTenant1 = await this.ensureTestTenant('test-tenant-1.com');
+      const testTenant2 = await this.ensureTestTenant('test-tenant-2.com');
+      
+      // Get tokens for both tenants
+      const token1 = await this.getTenantToken(testTenant1.id);
+      const token2 = await this.getTenantToken(testTenant2.id);
+      
+      // Test data isolation
+      const tenant1Data = await this.api.get('/api/plugins?status=installed', {
+        headers: { Authorization: `Bearer ${token1}` },
+      });
+      
+      const tenant2Data = await this.api.get('/api/plugins?status=installed', {
+        headers: { Authorization: `Bearer ${token2}` },
+      });
+      
+      // Test cross-tenant access prevention
+      const crossAccessResponse = await this.api.get('/api/plugins?status=installed', {
+        headers: { 
+          Authorization: `Bearer ${token1}`,
+          'X-Tenant-ID': testTenant2.id,
+        },
+      });
+      
+      if (crossAccessResponse.status !== 403) {
+        throw new Error('Cross-tenant access was not properly blocked');
+      }
+      
+      const responseTime = Date.now() - startTime;
+      
+      this.addResult('multi-tenant-isolation', 'healthy', responseTime, undefined, {
+        tenant1Plugins: tenant1Data.data.plugins?.length || 0,
+        tenant2Plugins: tenant2Data.data.plugins?.length || 0,
+        crossAccessBlocked: crossAccessResponse.status === 403,
+      });
+      
+    } catch (error) {
+      this.addResult('multi-tenant-isolation', 'unhealthy', Date.now() - startTime, error.message);
+    }
+  }
+
+  private async checkRealtimeFeatures(): Promise<void> {
+    const startTime = Date.now();
+    
+    try {
+      // Test WebSocket connection
+      const wsUrl = this.config.apiUrl.replace('http', 'ws') + '/ws';
+      const ws = new WebSocket(wsUrl);
+      
+      await new Promise<void>((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          reject(new Error('WebSocket connection timeout'));
+        }, 5000);
+        
+        ws.on('open', () => {
+          clearTimeout(timeout);
+          resolve();
+        });
+        
+        ws.on('error', (error) => {
+          clearTimeout(timeout);
+          reject(error);
+        });
+      });
+      
+      // Test real-time updates
+      const messagePromise = new Promise<any>((resolve) => {
+        ws.on('message', (data) => {
+          resolve(JSON.parse(data.toString()));
+        });
+      });
+      
+      // Send test message
+      ws.send(JSON.stringify({ type: 'ping', timestamp: Date.now() }));
+      
+      // Wait for response
+      const response = await Promise.race([
+        messagePromise,
+        new Promise((_, reject) => setTimeout(() => reject(new Error('No WebSocket response')), 3000)),
+      ]);
+      
+      ws.close();
+      
+      const responseTime = Date.now() - startTime;
+      
+      this.addResult('realtime-features', 'healthy', responseTime, undefined, {
+        websocketConnected: true,
+        messageExchange: !!response,
+      });
+      
+    } catch (error) {
+      this.addResult('realtime-features', 'degraded', Date.now() - startTime, error.message);
+      this.recommendations.push('Real-time features may be impacted');
+    }
+  }
+
+  private async checkPerformanceMetrics(): Promise<void> {
+    const startTime = Date.now();
+    
+    try {
+      // Get admin token
+      const loginResponse = await this.api.post('/api/auth/login', {
+        email: this.config.adminEmail,
+        password: this.config.adminPassword,
+      });
+      const token = loginResponse.data.token;
+      const headers = { Authorization: `Bearer ${token}` };
+      
+      // Test metrics endpoints
+      const metricsResponse = await this.api.get('/api/metrics', { headers });
+      
+      if (metricsResponse.status !== 200) {
+        throw new Error('Metrics endpoint failed');
+      }
+      
+      // Test performance monitoring
+      const performanceResponse = await this.api.get('/api/monitoring/performance', { headers });
+      
+      // Measure API response times
+      const apiTests = [
+        '/api/plugins',
+        '/api/auth/me',
+        '/api/health',
+      ];
+      
+      const responseTimes: Record<string, number> = {};
+      
+      for (const endpoint of apiTests) {
+        const testStart = Date.now();
+        await this.api.get(endpoint, { headers });
+        responseTimes[endpoint] = Date.now() - testStart;
+      }
+      
+      const avgResponseTime = Object.values(responseTimes).reduce((a, b) => a + b) / Object.values(responseTimes).length;
+      
+      const responseTime = Date.now() - startTime;
+      
+      if (avgResponseTime > 1000) {
+        this.addResult('performance', 'degraded', responseTime, 'High API response times', {
+          averageResponseTime: avgResponseTime,
+          individualTimes: responseTimes,
+        });
+        this.recommendations.push('API response times are high. Consider performance optimization.');
+      } else {
+        this.addResult('performance', 'healthy', responseTime, undefined, {
+          averageResponseTime: avgResponseTime,
+          individualTimes: responseTimes,
+        });
+      }
+      
+    } catch (error) {
+      this.addResult('performance', 'unhealthy', Date.now() - startTime, error.message);
+    }
+  }
+
+  private async checkSecurityHeaders(): Promise<void> {
+    const startTime = Date.now();
+    
+    try {
+      const response = await this.api.get('/api/health');
+      const headers = response.headers;
+      
+      const requiredHeaders = [
+        'x-frame-options',
+        'x-content-type-options',
+        'strict-transport-security',
+        'content-security-policy',
+      ];
+      
+      const missingHeaders = requiredHeaders.filter(header => !headers[header]);
+      
+      if (missingHeaders.length > 0) {
+        this.addResult('security-headers', 'degraded', Date.now() - startTime, 
+          `Missing security headers: ${missingHeaders.join(', ')}`, { missingHeaders });
+        this.recommendations.push('Add missing security headers for better protection');
+      } else {
+        this.addResult('security-headers', 'healthy', Date.now() - startTime, undefined, {
+          presentHeaders: requiredHeaders,
+        });
+      }
+      
+    } catch (error) {
+      this.addResult('security-headers', 'unhealthy', Date.now() - startTime, error.message);
+    }
+  }
+
+  private async checkDataEncryption(): Promise<void> {
+    const startTime = Date.now();
+    
+    try {
+      // Check if sensitive data is encrypted in database
+      const sampleConfig = await this.prisma.pluginInstallation.findFirst({
+        where: { config: { not: null } },
+      });
+      
+      if (sampleConfig?.config) {
+        const configStr = JSON.stringify(sampleConfig.config);
+        
+        // Check if sensitive-looking data appears to be encrypted
+        const sensitivePatterns = [
+          /api[_-]?key.*[a-zA-Z0-9]{20,}/i,
+          /secret.*[a-zA-Z0-9]{20,}/i,
+          /password.*[a-zA-Z0-9]{8,}/i,
+        ];
+        
+        const hasPlaintextSecrets = sensitivePatterns.some(pattern => pattern.test(configStr));
+        
+        if (hasPlaintextSecrets) {
+          this.addResult('data-encryption', 'degraded', Date.now() - startTime, 
+            'Potential plaintext secrets detected');
+          this.recommendations.push('Ensure sensitive configuration data is properly encrypted');
+        } else {
+          this.addResult('data-encryption', 'healthy', Date.now() - startTime);
+        }
+      } else {
+        this.addResult('data-encryption', 'healthy', Date.now() - startTime, 
+          'No configuration data to validate');
+      }
+      
+    } catch (error) {
+      this.addResult('data-encryption', 'unhealthy', Date.now() - startTime, error.message);
+    }
+  }
+
+  private async checkRateLimiting(): Promise<void> {
+    const startTime = Date.now();
+    
+    try {
+      // Test rate limiting by making rapid requests
+      const requests = Array.from({ length: 50 }, () =>
+        this.api.get('/api/plugins').catch(err => err.response)
+      );
+      
+      const responses = await Promise.all(requests);
+      const rateLimited = responses.filter(r => r.status === 429);
+      
+      if (rateLimited.length === 0) {
+        this.addResult('rate-limiting', 'degraded', Date.now() - startTime, 
+          'Rate limiting may not be configured');
+        this.recommendations.push('Configure rate limiting to prevent abuse');
+      } else {
+        this.addResult('rate-limiting', 'healthy', Date.now() - startTime, undefined, {
+          rateLimitedRequests: rateLimited.length,
+          totalRequests: responses.length,
+        });
+      }
+      
+    } catch (error) {
+      this.addResult('rate-limiting', 'unhealthy', Date.now() - startTime, error.message);
+    }
+  }
+
+  private async checkMonitoringStack(): Promise<void> {
+    const startTime = Date.now();
+    
+    try {
+      // Check if monitoring endpoints are accessible
+      const monitoringEndpoints = [
+        '/api/monitoring/health',
+        '/api/monitoring/alerts',
+        '/api/metrics',
+      ];
+      
+      const loginResponse = await this.api.post('/api/auth/login', {
+        email: this.config.adminEmail,
+        password: this.config.adminPassword,
+      });
+      const headers = { Authorization: `Bearer ${loginResponse.data.token}` };
+      
+      const results = await Promise.all(
+        monitoringEndpoints.map(async endpoint => {
+          try {
+            const response = await this.api.get(endpoint, { headers });
+            return { endpoint, status: response.status, success: response.status === 200 };
+          } catch (error) {
+            return { endpoint, status: 0, success: false, error: error.message };
+          }
+        })
+      );
+      
+      const failedEndpoints = results.filter(r => !r.success);
+      
+      if (failedEndpoints.length > 0) {
+        this.addResult('monitoring', 'degraded', Date.now() - startTime, 
+          `Some monitoring endpoints failed: ${failedEndpoints.map(f => f.endpoint).join(', ')}`);
+        this.recommendations.push('Fix monitoring endpoints for better observability');
+      } else {
+        this.addResult('monitoring', 'healthy', Date.now() - startTime, undefined, { results });
+      }
+      
+    } catch (error) {
+      this.addResult('monitoring', 'unhealthy', Date.now() - startTime, error.message);
+    }
+  }
+
+  private async checkAlerting(): Promise<void> {
+    const startTime = Date.now();
+    
+    try {
+      const loginResponse = await this.api.post('/api/auth/login', {
+        email: this.config.adminEmail,
+        password: this.config.adminPassword,
+      });
+      const headers = { Authorization: `Bearer ${loginResponse.data.token}` };
+      
+      // Check alert configuration
+      const alertsResponse = await this.api.get('/api/monitoring/alerts', { headers });
+      
+      if (alertsResponse.status !== 200) {
+        throw new Error('Alerts endpoint not accessible');
+      }
+      
+      // Test alert creation (if endpoint exists)
+      const testAlertResponse = await this.api.post('/api/monitoring/alerts/test', {
+        type: 'health-check',
+        message: 'Production deployment validation test',
+        severity: 'info',
+      }, { headers });
+      
+      this.addResult('alerting', 'healthy', Date.now() - startTime, undefined, {
+        alertsAccessible: true,
+        testAlertCreated: testAlertResponse.status === 200,
+      });
+      
+    } catch (error) {
+      this.addResult('alerting', 'degraded', Date.now() - startTime, error.message);
+      this.recommendations.push('Ensure alerting system is properly configured');
+    }
+  }
+
+  private async checkLogging(): Promise<void> {
+    const startTime = Date.now();
+    
+    try {
+      // Check if log endpoints are accessible
+      const loginResponse = await this.api.post('/api/auth/login', {
+        email: this.config.adminEmail,
+        password: this.config.adminPassword,
+      });
+      const headers = { Authorization: `Bearer ${loginResponse.data.token}` };
+      
+      const logsResponse = await this.api.get('/api/monitoring/logs?level=info&limit=10', { headers });
+      
+      if (logsResponse.status !== 200) {
+        throw new Error('Logs endpoint not accessible');
+      }
+      
+      this.addResult('logging', 'healthy', Date.now() - startTime, undefined, {
+        logsAccessible: true,
+        recentLogs: logsResponse.data?.logs?.length || 0,
+      });
+      
+    } catch (error) {
+      this.addResult('logging', 'degraded', Date.now() - startTime, error.message);
+      this.recommendations.push('Ensure logging system is properly configured');
+    }
+  }
+
+  private async checkExternalServices(): Promise<void> {
+    const startTime = Date.now();
+    
+    try {
+      // Test external service connectivity
+      const externalServices = [
+        { name: 'NPM Registry', url: 'https://registry.npmjs.org/-/ping' },
+        { name: 'GitHub API', url: 'https://api.github.com/rate_limit' },
+      ];
+      
+      const results = await Promise.all(
+        externalServices.map(async service => {
+          try {
+            const response = await axios.get(service.url, { timeout: 5000 });
+            return { 
+              name: service.name, 
+              status: response.status, 
+              success: response.status === 200 
+            };
+          } catch (error) {
+            return { 
+              name: service.name, 
+              status: 0, 
+              success: false, 
+              error: error.message 
+            };
+          }
+        })
+      );
+      
+      const failedServices = results.filter(r => !r.success);
+      
+      if (failedServices.length > 0) {
+        this.addResult('external-services', 'degraded', Date.now() - startTime, 
+          `Some external services unreachable: ${failedServices.map(f => f.name).join(', ')}`);
+        this.recommendations.push('Check external service connectivity and firewall rules');
+      } else {
+        this.addResult('external-services', 'healthy', Date.now() - startTime, undefined, { results });
+      }
+      
+    } catch (error) {
+      this.addResult('external-services', 'unhealthy', Date.now() - startTime, error.message);
+    }
+  }
+
+  private async checkCDNHealth(): Promise<void> {
+    const startTime = Date.now();
+    
+    try {
+      // Check if static assets are properly served
+      const staticAssets = [
+        '/favicon.ico',
+        '/manifest.json',
+      ];
+      
+      const results = await Promise.all(
+        staticAssets.map(async asset => {
+          try {
+            const response = await axios.get(`${this.config.apiUrl}${asset}`, { timeout: 5000 });
+            return { asset, status: response.status, success: response.status === 200 };
+          } catch (error) {
+            return { asset, status: 0, success: false };
+          }
+        })
+      );
+      
+      const failedAssets = results.filter(r => !r.success);
+      
+      if (failedAssets.length > 0) {
+        this.addResult('cdn', 'degraded', Date.now() - startTime, 
+          `Some static assets not accessible: ${failedAssets.map(f => f.asset).join(', ')}`);
+      } else {
+        this.addResult('cdn', 'healthy', Date.now() - startTime, undefined, { results });
+      }
+      
+    } catch (error) {
+      this.addResult('cdn', 'degraded', Date.now() - startTime, error.message);
+    }
+  }
+
+  private async checkCriticalWorkflows(): Promise<void> {
+    const startTime = Date.now();
+    
+    try {
+      // Test complete user workflow
+      const workflowSteps = [
+        'login',
+        'plugin-search',
+        'plugin-details',
+        'configuration-access',
+      ];
+      
+      const results: Record<string, boolean> = {};
+      
+      // Step 1: Login
+      const loginResponse = await this.api.post('/api/auth/login', {
+        email: this.config.adminEmail,
+        password: this.config.adminPassword,
+      });
+      results.login = loginResponse.status === 200;
+      
+      if (!results.login) {
+        throw new Error('Login workflow failed');
+      }
+      
+      const headers = { Authorization: `Bearer ${loginResponse.data.token}` };
+      
+      // Step 2: Plugin search
+      const searchResponse = await this.api.get('/api/plugins?search=catalog', { headers });
+      results['plugin-search'] = searchResponse.status === 200 && searchResponse.data.plugins?.length > 0;
+      
+      // Step 3: Plugin details
+      if (searchResponse.data.plugins?.length > 0) {
+        const pluginId = searchResponse.data.plugins[0].id;
+        const detailsResponse = await this.api.get(`/api/plugins/status?pluginId=${encodeURIComponent(pluginId)}`, { headers });
+        results['plugin-details'] = detailsResponse.status === 200;
+      }
+      
+      // Step 4: Configuration access
+      const configResponse = await this.api.get('/api/auth/me', { headers });
+      results['configuration-access'] = configResponse.status === 200;
+      
+      const allStepsSuccessful = Object.values(results).every(Boolean);
+      
+      if (!allStepsSuccessful) {
+        this.addResult('critical-workflows', 'degraded', Date.now() - startTime, 
+          'Some workflow steps failed', { results });
+        this.recommendations.push('Fix critical user workflow issues before deployment');
+      } else {
+        this.addResult('critical-workflows', 'healthy', Date.now() - startTime, undefined, { results });
+      }
+      
+    } catch (error) {
+      this.addResult('critical-workflows', 'unhealthy', Date.now() - startTime, error.message);
+    }
+  }
+
+  private async checkDataIntegrity(): Promise<void> {
+    const startTime = Date.now();
+    
+    try {
+      // Check for data consistency issues
+      const issues: string[] = [];
+      
+      // Check for orphaned records
+      const orphanedInstallations = await this.prisma.pluginInstallation.count({
+        where: { tenant: { is: null } },
+      });
+      
+      if (orphanedInstallations > 0) {
+        issues.push(`${orphanedInstallations} orphaned plugin installations`);
+      }
+      
+      // Check for users without tenants
+      const orphanedUsers = await this.prisma.user.count({
+        where: { tenant: { is: null } },
+      });
+      
+      if (orphanedUsers > 0) {
+        issues.push(`${orphanedUsers} orphaned users`);
+      }
+      
+      // Check for inactive tenants with active users
+      const inconsistentTenants = await this.prisma.tenant.count({
+        where: {
+          isActive: false,
+          users: { some: { isActive: true } },
+        },
+      });
+      
+      if (inconsistentTenants > 0) {
+        issues.push(`${inconsistentTenants} inactive tenants with active users`);
+      }
+      
+      if (issues.length > 0) {
+        this.addResult('data-integrity', 'degraded', Date.now() - startTime, 
+          'Data integrity issues found', { issues });
+        this.recommendations.push('Fix data integrity issues before deployment');
+      } else {
+        this.addResult('data-integrity', 'healthy', Date.now() - startTime);
+      }
+      
+    } catch (error) {
+      this.addResult('data-integrity', 'unhealthy', Date.now() - startTime, error.message);
+    }
+  }
+
+  private async ensureTestTenant(domain: string): Promise<any> {
+    let tenant = await this.prisma.tenant.findFirst({ where: { domain } });
+    
+    if (!tenant) {
+      tenant = await this.prisma.tenant.create({
+        data: {
+          name: `Test Tenant - ${domain}`,
+          domain,
+          isActive: true,
+        },
+      });
+      
+      // Create test user
+      await this.prisma.user.create({
+        data: {
+          email: `admin@${domain}`,
+          name: 'Test Admin',
+          tenantId: tenant.id,
+          role: 'admin',
+          isActive: true,
+        },
+      });
+    }
+    
+    return tenant;
+  }
+
+  private async getTenantToken(tenantId: string): Promise<string> {
+    const tenant = await this.prisma.tenant.findUnique({ where: { id: tenantId } });
+    
+    const loginResponse = await this.api.post('/api/auth/login', {
+      email: `admin@${tenant?.domain}`,
+      password: 'testpassword',
+    });
+    
+    return loginResponse.data.token;
+  }
+
+  private addResult(
+    component: string, 
+    status: 'healthy' | 'degraded' | 'unhealthy', 
+    responseTime: number, 
+    error?: string,
+    details?: Record<string, any>
+  ): void {
+    this.results.push({
+      component,
+      status,
+      responseTime,
+      error,
+      details,
+    });
+  }
+
+  private generateReport(): ValidationReport {
+    const passedChecks = this.results.filter(r => r.status === 'healthy').length;
+    const failedChecks = this.results.filter(r => r.status === 'unhealthy').length;
+    const degradedChecks = this.results.filter(r => r.status === 'degraded').length;
+    
+    const overallStatus = failedChecks > 0 ? 'fail' : (degradedChecks > 3 ? 'fail' : 'pass');
+    
+    return {
+      timestamp: new Date().toISOString(),
+      environment: this.config.environment,
+      overallStatus,
+      totalChecks: this.results.length,
+      passedChecks,
+      failedChecks: failedChecks + degradedChecks,
+      results: this.results,
+      recommendations: this.recommendations,
+    };
+  }
+
+  private async saveReport(report: ValidationReport): Promise<void> {
+    const reportDir = path.join(process.cwd(), 'deployment-reports');
+    await fs.mkdir(reportDir, { recursive: true });
+    
+    const filename = `health-check-${report.environment}-${Date.now()}.json`;
+    const filepath = path.join(reportDir, filename);
+    
+    await fs.writeFile(filepath, JSON.stringify(report, null, 2));
+    
+    console.log(`\n📊 Health check report saved to: ${filepath}`);
+  }
+
+  async cleanup(): Promise<void> {
+    await this.prisma.$disconnect();
+    await this.redis.quit();
+  }
+}
+
+// CLI interface
+async function main() {
+  const config: HealthCheckConfig = {
+    apiUrl: process.env.API_URL || 'http://localhost:4400',
+    databaseUrl: process.env.DATABASE_URL || 'postgresql://postgres:postgres@localhost:5432/nextportal_production',
+    redisUrl: process.env.REDIS_URL || 'redis://localhost:6379',
+    adminEmail: process.env.ADMIN_EMAIL || 'admin@example.com',
+    adminPassword: process.env.ADMIN_PASSWORD || 'admin-password',
+    environment: (process.env.NODE_ENV as 'staging' | 'production') || 'staging',
+    timeout: 10000,
+    retries: 3,
+  };
+  
+  const healthChecker = new ProductionHealthChecker(config);
+  
+  try {
+    const report = await healthChecker.runAllChecks();
+    
+    console.log('\n=== PRODUCTION HEALTH CHECK SUMMARY ===');
+    console.log(`Environment: ${report.environment}`);
+    console.log(`Overall Status: ${report.overallStatus === 'pass' ? '✅ PASS' : '❌ FAIL'}`);
+    console.log(`Total Checks: ${report.totalChecks}`);
+    console.log(`Passed: ${report.passedChecks}`);
+    console.log(`Failed: ${report.failedChecks}`);
+    
+    if (report.recommendations.length > 0) {
+      console.log('\n🔧 RECOMMENDATIONS:');
+      report.recommendations.forEach((rec, i) => {
+        console.log(`${i + 1}. ${rec}`);
+      });
+    }
+    
+    console.log('\n📋 DETAILED RESULTS:');
+    report.results.forEach(result => {
+      const icon = result.status === 'healthy' ? '✅' : result.status === 'degraded' ? '⚠️' : '❌';
+      console.log(`${icon} ${result.component}: ${result.status} (${result.responseTime}ms)`);
+      if (result.error) {
+        console.log(`   Error: ${result.error}`);
+      }
+    });
+    
+    // Exit with appropriate code
+    process.exit(report.overallStatus === 'pass' ? 0 : 1);
+    
+  } catch (error) {
+    console.error('❌ Health check failed:', error);
+    process.exit(1);
+  } finally {
+    await healthChecker.cleanup();
+  }
+}
+
+if (require.main === module) {
+  main().catch(console.error);
+}
+
+export { ProductionHealthChecker, type HealthCheckConfig, type ValidationReport };

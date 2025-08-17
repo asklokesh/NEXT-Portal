@@ -1,10 +1,11 @@
-import type { DragItem, DropZone } from './DragDropContext';
-
 export { DragDropProvider, useDragDrop } from './DragDropContext';
 export type { DragItem, DropZone, DragDropState } from './DragDropContext';
 
 export { Draggable, DraggableCard } from './Draggable';
 export { Droppable, DroppableZone, DroppableList } from './Droppable';
+
+// Import types from the context for utility functions
+import type { DragItem, DropZone } from './DragDropContext';
 
 // Utility functions for drag and drop operations
 export const createDragItem = (id: string, type: 'entity' | 'folder' | 'group', data: any): DragItem => ({

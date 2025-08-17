@@ -1,0 +1,487 @@
+/**
+ * Customer Feedback Widget Component
+ * 
+ * In-app feedback widget with screenshot capture:
+ * - Floating feedback button
+ * - Modal form with categories
+ * - Screenshot capture functionality
+ * - Automatic metadata collection
+ */
+
+'use client';
+
+import React, { useState, useCallback } from 'react';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { Textarea } from '@/components/ui/textarea';
+import { Input } from '@/components/ui/input';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Badge } from '@/components/ui/badge';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { MessageSquare, Camera, Send, AlertCircle, CheckCircle } from 'lucide-react';
+import { useToast } from '@/components/ui/use-toast';
+import html2canvas from 'html2canvas';
+
+interface FeedbackFormData {
+  type: 'BUG' | 'FEATURE_REQUEST' | 'IMPROVEMENT' | 'QUESTION' | 'COMPLAINT';
+  category: 'UI_UX' | 'PERFORMANCE' | 'FUNCTIONALITY' | 'DOCUMENTATION' | 'INTEGRATION' | 'SECURITY' | 'OTHER';
+  title: string;
+  description: string;
+  priority: 'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT' | 'CRITICAL';
+  screenshot?: string;
+  tags: string[];
+}
+
+interface FeedbackMetadata {
+  browserInfo: {
+    userAgent: string;
+    viewport: { width: number; height: number };
+    url: string;
+    timestamp: string;
+  };
+  systemInfo?: {
+    platform: string;
+    memory?: number;
+    connection?: string;
+  };
+}
+
+const feedbackTypes = [
+  { value: 'BUG', label: 'Bug Report', icon: '🐛' },
+  { value: 'FEATURE_REQUEST', label: 'Feature Request', icon: '💡' },
+  { value: 'IMPROVEMENT', label: 'Improvement', icon: '⚡' },
+  { value: 'QUESTION', label: 'Question', icon: '❓' },
+  { value: 'COMPLAINT', label: 'Complaint', icon: '😟' }
+];
+
+const feedbackCategories = [
+  { value: 'UI_UX', label: 'UI/UX Design' },
+  { value: 'PERFORMANCE', label: 'Performance' },
+  { value: 'FUNCTIONALITY', label: 'Functionality' },
+  { value: 'DOCUMENTATION', label: 'Documentation' },
+  { value: 'INTEGRATION', label: 'Integration' },
+  { value: 'SECURITY', label: 'Security' },
+  { value: 'OTHER', label: 'Other' }
+];
+
+const priorityLevels = [
+  { value: 'LOW', label: 'Low', color: 'bg-gray-100 text-gray-800' },
+  { value: 'MEDIUM', label: 'Medium', color: 'bg-blue-100 text-blue-800' },
+  { value: 'HIGH', label: 'High', color: 'bg-orange-100 text-orange-800' },
+  { value: 'URGENT', label: 'Urgent', color: 'bg-red-100 text-red-800' },
+  { value: 'CRITICAL', label: 'Critical', color: 'bg-red-200 text-red-900' }
+];
+
+export const FeedbackWidget: React.FC = () => {
+  const [isOpen, setIsOpen] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isCapturingScreen, setIsCapturingScreen] = useState(false);
+  const [formData, setFormData] = useState<FeedbackFormData>({
+    type: 'BUG',
+    category: 'OTHER',
+    title: '',
+    description: '',
+    priority: 'MEDIUM',
+    tags: []
+  });
+  const [tagInput, setTagInput] = useState('');
+  const { toast } = useToast();
+
+  // Collect browser and system metadata
+  const collectMetadata = useCallback(): FeedbackMetadata => {
+    const nav = navigator as any;
+    
+    return {
+      browserInfo: {
+        userAgent: navigator.userAgent,
+        viewport: {
+          width: window.innerWidth,
+          height: window.innerHeight
+        },
+        url: window.location.href,
+        timestamp: new Date().toISOString()
+      },
+      systemInfo: {
+        platform: navigator.platform,
+        memory: nav.deviceMemory,
+        connection: nav.connection?.effectiveType
+      }
+    };
+  }, []);
+
+  // Capture screenshot using html2canvas
+  const captureScreenshot = useCallback(async (): Promise<string | null> => {
+    try {
+      setIsCapturingScreen(true);
+      
+      const canvas = await html2canvas(document.body, {
+        height: window.innerHeight,
+        width: window.innerWidth,
+        useCORS: true,
+        allowTaint: false
+      });
+      
+      return canvas.toDataURL('image/png', 0.8);
+    } catch (error) {
+      console.error('Error capturing screenshot:', error);
+      toast({
+        title: 'Screenshot Failed',
+        description: 'Could not capture screenshot. Please try again.',
+        variant: 'destructive'
+      });
+      return null;
+    } finally {
+      setIsCapturingScreen(false);
+    }
+  }, [toast]);
+
+  const handleScreenshot = async () => {
+    const screenshot = await captureScreenshot();
+    if (screenshot) {
+      setFormData(prev => ({ ...prev, screenshot }));
+      toast({
+        title: 'Screenshot Captured',
+        description: 'Screenshot has been added to your feedback.',
+      });
+    }
+  };
+
+  const handleAddTag = () => {
+    if (tagInput.trim() && !formData.tags.includes(tagInput.trim())) {
+      setFormData(prev => ({
+        ...prev,
+        tags: [...prev.tags, tagInput.trim()]
+      }));
+      setTagInput('');
+    }
+  };
+
+  const handleRemoveTag = (tagToRemove: string) => {
+    setFormData(prev => ({
+      ...prev,
+      tags: prev.tags.filter(tag => tag !== tagToRemove)
+    }));
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    
+    if (!formData.title.trim() || !formData.description.trim()) {
+      toast({
+        title: 'Missing Information',
+        description: 'Please fill in both title and description.',
+        variant: 'destructive'
+      });
+      return;
+    }
+
+    setIsSubmitting(true);
+
+    try {
+      const metadata = collectMetadata();
+      
+      const response = await fetch('/api/feedback', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-user-id': 'current-user-id' // This would come from auth context
+        },
+        body: JSON.stringify({
+          ...formData,
+          metadata
+        })
+      });
+
+      const result = await response.json();
+
+      if (result.success) {
+        toast({
+          title: 'Feedback Submitted',
+          description: 'Thank you for your feedback! We\'ll review it soon.',
+        });
+        
+        // Reset form
+        setFormData({
+          type: 'BUG',
+          category: 'OTHER',
+          title: '',
+          description: '',
+          priority: 'MEDIUM',
+          tags: []
+        });
+        setIsOpen(false);
+      } else {
+        throw new Error(result.message);
+      }
+    } catch (error: any) {
+      toast({
+        title: 'Submission Failed',
+        description: error.message || 'Failed to submit feedback. Please try again.',
+        variant: 'destructive'
+      });
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const selectedType = feedbackTypes.find(t => t.value === formData.type);
+  const selectedPriority = priorityLevels.find(p => p.value === formData.priority);
+
+  return (
+    <>
+      {/* Floating Feedback Button */}
+      <Dialog open={isOpen} onOpenChange={setIsOpen}>
+        <DialogTrigger asChild>
+          <Button
+            className="fixed bottom-6 right-6 rounded-full w-14 h-14 shadow-lg hover:shadow-xl transition-all duration-200 z-50"
+            size="icon"
+          >
+            <MessageSquare className="h-6 w-6" />
+          </Button>
+        </DialogTrigger>
+        
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <MessageSquare className="h-5 w-5" />
+              Send Feedback
+            </DialogTitle>
+          </DialogHeader>
+
+          <form onSubmit={handleSubmit} className="space-y-6">
+            {/* Feedback Type */}
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Feedback Type</label>
+              <Select
+                value={formData.type}
+                onValueChange={(value) => setFormData(prev => ({ ...prev, type: value as any }))}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {feedbackTypes.map(type => (
+                    <SelectItem key={type.value} value={type.value}>
+                      <span className="flex items-center gap-2">
+                        <span>{type.icon}</span>
+                        {type.label}
+                      </span>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Category and Priority */}
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Category</label>
+                <Select
+                  value={formData.category}
+                  onValueChange={(value) => setFormData(prev => ({ ...prev, category: value as any }))}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {feedbackCategories.map(cat => (
+                      <SelectItem key={cat.value} value={cat.value}>
+                        {cat.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Priority</label>
+                <Select
+                  value={formData.priority}
+                  onValueChange={(value) => setFormData(prev => ({ ...prev, priority: value as any }))}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {priorityLevels.map(priority => (
+                      <SelectItem key={priority.value} value={priority.value}>
+                        <Badge className={priority.color} variant="secondary">
+                          {priority.label}
+                        </Badge>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            {/* Title */}
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Title</label>
+              <Input
+                value={formData.title}
+                onChange={(e) => setFormData(prev => ({ ...prev, title: e.target.value }))}
+                placeholder="Brief summary of your feedback..."
+                maxLength={200}
+              />
+              <div className="text-xs text-gray-500 text-right">
+                {formData.title.length}/200
+              </div>
+            </div>
+
+            {/* Description */}
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Description</label>
+              <Textarea
+                value={formData.description}
+                onChange={(e) => setFormData(prev => ({ ...prev, description: e.target.value }))}
+                placeholder="Please provide detailed information about your feedback..."
+                rows={5}
+                maxLength={5000}
+              />
+              <div className="text-xs text-gray-500 text-right">
+                {formData.description.length}/5000
+              </div>
+            </div>
+
+            {/* Tags */}
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Tags (Optional)</label>
+              <div className="flex gap-2">
+                <Input
+                  value={tagInput}
+                  onChange={(e) => setTagInput(e.target.value)}
+                  placeholder="Add a tag..."
+                  onKeyPress={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      handleAddTag();
+                    }
+                  }}
+                />
+                <Button type="button" variant="outline" onClick={handleAddTag}>
+                  Add
+                </Button>
+              </div>
+              {formData.tags.length > 0 && (
+                <div className="flex flex-wrap gap-2">
+                  {formData.tags.map(tag => (
+                    <Badge
+                      key={tag}
+                      variant="secondary"
+                      className="cursor-pointer"
+                      onClick={() => handleRemoveTag(tag)}
+                    >
+                      {tag} ×
+                    </Badge>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Screenshot Section */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-sm flex items-center gap-2">
+                  <Camera className="h-4 w-4" />
+                  Screenshot (Optional)
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {!formData.screenshot ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={handleScreenshot}
+                    disabled={isCapturingScreen}
+                    className="w-full"
+                  >
+                    {isCapturingScreen ? (
+                      'Capturing Screenshot...'
+                    ) : (
+                      <>
+                        <Camera className="h-4 w-4 mr-2" />
+                        Capture Screenshot
+                      </>
+                    )}
+                  </Button>
+                ) : (
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-2 text-sm text-green-600">
+                      <CheckCircle className="h-4 w-4" />
+                      Screenshot captured
+                    </div>
+                    <div className="relative">
+                      <img
+                        src={formData.screenshot}
+                        alt="Feedback screenshot"
+                        className="max-h-48 w-auto border rounded"
+                      />
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setFormData(prev => ({ ...prev, screenshot: undefined }))}
+                        className="absolute top-2 right-2"
+                      >
+                        Remove
+                      </Button>
+                    </div>
+                  </div>
+                )}
+                <Alert>
+                  <AlertCircle className="h-4 w-4" />
+                  <AlertDescription className="text-xs">
+                    Screenshots help us understand issues better. No sensitive data is captured.
+                  </AlertDescription>
+                </Alert>
+              </CardContent>
+            </Card>
+
+            {/* Summary Card */}
+            <Card className="bg-gray-50">
+              <CardContent className="pt-4">
+                <div className="flex items-center justify-between text-sm">
+                  <div className="flex items-center gap-2">
+                    <span>{selectedType?.icon}</span>
+                    <span className="font-medium">{selectedType?.label}</span>
+                  </div>
+                  <Badge className={selectedPriority?.color} variant="secondary">
+                    {selectedPriority?.label}
+                  </Badge>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Submit Button */}
+            <div className="flex gap-3">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setIsOpen(false)}
+                className="flex-1"
+              >
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                disabled={isSubmitting}
+                className="flex-1"
+              >
+                {isSubmitting ? (
+                  'Submitting...'
+                ) : (
+                  <>
+                    <Send className="h-4 w-4 mr-2" />
+                    Send Feedback
+                  </>
+                )}
+              </Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+};

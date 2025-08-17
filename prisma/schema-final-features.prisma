@@ -1,0 +1,841 @@
+// ============================================
+// CUSTOMER FEEDBACK SYSTEM (launch-5)
+// ============================================
+
+model FeedbackItem {
+  id            String              @id @default(cuid())
+  userId        String
+  type          FeedbackType
+  category      FeedbackCategory
+  title         String
+  description   String              @db.Text
+  screenshot    String?             // URL to screenshot
+  screenData    Json?               // Captured browser/app metadata
+  priority      FeedbackPriority    @default(MEDIUM)
+  status        FeedbackStatus      @default(OPEN)
+  visibility    FeedbackVisibility  @default(PUBLIC)
+  votes         Int                 @default(0)
+  
+  // Roadmap Integration
+  roadmapItem   String?
+  releaseTarget String?
+  
+  // Advisory Board
+  isAdvisoryItem Boolean            @default(false)
+  boardNotes     String?            @db.Text
+  
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
+  resolvedAt    DateTime?
+  
+  // Relationships
+  user          User                @relation(fields: [userId], references: [id])
+  userVotes     FeedbackVote[]
+  comments      FeedbackComment[]
+  attachments   FeedbackAttachment[]
+  tags          FeedbackTag[]
+  
+  @@index([type, status])
+  @@index([userId])
+  @@index([votes])
+  @@index([createdAt])
+  @@map("feedback_items")
+}
+
+model FeedbackVote {
+  id           String       @id @default(cuid())
+  feedbackId   String
+  userId       String
+  voteType     VoteType     @default(UPVOTE)
+  createdAt    DateTime     @default(now())
+  
+  feedback     FeedbackItem @relation(fields: [feedbackId], references: [id], onDelete: Cascade)
+  
+  @@unique([feedbackId, userId])
+  @@map("feedback_votes")
+}
+
+model FeedbackComment {
+  id           String       @id @default(cuid())
+  feedbackId   String
+  userId       String
+  content      String       @db.Text
+  isInternal   Boolean      @default(false)
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+  
+  feedback     FeedbackItem @relation(fields: [feedbackId], references: [id], onDelete: Cascade)
+  
+  @@map("feedback_comments")
+}
+
+model FeedbackAttachment {
+  id           String       @id @default(cuid())
+  feedbackId   String
+  fileName     String
+  fileUrl      String
+  fileSize     Int
+  mimeType     String
+  uploadedAt   DateTime     @default(now())
+  
+  feedback     FeedbackItem @relation(fields: [feedbackId], references: [id], onDelete: Cascade)
+  
+  @@map("feedback_attachments")
+}
+
+model FeedbackTag {
+  id           String       @id @default(cuid())
+  feedbackId   String
+  tag          String
+  
+  feedback     FeedbackItem @relation(fields: [feedbackId], references: [id], onDelete: Cascade)
+  
+  @@unique([feedbackId, tag])
+  @@map("feedback_tags")
+}
+
+model CustomerAdvisoryBoard {
+  id              String   @id @default(cuid())
+  customerId      String
+  companyName     String
+  contactName     String
+  contactEmail    String
+  contactRole     String
+  tier            String   // strategic, enterprise, growth
+  joinedAt        DateTime @default(now())
+  isActive        Boolean  @default(true)
+  nextMeeting     DateTime?
+  meetingCadence  String?  // monthly, quarterly
+  notes           String?  @db.Text
+  
+  @@map("customer_advisory_board")
+}
+
+enum FeedbackType {
+  BUG
+  FEATURE_REQUEST
+  IMPROVEMENT
+  QUESTION
+  COMPLAINT
+}
+
+enum FeedbackCategory {
+  UI_UX
+  PERFORMANCE
+  FUNCTIONALITY
+  DOCUMENTATION
+  INTEGRATION
+  SECURITY
+  OTHER
+}
+
+enum FeedbackPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+  CRITICAL
+}
+
+enum FeedbackStatus {
+  OPEN
+  UNDER_REVIEW
+  IN_PROGRESS
+  PLANNED
+  COMPLETED
+  REJECTED
+  DUPLICATE
+}
+
+enum FeedbackVisibility {
+  PUBLIC
+  INTERNAL
+  ADVISORY_ONLY
+}
+
+enum VoteType {
+  UPVOTE
+  DOWNVOTE
+}
+
+// ============================================
+// KNOWLEDGE BASE AND DOCUMENTATION (customer-2)
+// ============================================
+
+model KnowledgeBaseArticle {
+  id              String           @id @default(cuid())
+  slug            String           @unique
+  title           String
+  excerpt         String?
+  content         String           @db.Text
+  contentFormat   ContentFormat    @default(MARKDOWN)
+  category        String
+  subcategory     String?
+  tags            String[]
+  author          String
+  reviewedBy      String?
+  
+  // SEO
+  metaTitle       String?
+  metaDescription String?
+  keywords        String[]
+  
+  // Versioning
+  version         String           @default("1.0.0")
+  isDraft         Boolean          @default(false)
+  isPublished     Boolean          @default(false)
+  publishedAt     DateTime?
+  
+  // Analytics
+  viewCount       Int              @default(0)
+  helpfulCount    Int              @default(0)
+  notHelpfulCount Int              @default(0)
+  
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  
+  // Relationships
+  relatedArticles ArticleRelation[]
+  attachments     ArticleAttachment[]
+  comments        ArticleComment[]
+  ratings         ArticleRating[]
+  
+  @@index([slug])
+  @@index([category, isPublished])
+  @@index([tags])
+  @@fulltext([title, content])
+  @@map("kb_articles")
+}
+
+model ArticleRelation {
+  id            String               @id @default(cuid())
+  articleId     String
+  relatedId     String
+  relationType  String               // prerequisite, related, next
+  
+  article       KnowledgeBaseArticle @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  
+  @@unique([articleId, relatedId])
+  @@map("kb_article_relations")
+}
+
+model ArticleAttachment {
+  id         String               @id @default(cuid())
+  articleId  String
+  fileName   String
+  fileUrl    String
+  fileSize   Int
+  mimeType   String
+  
+  article    KnowledgeBaseArticle @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  
+  @@map("kb_article_attachments")
+}
+
+model ArticleComment {
+  id         String               @id @default(cuid())
+  articleId  String
+  userId     String
+  content    String               @db.Text
+  isAnswer   Boolean              @default(false)
+  createdAt  DateTime             @default(now())
+  
+  article    KnowledgeBaseArticle @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  
+  @@map("kb_article_comments")
+}
+
+model ArticleRating {
+  id         String               @id @default(cuid())
+  articleId  String
+  userId     String
+  rating     Int                  // 1-5
+  feedback   String?              @db.Text
+  createdAt  DateTime             @default(now())
+  
+  article    KnowledgeBaseArticle @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  
+  @@unique([articleId, userId])
+  @@map("kb_article_ratings")
+}
+
+model VideoTutorial {
+  id              String   @id @default(cuid())
+  title           String
+  description     String   @db.Text
+  videoUrl        String
+  thumbnailUrl    String?
+  duration        Int      // seconds
+  category        String
+  tags            String[]
+  transcriptUrl   String?
+  viewCount       Int      @default(0)
+  isPublished     Boolean  @default(false)
+  publishedAt     DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  
+  @@map("kb_video_tutorials")
+}
+
+model CommunityForum {
+  id           String   @id @default(cuid())
+  name         String   @unique
+  description  String
+  slug         String   @unique
+  category     String
+  moderators   String[] // user IDs
+  isActive     Boolean  @default(true)
+  postCount    Int      @default(0)
+  memberCount  Int      @default(0)
+  createdAt    DateTime @default(now())
+  
+  // Relationships
+  topics       ForumTopic[]
+  
+  @@map("community_forums")
+}
+
+model ForumTopic {
+  id           String         @id @default(cuid())
+  forumId      String
+  userId       String
+  title        String
+  content      String         @db.Text
+  isPinned     Boolean        @default(false)
+  isLocked     Boolean        @default(false)
+  isSolved     Boolean        @default(false)
+  viewCount    Int            @default(0)
+  replyCount   Int            @default(0)
+  lastReplyAt  DateTime?
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+  
+  forum        CommunityForum @relation(fields: [forumId], references: [id], onDelete: Cascade)
+  replies      ForumReply[]
+  
+  @@map("forum_topics")
+}
+
+model ForumReply {
+  id           String     @id @default(cuid())
+  topicId      String
+  userId       String
+  content      String     @db.Text
+  isAccepted   Boolean    @default(false)
+  upvotes      Int        @default(0)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+  
+  topic        ForumTopic @relation(fields: [topicId], references: [id], onDelete: Cascade)
+  
+  @@map("forum_replies")
+}
+
+enum ContentFormat {
+  MARKDOWN
+  HTML
+  RICH_TEXT
+}
+
+// ============================================
+// SUPPORT TICKETING SYSTEM (customer-4)
+// ============================================
+
+model SupportTicket {
+  id              String         @id @default(cuid())
+  ticketNumber    String         @unique
+  userId          String
+  accountId       String?
+  channel         TicketChannel
+  category        TicketCategory
+  priority        TicketPriority
+  status          TicketStatus   @default(NEW)
+  subject         String
+  description     String         @db.Text
+  
+  // SLA Management
+  slaLevel        String?        // bronze, silver, gold, platinum
+  slaResponseTime Int?           // minutes
+  slaResolveTime  Int?           // minutes
+  respondedAt     DateTime?
+  
+  // Assignment
+  assignedTo      String?
+  assignedTeam    String?
+  escalationLevel Int            @default(0)
+  
+  // Integration
+  externalId      String?        // ID from external system
+  linkedIssues    String[]       // GitHub, Jira issue IDs
+  
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+  resolvedAt      DateTime?
+  closedAt        DateTime?
+  
+  // Relationships
+  user            User           @relation(fields: [userId], references: [id])
+  messages        TicketMessage[]
+  attachments     TicketAttachment[]
+  activities      TicketActivity[]
+  satisfaction    TicketSatisfaction?
+  escalations     TicketEscalation[]
+  
+  @@index([ticketNumber])
+  @@index([userId, status])
+  @@index([assignedTo, status])
+  @@index([priority, status])
+  @@index([createdAt])
+  @@map("support_tickets")
+}
+
+model TicketMessage {
+  id           String        @id @default(cuid())
+  ticketId     String
+  senderId     String
+  senderType   SenderType
+  message      String        @db.Text
+  isInternal   Boolean       @default(false)
+  createdAt    DateTime      @default(now())
+  
+  ticket       SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  
+  @@map("ticket_messages")
+}
+
+model TicketAttachment {
+  id           String        @id @default(cuid())
+  ticketId     String
+  fileName     String
+  fileUrl      String
+  fileSize     Int
+  mimeType     String
+  uploadedAt   DateTime      @default(now())
+  
+  ticket       SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  
+  @@map("ticket_attachments")
+}
+
+model TicketActivity {
+  id           String        @id @default(cuid())
+  ticketId     String
+  userId       String
+  action       String
+  details      Json?
+  createdAt    DateTime      @default(now())
+  
+  ticket       SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  
+  @@map("ticket_activities")
+}
+
+model TicketSatisfaction {
+  id           String        @id @default(cuid())
+  ticketId     String        @unique
+  rating       Int           // 1-5
+  feedback     String?       @db.Text
+  respondedAt  DateTime      @default(now())
+  
+  ticket       SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  
+  @@map("ticket_satisfaction")
+}
+
+model TicketEscalation {
+  id           String        @id @default(cuid())
+  ticketId     String
+  fromLevel    Int
+  toLevel      Int
+  reason       String
+  escalatedBy  String
+  escalatedAt  DateTime      @default(now())
+  
+  ticket       SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  
+  @@map("ticket_escalations")
+}
+
+model AutomatedResponse {
+  id           String   @id @default(cuid())
+  trigger      String   // keyword, category, etc.
+  response     String   @db.Text
+  category     String
+  isActive     Boolean  @default(true)
+  usageCount   Int      @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  
+  @@map("automated_responses")
+}
+
+enum TicketChannel {
+  EMAIL
+  CHAT
+  IN_APP
+  PHONE
+  SOCIAL
+  API
+}
+
+enum TicketCategory {
+  TECHNICAL
+  BILLING
+  ACCOUNT
+  FEATURE_REQUEST
+  INTEGRATION
+  SECURITY
+  OTHER
+}
+
+enum TicketPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+  CRITICAL
+}
+
+enum TicketStatus {
+  NEW
+  OPEN
+  IN_PROGRESS
+  WAITING_CUSTOMER
+  WAITING_INTERNAL
+  ESCALATED
+  RESOLVED
+  CLOSED
+}
+
+enum SenderType {
+  CUSTOMER
+  AGENT
+  SYSTEM
+}
+
+// ============================================
+// PARTNER PORTAL (partner-1)
+// ============================================
+
+model Partner {
+  id                String         @id @default(cuid())
+  companyName       String
+  companyWebsite    String?
+  partnerType       PartnerType
+  partnerTier       PartnerTier
+  status            PartnerStatus  @default(PENDING)
+  
+  // Contact Information
+  primaryContact    String
+  primaryEmail      String         @unique
+  primaryPhone      String?
+  technicalContact  String?
+  technicalEmail    String?
+  billingContact    String?
+  billingEmail      String?
+  
+  // Business Details
+  taxId             String?
+  address           Json?
+  country           String
+  currency          String         @default("USD")
+  
+  // Partner Program
+  certificationLevel String?       // basic, advanced, expert
+  specializations   String[]
+  territories       String[]
+  
+  // Revenue Sharing
+  commissionRate    Float          @default(0.20) // 20% default
+  paymentTerms      String         @default("NET30")
+  bankDetails       Json?          // encrypted
+  
+  // Branding
+  logoUrl           String?
+  brandColors       Json?
+  customDomain      String?
+  
+  // Agreements
+  contractStartDate DateTime?
+  contractEndDate   DateTime?
+  nda               Boolean        @default(false)
+  msa               Boolean        @default(false)
+  
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+  approvedAt        DateTime?
+  
+  // Relationships
+  users             PartnerUser[]
+  deals             DealRegistration[]
+  resources         PartnerResource[]
+  trainings         PartnerTraining[]
+  commissions       Commission[]
+  whiteLabels       WhiteLabelConfig[]
+  
+  @@index([partnerType, status])
+  @@index([partnerTier])
+  @@map("partners")
+}
+
+model PartnerUser {
+  id           String       @id @default(cuid())
+  partnerId    String
+  userId       String
+  role         PartnerRole
+  isActive     Boolean      @default(true)
+  joinedAt     DateTime     @default(now())
+  
+  partner      Partner      @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+  
+  @@unique([partnerId, userId])
+  @@map("partner_users")
+}
+
+model DealRegistration {
+  id              String           @id @default(cuid())
+  partnerId       String
+  dealNumber      String           @unique
+  customerName    String
+  customerEmail   String
+  customerCompany String
+  dealValue       Decimal          @db.Decimal(10, 2)
+  currency        String           @default("USD")
+  probability     Int              // 0-100
+  expectedClose   DateTime
+  status          DealStatus       @default(PENDING)
+  
+  // Protection
+  protectionEnd   DateTime         // exclusive period
+  
+  // Details
+  description     String           @db.Text
+  competitors     String[]
+  notes           String?          @db.Text
+  
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  approvedAt      DateTime?
+  closedAt        DateTime?
+  
+  partner         Partner          @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+  
+  @@index([partnerId, status])
+  @@index([dealNumber])
+  @@map("deal_registrations")
+}
+
+model PartnerResource {
+  id           String       @id @default(cuid())
+  partnerId    String
+  title        String
+  type         ResourceType
+  description  String       @db.Text
+  fileUrl      String?
+  content      String?      @db.Text
+  category     String
+  isPublic     Boolean      @default(false)
+  downloadCount Int         @default(0)
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+  
+  partner      Partner      @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+  
+  @@map("partner_resources")
+}
+
+model PartnerTraining {
+  id              String          @id @default(cuid())
+  partnerId       String
+  userId          String
+  courseName      String
+  courseLevel     String          // basic, intermediate, advanced
+  completedAt     DateTime?
+  score           Float?
+  certificateUrl  String?
+  expiresAt       DateTime?
+  
+  partner         Partner         @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+  
+  @@map("partner_trainings")
+}
+
+model Commission {
+  id              String          @id @default(cuid())
+  partnerId       String
+  dealId          String?
+  subscriptionId  String?
+  amount          Decimal         @db.Decimal(10, 2)
+  currency        String          @default("USD")
+  rate            Float
+  status          CommissionStatus @default(PENDING)
+  period          String          // YYYY-MM
+  dueDate         DateTime
+  paidAt          DateTime?
+  invoiceNumber   String?
+  notes           String?         @db.Text
+  
+  partner         Partner         @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+  
+  @@index([partnerId, status])
+  @@index([period])
+  @@map("commissions")
+}
+
+enum PartnerType {
+  RESELLER
+  REFERRAL
+  TECHNOLOGY
+  SERVICE_PROVIDER
+  CONSULTANT
+}
+
+enum PartnerTier {
+  BRONZE
+  SILVER
+  GOLD
+  PLATINUM
+}
+
+enum PartnerStatus {
+  PENDING
+  ACTIVE
+  SUSPENDED
+  TERMINATED
+}
+
+enum PartnerRole {
+  ADMIN
+  SALES
+  TECHNICAL
+  VIEWER
+}
+
+enum DealStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  WON
+  LOST
+  EXPIRED
+}
+
+enum ResourceType {
+  SALES_MATERIAL
+  TECHNICAL_GUIDE
+  MARKETING_ASSET
+  TRAINING_VIDEO
+  CASE_STUDY
+  TEMPLATE
+}
+
+enum CommissionStatus {
+  PENDING
+  APPROVED
+  PAID
+  DISPUTED
+  CANCELLED
+}
+
+// ============================================
+// WHITE-LABEL CONFIGURATION (partner-2)
+// ============================================
+
+model WhiteLabelConfig {
+  id              String          @id @default(cuid())
+  partnerId       String
+  tenantId        String          @unique
+  
+  // Branding
+  brandName       String
+  logoUrl         String
+  faviconUrl      String?
+  primaryColor    String
+  secondaryColor  String
+  accentColor     String?
+  fontFamily      String?
+  customCss       String?         @db.Text
+  
+  // Domain Configuration
+  customDomain    String          @unique
+  sslCertificate  String?
+  dnsVerified     Boolean         @default(false)
+  
+  // Feature Configuration
+  features        Json            // enabled/disabled features
+  modules         String[]        // enabled modules
+  plugins         String[]        // allowed plugins
+  limits          Json            // usage limits
+  
+  // Email Configuration
+  emailFrom       String?
+  emailReplyTo    String?
+  emailTemplates  Json?
+  
+  // Legal
+  termsUrl        String?
+  privacyUrl      String?
+  supportEmail    String?
+  supportUrl      String?
+  
+  // Pricing
+  pricingModel    String?         // custom pricing
+  billingEnabled  Boolean         @default(false)
+  stripeAccountId String?
+  
+  isActive        Boolean         @default(true)
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  
+  partner         Partner         @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+  
+  @@index([partnerId])
+  @@index([customDomain])
+  @@map("white_label_configs")
+}
+
+model TenantIsolation {
+  id              String   @id @default(cuid())
+  tenantId        String   @unique
+  partnerId       String
+  
+  // Database Isolation
+  databaseUrl     String?  // separate database if needed
+  schemaName      String?  // schema isolation
+  
+  // Storage Isolation
+  storageAccount  String?
+  storagePath     String?
+  
+  // Network Isolation
+  vpcId           String?
+  subnetId        String?
+  securityGroup   String?
+  
+  // Resource Limits
+  maxUsers        Int      @default(100)
+  maxServices     Int      @default(500)
+  maxStorage      Int      @default(100) // GB
+  maxBandwidth    Int      @default(1000) // GB/month
+  
+  // Compliance
+  dataResidency   String?  // country/region
+  encryptionKey   String?  // tenant-specific encryption
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  
+  @@map("tenant_isolation")
+}
+
+// Add relations to existing User model
+model User {
+  // ... existing fields ...
+  
+  // New relationships for final features
+  feedbackItems      FeedbackItem[]
+  supportTickets     SupportTicket[]
+  
+  @@map("users")
+}

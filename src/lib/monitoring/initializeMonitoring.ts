@@ -85,7 +85,7 @@ export function initializeMonitoringData() {
  let message = '';
  switch (level) {
  case 'error':
- message = `Database connection failed for ${source}`;
+ message = `[Mock Error] Sample error for demonstration in ${source}`;
  break;
  case 'warn':
  message = `High response time detected in ${source} (${Math.floor(Math.random() * 500 + 200)}ms)`;
@@ -113,6 +113,10 @@ export function initializeMonitoringData() {
 
 // Auto-initialize when this module is imported in development
 if (typeof window !== 'undefined' && process.env.NODE_ENV === 'development') {
+ // Initialize only once to prevent re-initialization issues
+ if (!(window as any).__monitoringInitialized) {
+ (window as any).__monitoringInitialized = true;
  // Initialize after a short delay to ensure the metrics collector is ready
  setTimeout(initializeMonitoringData, 1000);
+ }
 }

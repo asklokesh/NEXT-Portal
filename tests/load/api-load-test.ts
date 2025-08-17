@@ -1,0 +1,371 @@
+/**
+ * API Load Testing Script
+ * Simulates production-level traffic to validate API performance
+ */
+
+import axios, { AxiosResponse } from 'axios';
+import { performance } from 'perf_hooks';
+
+interface LoadTestConfig {
+  baseUrl: string;
+  endpoints: EndpointConfig[];
+  concurrency: number;
+  duration: number; // in seconds
+  rampUpTime: number; // in seconds
+  authToken: string;
+  tenantId: string;
+}
+
+interface EndpointConfig {
+  path: string;
+  method: 'GET' | 'POST' | 'PUT' | 'DELETE';
+  weight: number; // Probability weight for this endpoint
+  body?: any;
+  expectedStatus?: number[];
+}
+
+interface TestResult {
+  endpoint: string;
+  method: string;
+  responseTime: number;
+  status: number;
+  success: boolean;
+  timestamp: number;
+  error?: string;
+}
+
+interface LoadTestResults {
+  totalRequests: number;
+  successfulRequests: number;
+  failedRequests: number;
+  averageResponseTime: number;
+  p95ResponseTime: number;
+  p99ResponseTime: number;
+  requestsPerSecond: number;
+  errorRate: number;
+  endpointResults: Map<string, TestResult[]>;
+  errors: string[];
+}
+
+export class APILoadTester {
+  private config: LoadTestConfig;
+  private results: TestResult[] = [];
+  private isRunning = false;
+
+  constructor(config: LoadTestConfig) {
+    this.config = config;
+  }
+
+  async runLoadTest(): Promise<LoadTestResults> {
+    console.log('🚀 Starting API Load Test...');
+    console.log(`Configuration: ${this.config.concurrency} concurrent users for ${this.config.duration}s`);
+    
+    this.isRunning = true;
+    this.results = [];
+
+    const startTime = performance.now();
+    const endTime = startTime + (this.config.duration * 1000);
+
+    // Start concurrent workers
+    const workers = Array.from({ length: this.config.concurrency }, (_, i) => 
+      this.runWorker(i, startTime, endTime)
+    );
+
+    await Promise.all(workers);
+
+    this.isRunning = false;
+    return this.generateReport();
+  }
+
+  private async runWorker(workerId: number, startTime: number, endTime: number): Promise<void> {
+    const rampUpDelay = (this.config.rampUpTime * 1000 * workerId) / this.config.concurrency;
+    await this.sleep(rampUpDelay);
+
+    console.log(`Worker ${workerId} started`);
+
+    while (performance.now() < endTime && this.isRunning) {
+      try {
+        const endpoint = this.selectRandomEndpoint();
+        const result = await this.makeRequest(endpoint);
+        this.results.push(result);
+
+        // Small delay between requests per worker
+        await this.sleep(50 + Math.random() * 100);
+      } catch (error) {
+        console.error(`Worker ${workerId} error:`, error);
+      }
+    }
+
+    console.log(`Worker ${workerId} completed`);
+  }
+
+  private selectRandomEndpoint(): EndpointConfig {
+    const totalWeight = this.config.endpoints.reduce((sum, ep) => sum + ep.weight, 0);
+    let random = Math.random() * totalWeight;
+
+    for (const endpoint of this.config.endpoints) {
+      random -= endpoint.weight;
+      if (random <= 0) {
+        return endpoint;
+      }
+    }
+
+    return this.config.endpoints[0]; // Fallback
+  }
+
+  private async makeRequest(endpoint: EndpointConfig): Promise<TestResult> {
+    const startTime = performance.now();
+    const url = `${this.config.baseUrl}${endpoint.path}`;
+
+    try {
+      const response: AxiosResponse = await axios({
+        method: endpoint.method,
+        url,
+        headers: {
+          'Authorization': `Bearer ${this.config.authToken}`,
+          'X-Tenant-ID': this.config.tenantId,
+          'Content-Type': 'application/json'
+        },
+        data: endpoint.body,
+        timeout: 30000, // 30 second timeout
+        validateStatus: () => true // Accept all status codes
+      });
+
+      const responseTime = performance.now() - startTime;
+      const expectedStatuses = endpoint.expectedStatus || [200, 201, 204];
+      const success = expectedStatuses.includes(response.status);
+
+      return {
+        endpoint: endpoint.path,
+        method: endpoint.method,
+        responseTime,
+        status: response.status,
+        success,
+        timestamp: Date.now()
+      };
+    } catch (error) {
+      const responseTime = performance.now() - startTime;
+      return {
+        endpoint: endpoint.path,
+        method: endpoint.method,
+        responseTime,
+        status: 0,
+        success: false,
+        timestamp: Date.now(),
+        error: error instanceof Error ? error.message : 'Unknown error'
+      };
+    }
+  }
+
+  private generateReport(): LoadTestResults {
+    const successfulResults = this.results.filter(r => r.success);
+    const failedResults = this.results.filter(r => !r.success);
+    
+    const responseTimes = successfulResults.map(r => r.responseTime).sort((a, b) => a - b);
+    const averageResponseTime = responseTimes.length > 0 
+      ? responseTimes.reduce((sum, rt) => sum + rt, 0) / responseTimes.length 
+      : 0;
+
+    const p95Index = Math.floor(responseTimes.length * 0.95);
+    const p99Index = Math.floor(responseTimes.length * 0.99);
+
+    const testDuration = this.config.duration;
+    const requestsPerSecond = this.results.length / testDuration;
+
+    // Group results by endpoint
+    const endpointResults = new Map<string, TestResult[]>();
+    this.results.forEach(result => {
+      const key = `${result.method} ${result.endpoint}`;
+      if (!endpointResults.has(key)) {
+        endpointResults.set(key, []);
+      }
+      endpointResults.get(key)!.push(result);
+    });
+
+    return {
+      totalRequests: this.results.length,
+      successfulRequests: successfulResults.length,
+      failedRequests: failedResults.length,
+      averageResponseTime,
+      p95ResponseTime: responseTimes[p95Index] || 0,
+      p99ResponseTime: responseTimes[p99Index] || 0,
+      requestsPerSecond,
+      errorRate: this.results.length > 0 ? failedResults.length / this.results.length : 0,
+      endpointResults,
+      errors: failedResults.map(r => r.error || `${r.status} error`).filter(Boolean)
+    };
+  }
+
+  private sleep(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  stop(): void {
+    this.isRunning = false;
+  }
+}
+
+// Predefined test configurations
+export const productionLoadTestConfig: LoadTestConfig = {
+  baseUrl: 'http://localhost:4400',
+  concurrency: 20,
+  duration: 120, // 2 minutes
+  rampUpTime: 10, // 10 seconds
+  authToken: 'test-token', // Will be replaced with real token
+  tenantId: 'test-tenant',
+  endpoints: [
+    {
+      path: '/api/backstage/entities',
+      method: 'GET',
+      weight: 40, // 40% of requests
+      expectedStatus: [200]
+    },
+    {
+      path: '/api/backstage/entities?kind=Component',
+      method: 'GET',
+      weight: 25,
+      expectedStatus: [200]
+    },
+    {
+      path: '/api/backstage/scaffolder/templates',
+      method: 'GET',
+      weight: 15,
+      expectedStatus: [200]
+    },
+    {
+      path: '/api/plugin-health',
+      method: 'GET',
+      weight: 10,
+      expectedStatus: [200]
+    },
+    {
+      path: '/api/plugin-health?action=summary',
+      method: 'GET',
+      weight: 5,
+      expectedStatus: [200]
+    },
+    {
+      path: '/api/plugins/test-plugin-1/configurations',
+      method: 'GET',
+      weight: 5,
+      expectedStatus: [200, 404]
+    }
+  ]
+};
+
+export async function runProductionLoadTest(): Promise<LoadTestResults> {
+  const tester = new APILoadTester(productionLoadTestConfig);
+  
+  // Setup graceful shutdown
+  process.on('SIGINT', () => {
+    console.log('\n🛑 Stopping load test...');
+    tester.stop();
+  });
+
+  const results = await tester.runLoadTest();
+  
+  // Print detailed report
+  printLoadTestReport(results);
+  
+  return results;
+}
+
+function printLoadTestReport(results: LoadTestResults): void {
+  console.log('\n📊 LOAD TEST RESULTS');
+  console.log('='.repeat(50));
+  console.log(`Total Requests: ${results.totalRequests}`);
+  console.log(`Successful: ${results.successfulRequests} (${(results.successfulRequests / results.totalRequests * 100).toFixed(2)}%)`);
+  console.log(`Failed: ${results.failedRequests} (${(results.errorRate * 100).toFixed(2)}%)`);
+  console.log(`Requests/sec: ${results.requestsPerSecond.toFixed(2)}`);
+  console.log(`Avg Response Time: ${results.averageResponseTime.toFixed(2)}ms`);
+  console.log(`95th Percentile: ${results.p95ResponseTime.toFixed(2)}ms`);
+  console.log(`99th Percentile: ${results.p99ResponseTime.toFixed(2)}ms`);
+
+  console.log('\n📈 ENDPOINT BREAKDOWN');
+  console.log('-'.repeat(50));
+  
+  results.endpointResults.forEach((endpointResults, endpoint) => {
+    const successful = endpointResults.filter(r => r.success).length;
+    const avgResponseTime = endpointResults.reduce((sum, r) => sum + r.responseTime, 0) / endpointResults.length;
+    const errorRate = (endpointResults.length - successful) / endpointResults.length * 100;
+    
+    console.log(`${endpoint}:`);
+    console.log(`  Requests: ${endpointResults.length}`);
+    console.log(`  Success Rate: ${(successful / endpointResults.length * 100).toFixed(2)}%`);
+    console.log(`  Avg Response: ${avgResponseTime.toFixed(2)}ms`);
+    if (errorRate > 0) {
+      console.log(`  Error Rate: ${errorRate.toFixed(2)}%`);
+    }
+    console.log('');
+  });
+
+  if (results.errors.length > 0) {
+    console.log('\n❌ ERRORS');
+    console.log('-'.repeat(50));
+    const errorCounts = results.errors.reduce((acc, error) => {
+      acc[error] = (acc[error] || 0) + 1;
+      return acc;
+    }, {} as Record<string, number>);
+
+    Object.entries(errorCounts).forEach(([error, count]) => {
+      console.log(`${error}: ${count} occurrences`);
+    });
+  }
+
+  // Performance assessment
+  console.log('\n🎯 PERFORMANCE ASSESSMENT');
+  console.log('-'.repeat(50));
+  
+  if (results.errorRate === 0) {
+    console.log('✅ No errors detected');
+  } else if (results.errorRate < 0.01) {
+    console.log('✅ Error rate acceptable (<1%)');
+  } else if (results.errorRate < 0.05) {
+    console.log('⚠️  Error rate elevated (1-5%)');
+  } else {
+    console.log('❌ Error rate too high (>5%)');
+  }
+
+  if (results.averageResponseTime < 500) {
+    console.log('✅ Average response time excellent (<500ms)');
+  } else if (results.averageResponseTime < 1000) {
+    console.log('✅ Average response time good (<1000ms)');
+  } else if (results.averageResponseTime < 2000) {
+    console.log('⚠️  Average response time acceptable (<2000ms)');
+  } else {
+    console.log('❌ Average response time too slow (>2000ms)');
+  }
+
+  if (results.p95ResponseTime < 1000) {
+    console.log('✅ 95th percentile response time excellent (<1000ms)');
+  } else if (results.p95ResponseTime < 2000) {
+    console.log('✅ 95th percentile response time good (<2000ms)');
+  } else if (results.p95ResponseTime < 5000) {
+    console.log('⚠️  95th percentile response time acceptable (<5000ms)');
+  } else {
+    console.log('❌ 95th percentile response time too slow (>5000ms)');
+  }
+
+  if (results.requestsPerSecond > 50) {
+    console.log('✅ Throughput excellent (>50 req/s)');
+  } else if (results.requestsPerSecond > 20) {
+    console.log('✅ Throughput good (>20 req/s)');
+  } else if (results.requestsPerSecond > 10) {
+    console.log('⚠️  Throughput acceptable (>10 req/s)');
+  } else {
+    console.log('❌ Throughput too low (<10 req/s)');
+  }
+}
+
+// Main execution
+if (require.main === module) {
+  runProductionLoadTest()
+    .then(() => {
+      console.log('\n✅ Load test completed successfully');
+      process.exit(0);
+    })
+    .catch((error) => {
+      console.error('\n❌ Load test failed:', error);
+      process.exit(1);
+    });
+}

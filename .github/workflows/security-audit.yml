@@ -1,0 +1,292 @@
+name: Security Audit
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  schedule:
+    # Run security audit daily at 2 AM UTC
+    - cron: '0 2 * * *'
+
+jobs:
+  security-audit:
+    name: Comprehensive Security Audit
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: 'npm'
+
+    - name: Install dependencies
+      run: npm ci
+
+    - name: Run dependency vulnerability scan
+      run: |
+        npm audit --audit-level=high --json > npm-audit-results.json || true
+        cat npm-audit-results.json
+
+    - name: Run OWASP dependency check
+      uses: dependency-check/Dependency-Check_Action@main
+      id: depcheck
+      with:
+        project: 'saas-idp'
+        path: '.'
+        format: 'ALL'
+        args: >
+          --enableRetired
+          --enableExperimental
+          --nvdApiKey ${{ secrets.NVD_API_KEY }}
+      
+    - name: Upload OWASP results to GitHub
+      uses: github/codeql-action/upload-sarif@v2
+      with:
+        sarif_file: reports/dependency-check-report.sarif
+
+    - name: Run custom security audit
+      run: |
+        npx tsx scripts/security/run-security-audit.ts \
+          --output ./security-reports \
+          --format both \
+          --verbose
+      continue-on-error: true
+
+    - name: Run security linting
+      run: |
+        # ESLint security rules
+        npx eslint . --ext .js,.jsx,.ts,.tsx --config .eslintrc.security.js || true
+        
+        # Semgrep security scan
+        docker run --rm -v "${PWD}:/src" returntocorp/semgrep semgrep \
+          --config=auto \
+          --json \
+          --output=semgrep-results.json \
+          /src
+
+    - name: Run secret scanning
+      run: |
+        # TruffleHog secret detection
+        docker run --rm -v "${PWD}:/pwd" trufflesecurity/trufflehog:latest \
+          filesystem /pwd \
+          --json \
+          --output=trufflehog-results.json || true
+
+    - name: Run container security scan
+      if: github.event_name == 'push'
+      run: |
+        # Build container for scanning
+        docker build -t saas-idp:latest .
+        
+        # Trivy container scan
+        docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+          -v $HOME/Library/Caches:/root/.cache/ \
+          aquasec/trivy:latest image \
+          --format sarif \
+          --output trivy-results.sarif \
+          saas-idp:latest
+
+    - name: Upload Trivy scan results to GitHub Security tab
+      uses: github/codeql-action/upload-sarif@v2
+      if: always()
+      with:
+        sarif_file: 'trivy-results.sarif'
+
+    - name: Generate security report summary
+      run: |
+        cat << 'EOF' > security-summary.md
+        # Security Audit Summary
+        
+        ## Dependency Vulnerabilities
+        $(jq -r '.metadata.vulnerabilities.total // 0' npm-audit-results.json 2>/dev/null || echo "0") total vulnerabilities found
+        
+        ## OWASP Dependency Check
+        - High: $(grep -o "High" reports/dependency-check-report.xml | wc -l || echo "0")
+        - Medium: $(grep -o "Medium" reports/dependency-check-report.xml | wc -l || echo "0")
+        - Low: $(grep -o "Low" reports/dependency-check-report.xml | wc -l || echo "0")
+        
+        ## Custom Security Audit
+        See detailed report in artifacts
+        
+        ## Secret Detection
+        $(jq -r 'length' trufflehog-results.json 2>/dev/null || echo "0") potential secrets found
+        
+        EOF
+
+    - name: Comment PR with security results
+      if: github.event_name == 'pull_request'
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const fs = require('fs');
+          
+          try {
+            const summary = fs.readFileSync('security-summary.md', 'utf8');
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: summary
+            });
+          } catch (error) {
+            console.log('Could not read security summary:', error.message);
+          }
+
+    - name: Upload security reports
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: security-reports
+        path: |
+          security-reports/
+          npm-audit-results.json
+          semgrep-results.json
+          trufflehog-results.json
+          trivy-results.sarif
+          reports/
+        retention-days: 30
+
+    - name: Fail on critical vulnerabilities
+      run: |
+        # Check for critical vulnerabilities and fail if found
+        CRITICAL_COUNT=$(jq -r '.vulnerabilities | to_entries | map(select(.value.severity == "critical")) | length' npm-audit-results.json 2>/dev/null || echo "0")
+        
+        if [ "$CRITICAL_COUNT" -gt "0" ]; then
+          echo "❌ Found $CRITICAL_COUNT critical vulnerabilities"
+          echo "::error::Critical security vulnerabilities must be fixed before deployment"
+          exit 1
+        fi
+        
+        # Check custom audit results
+        if [ -f "security-reports/audit-data-$(date +%Y-%m-%d).json" ]; then
+          CUSTOM_CRITICAL=$(jq -r '.metrics.criticalCount' "security-reports/audit-data-$(date +%Y-%m-%d).json" 2>/dev/null || echo "0")
+          if [ "$CUSTOM_CRITICAL" -gt "0" ]; then
+            echo "❌ Found $CUSTOM_CRITICAL critical issues in custom audit"
+            echo "::error::Critical security issues must be addressed"
+            exit 1
+          fi
+        fi
+
+  sonarcloud:
+    name: SonarCloud Security Scan
+    runs-on: ubuntu-latest
+    needs: security-audit
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: SonarCloud Scan
+      uses: SonarSource/sonarcloud-github-action@master
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      with:
+        args: >
+          -Dsonar.projectKey=saas-idp
+          -Dsonar.organization=your-org
+          -Dsonar.sources=src
+          -Dsonar.tests=tests
+          -Dsonar.javascript.lcov.reportPaths=coverage/lcov.info
+          -Dsonar.security.hotspots.inheritFromParent=true
+
+  infrastructure-security:
+    name: Infrastructure Security Scan
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+    
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Run Checkov (Infrastructure as Code Security)
+      uses: bridgecrewio/checkov-action@master
+      with:
+        directory: .
+        framework: kubernetes,dockerfile,terraform
+        output_format: sarif
+        output_file_path: checkov-results.sarif
+
+    - name: Upload Checkov scan results
+      uses: github/codeql-action/upload-sarif@v2
+      with:
+        sarif_file: checkov-results.sarif
+
+    - name: Kubernetes security scan
+      run: |
+        # Install kube-score
+        curl -L https://github.com/zegl/kube-score/releases/latest/download/kube-score_linux_amd64.tar.gz | tar xz
+        chmod +x kube-score
+        
+        # Scan Kubernetes manifests
+        find k8s/ -name "*.yaml" -o -name "*.yml" | xargs ./kube-score score || true
+
+  compliance-check:
+    name: Compliance Validation
+    runs-on: ubuntu-latest
+    needs: security-audit
+    
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: 'npm'
+
+    - name: Install dependencies
+      run: npm ci
+
+    - name: Run compliance tests
+      run: |
+        # GDPR compliance check
+        npm test -- --testNamePattern="GDPR" --verbose
+        
+        # SOC2 compliance check  
+        npm test -- --testNamePattern="SOC2" --verbose
+        
+        # Security test suite
+        npm test tests/security/SecurityTestSuite.test.ts
+
+    - name: Generate compliance report
+      run: |
+        cat << 'EOF' > compliance-report.md
+        # Compliance Status Report
+        
+        ## GDPR Compliance
+        - [ ] Data retention policies implemented
+        - [ ] Right to erasure functionality
+        - [ ] Data portability features
+        - [ ] Consent management system
+        
+        ## SOC 2 Compliance
+        - [ ] Access controls implemented
+        - [ ] Audit logging in place  
+        - [ ] Data encryption at rest and in transit
+        - [ ] Incident response procedures
+        
+        ## PCI DSS Compliance
+        - [ ] Payment data encryption
+        - [ ] Access restrictions
+        - [ ] Network segmentation
+        - [ ] Regular vulnerability scans
+        
+        EOF
+
+    - name: Upload compliance report
+      uses: actions/upload-artifact@v4
+      with:
+        name: compliance-report
+        path: compliance-report.md

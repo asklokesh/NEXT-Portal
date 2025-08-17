@@ -1,0 +1,279 @@
+name: Plugin Installation Pipeline
+
+on:
+  repository_dispatch:
+    types: [plugin-install]
+  workflow_dispatch:
+    inputs:
+      plugin_name:
+        description: 'NPM package name of the plugin'
+        required: true
+        type: string
+      plugin_version:
+        description: 'Version of the plugin to install'
+        required: true
+        type: string
+      environment:
+        description: 'Target environment'
+        required: true
+        type: choice
+        options:
+          - development
+          - staging
+          - production
+
+env:
+  AWS_REGION: us-west-2
+  ECR_REPOSITORY: backstage
+  EKS_CLUSTER: backstage-cluster
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    outputs:
+      proceed: ${{ steps.security.outputs.proceed }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+
+      - name: Validate plugin package
+        id: validate
+        run: |
+          PLUGIN_NAME="${{ github.event.client_payload.plugin_name || inputs.plugin_name }}"
+          PLUGIN_VERSION="${{ github.event.client_payload.plugin_version || inputs.plugin_version }}"
+          
+          echo "Validating $PLUGIN_NAME@$PLUGIN_VERSION"
+          npm view $PLUGIN_NAME@$PLUGIN_VERSION --json > plugin-info.json
+          
+          # Check if it's a Backstage plugin
+          if ! grep -q "backstage" plugin-info.json; then
+            echo "Warning: Package may not be a Backstage plugin"
+          fi
+
+      - name: Security scanning
+        id: security
+        run: |
+          PLUGIN_NAME="${{ github.event.client_payload.plugin_name || inputs.plugin_name }}"
+          PLUGIN_VERSION="${{ github.event.client_payload.plugin_version || inputs.plugin_version }}"
+          
+          # Create temporary package.json for audit
+          echo '{"dependencies":{"'$PLUGIN_NAME'":"'$PLUGIN_VERSION'"}}' > temp-package.json
+          
+          # Run npm audit
+          npm install --package-lock-only --prefix=./temp
+          npm audit --json --prefix=./temp > audit-results.json || true
+          
+          # Check for critical vulnerabilities
+          CRITICAL=$(jq '.metadata.vulnerabilities.critical' audit-results.json)
+          HIGH=$(jq '.metadata.vulnerabilities.high' audit-results.json)
+          
+          if [ "$CRITICAL" -gt 0 ]; then
+            echo "❌ Critical vulnerabilities found!"
+            echo "proceed=false" >> $GITHUB_OUTPUT
+            exit 1
+          elif [ "$HIGH" -gt 3 ]; then
+            echo "⚠️ Multiple high vulnerabilities found"
+            echo "proceed=manual-approval" >> $GITHUB_OUTPUT
+          else
+            echo "✅ Security scan passed"
+            echo "proceed=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: License check
+        run: |
+          PLUGIN_NAME="${{ github.event.client_payload.plugin_name || inputs.plugin_name }}"
+          PLUGIN_VERSION="${{ github.event.client_payload.plugin_version || inputs.plugin_version }}"
+          
+          # Check license compatibility
+          LICENSE=$(npm view $PLUGIN_NAME@$PLUGIN_VERSION license)
+          echo "Plugin license: $LICENSE"
+          
+          # List of approved licenses
+          APPROVED_LICENSES="MIT|Apache-2.0|BSD-3-Clause|BSD-2-Clause|ISC"
+          
+          if ! echo "$LICENSE" | grep -E "$APPROVED_LICENSES"; then
+            echo "⚠️ License requires review: $LICENSE"
+          fi
+
+  build:
+    needs: validate
+    if: needs.validate.outputs.proceed == 'true' || needs.validate.outputs.proceed == 'manual-approval'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v1
+
+      - name: Build Backstage with new plugin
+        run: |
+          PLUGIN_NAME="${{ github.event.client_payload.plugin_name || inputs.plugin_name }}"
+          PLUGIN_VERSION="${{ github.event.client_payload.plugin_version || inputs.plugin_version }}"
+          
+          # Clone Backstage configuration
+          cd backstage
+          
+          # Add plugin to package.json
+          npm install $PLUGIN_NAME@$PLUGIN_VERSION --save
+          
+          # Build Backstage
+          npm run build
+          
+          # Create optimized Docker image
+          docker build \
+            --build-arg PLUGIN_NAME=$PLUGIN_NAME \
+            --build-arg PLUGIN_VERSION=$PLUGIN_VERSION \
+            -t $ECR_REPOSITORY:$GITHUB_SHA \
+            -t $ECR_REPOSITORY:latest \
+            -f Dockerfile.plugins .
+
+      - name: Push to ECR
+        run: |
+          docker push ${{ steps.login-ecr.outputs.registry }}/$ECR_REPOSITORY:$GITHUB_SHA
+          docker push ${{ steps.login-ecr.outputs.registry }}/$ECR_REPOSITORY:latest
+
+      - name: Store plugin artifact
+        run: |
+          PLUGIN_NAME="${{ github.event.client_payload.plugin_name || inputs.plugin_name }}"
+          PLUGIN_VERSION="${{ github.event.client_payload.plugin_version || inputs.plugin_version }}"
+          
+          # Download plugin package
+          npm pack $PLUGIN_NAME@$PLUGIN_VERSION
+          
+          # Upload to S3
+          aws s3 cp *.tgz s3://backstage-artifacts/plugins/$PLUGIN_NAME-$PLUGIN_VERSION.tgz
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.client_payload.environment || inputs.environment }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Update kubeconfig
+        run: |
+          aws eks update-kubeconfig --name ${{ env.EKS_CLUSTER }} --region ${{ env.AWS_REGION }}
+
+      - name: Deploy using Helm
+        run: |
+          PLUGIN_NAME="${{ github.event.client_payload.plugin_name || inputs.plugin_name }}"
+          PLUGIN_VERSION="${{ github.event.client_payload.plugin_version || inputs.plugin_version }}"
+          ENVIRONMENT="${{ github.event.client_payload.environment || inputs.environment }}"
+          
+          # Update Helm values
+          cat <<EOF > /tmp/plugin-values.yaml
+          backstage:
+            image:
+              repository: ${{ steps.login-ecr.outputs.registry }}/$ECR_REPOSITORY
+              tag: $GITHUB_SHA
+            plugins:
+              - name: $PLUGIN_NAME
+                version: $PLUGIN_VERSION
+                enabled: true
+          EOF
+          
+          # Upgrade Helm release
+          helm upgrade backstage backstage/backstage \
+            -n backstage-$ENVIRONMENT \
+            -f /tmp/plugin-values.yaml \
+            --wait \
+            --timeout 10m
+
+      - name: Run smoke tests
+        run: |
+          PLUGIN_NAME="${{ github.event.client_payload.plugin_name || inputs.plugin_name }}"
+          ENVIRONMENT="${{ github.event.client_payload.environment || inputs.environment }}"
+          
+          # Wait for pods to be ready
+          kubectl wait --for=condition=ready pod \
+            -l app.kubernetes.io/name=backstage \
+            -n backstage-$ENVIRONMENT \
+            --timeout=300s
+          
+          # Test plugin endpoint
+          BACKSTAGE_URL=$(kubectl get svc backstage -n backstage-$ENVIRONMENT -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+          
+          # Check plugin health
+          curl -f http://$BACKSTAGE_URL:7007/api/plugins/$PLUGIN_NAME/health || exit 1
+          
+          echo "✅ Plugin $PLUGIN_NAME successfully deployed to $ENVIRONMENT"
+
+      - name: Update plugin registry
+        run: |
+          PLUGIN_NAME="${{ github.event.client_payload.plugin_name || inputs.plugin_name }}"
+          PLUGIN_VERSION="${{ github.event.client_payload.plugin_version || inputs.plugin_version }}"
+          ENVIRONMENT="${{ github.event.client_payload.environment || inputs.environment }}"
+          
+          # Update ConfigMap with installed plugin info
+          kubectl patch configmap backstage-plugins \
+            -n backstage-$ENVIRONMENT \
+            --type merge \
+            -p '{"data":{"'$PLUGIN_NAME'":"{\"version\":\"'$PLUGIN_VERSION'\",\"installedAt\":\"'$(date -Iseconds)'\",\"installedBy\":\"'$GITHUB_ACTOR'\"}"}}'
+
+  rollback:
+    needs: deploy
+    if: failure()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Rollback deployment
+        run: |
+          ENVIRONMENT="${{ github.event.client_payload.environment || inputs.environment }}"
+          
+          # Configure AWS and kubectl
+          aws eks update-kubeconfig --name ${{ env.EKS_CLUSTER }} --region ${{ env.AWS_REGION }}
+          
+          # Rollback Helm release
+          helm rollback backstage -n backstage-$ENVIRONMENT
+          
+          echo "⚠️ Deployment failed, rolled back to previous version"
+
+  notify:
+    needs: [validate, build, deploy]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send notification
+        run: |
+          PLUGIN_NAME="${{ github.event.client_payload.plugin_name || inputs.plugin_name }}"
+          PLUGIN_VERSION="${{ github.event.client_payload.plugin_version || inputs.plugin_version }}"
+          ENVIRONMENT="${{ github.event.client_payload.environment || inputs.environment }}"
+          STATUS="${{ job.status }}"
+          
+          # Send Slack notification (example)
+          curl -X POST ${{ secrets.SLACK_WEBHOOK }} \
+            -H 'Content-Type: application/json' \
+            -d '{
+              "text": "Plugin Installation '"$STATUS"'",
+              "blocks": [{
+                "type": "section",
+                "text": {
+                  "type": "mrkdwn",
+                  "text": "Plugin: `'"$PLUGIN_NAME"'@'"$PLUGIN_VERSION"'`\nEnvironment: `'"$ENVIRONMENT"'`\nStatus: '"$STATUS"'\nTriggered by: '"$GITHUB_ACTOR"'"
+                }
+              }]
+            }'

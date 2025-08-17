@@ -1,0 +1,772 @@
+# Multi-Region Database Configuration
+# Primary region: US-East (Virginia)
+# Read replicas: EU-West (Ireland), AP-Southeast (Singapore)
+# Cross-region replication with <5 second lag
+
+---
+# Primary PostgreSQL Cluster (US-East)
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: postgres-primary-us-east
+  namespace: saas-idp-production
+  labels:
+    app: saas-idp
+    component: database
+    region: us-east-1
+    role: primary
+spec:
+  instances: 3
+  primaryUpdateStrategy: unsupervised
+  
+  postgresql:
+    parameters:
+      # Performance tuning for high throughput
+      max_connections: "1000"
+      shared_buffers: "4GB"
+      effective_cache_size: "12GB"
+      maintenance_work_mem: "2GB"
+      checkpoint_completion_target: "0.9"
+      wal_buffers: "64MB"
+      default_statistics_target: "1000"
+      random_page_cost: "1.1"
+      effective_io_concurrency: "200"
+      work_mem: "64MB"
+      min_wal_size: "2GB"
+      max_wal_size: "8GB"
+      
+      # Replication settings
+      wal_level: "replica"
+      max_wal_senders: "16"
+      max_replication_slots: "16"
+      hot_standby: "on"
+      hot_standby_feedback: "on"
+      wal_receiver_timeout: "60s"
+      wal_sender_timeout: "60s"
+      
+      # Logging and monitoring
+      log_min_duration_statement: "1000"
+      log_checkpoints: "on"
+      log_connections: "on"
+      log_disconnections: "on"
+      log_lock_waits: "on"
+      log_statement: "ddl"
+      track_activities: "on"
+      track_counts: "on"
+      track_io_timing: "on"
+      track_functions: "all"
+      
+      # Security
+      ssl: "on"
+      ssl_prefer_server_ciphers: "on"
+      ssl_ciphers: "ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-GCM-SHA256"
+      
+  bootstrap:
+    initdb:
+      database: saasidp
+      owner: saasidp_user
+      secret:
+        name: postgres-credentials
+      options:
+        - "--encoding=UTF8"
+        - "--locale=en_US.UTF-8"
+        - "--data-checksums"
+        
+  storage:
+    size: 1000Gi
+    storageClass: gp3-encrypted
+    
+  resources:
+    requests:
+      memory: "16Gi"
+      cpu: "4"
+    limits:
+      memory: "32Gi"
+      cpu: "8"
+      
+  monitoring:
+    enabled: true
+    
+  backup:
+    retentionPolicy: "30d"
+    barmanObjectStore:
+      destinationPath: "s3://saas-idp-backups-us-east/postgres"
+      s3Credentials:
+        accessKeyId:
+          name: s3-backup-credentials
+          key: ACCESS_KEY_ID
+        secretAccessKey:
+          name: s3-backup-credentials
+          key: SECRET_ACCESS_KEY
+      wal:
+        retention: "7d"
+      data:
+        retention: "30d"
+        
+  certificates:
+    serverTLSSecret: postgres-tls
+    serverCASecret: postgres-ca
+    clientCASecret: postgres-client-ca
+
+---
+# EU-West Read Replica
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: postgres-replica-eu-west
+  namespace: saas-idp-production
+  labels:
+    app: saas-idp
+    component: database
+    region: eu-west-1
+    role: replica
+spec:
+  instances: 2
+  
+  postgresql:
+    parameters:
+      # Read-optimized configuration
+      max_connections: "500"
+      shared_buffers: "2GB"
+      effective_cache_size: "6GB"
+      maintenance_work_mem: "1GB"
+      random_page_cost: "1.1"
+      effective_io_concurrency: "200"
+      work_mem: "32MB"
+      
+      # Replication settings
+      wal_level: "replica"
+      hot_standby: "on"
+      hot_standby_feedback: "on"
+      max_standby_streaming_delay: "5s"
+      wal_receiver_timeout: "30s"
+      
+      # Read performance
+      checkpoint_completion_target: "0.9"
+      wal_buffers: "32MB"
+      
+  bootstrap:
+    pg_basebackup:
+      source: postgres-primary-us-east
+      
+  externalClusters:
+  - name: postgres-primary-us-east
+    connectionParameters:
+      host: postgres-primary-us-east-rw.saas-idp-production.svc.cluster.local
+      user: streaming_replica
+      dbname: postgres
+      sslmode: require
+    password:
+      name: postgres-replica-credentials
+      key: password
+      
+  storage:
+    size: 800Gi
+    storageClass: gp3-encrypted
+    
+  resources:
+    requests:
+      memory: "8Gi"
+      cpu: "2"
+    limits:
+      memory: "16Gi"
+      cpu: "4"
+      
+  monitoring:
+    enabled: true
+
+---
+# AP-Southeast Read Replica
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: postgres-replica-ap-southeast
+  namespace: saas-idp-production
+  labels:
+    app: saas-idp
+    component: database
+    region: ap-southeast-1
+    role: replica
+spec:
+  instances: 2
+  
+  postgresql:
+    parameters:
+      # Read-optimized configuration
+      max_connections: "500"
+      shared_buffers: "2GB"
+      effective_cache_size: "6GB"
+      maintenance_work_mem: "1GB"
+      random_page_cost: "1.1"
+      effective_io_concurrency: "200"
+      work_mem: "32MB"
+      
+      # Replication settings
+      wal_level: "replica"
+      hot_standby: "on"
+      hot_standby_feedback: "on"
+      max_standby_streaming_delay: "5s"
+      wal_receiver_timeout: "30s"
+      
+      # Read performance
+      checkpoint_completion_target: "0.9"
+      wal_buffers: "32MB"
+      
+  bootstrap:
+    pg_basebackup:
+      source: postgres-primary-us-east
+      
+  externalClusters:
+  - name: postgres-primary-us-east
+    connectionParameters:
+      host: postgres-primary-us-east-rw.saas-idp-production.svc.cluster.local
+      user: streaming_replica
+      dbname: postgres
+      sslmode: require
+    password:
+      name: postgres-replica-credentials
+      key: password
+      
+  storage:
+    size: 800Gi
+    storageClass: gp3-encrypted
+    
+  resources:
+    requests:
+      memory: "8Gi"
+      cpu: "2"
+    limits:
+      memory: "16Gi"
+      cpu: "4"
+      
+  monitoring:
+    enabled: true
+
+---
+# Database Connection Pooler (PgBouncer)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pgbouncer
+  namespace: saas-idp-production
+  labels:
+    app: saas-idp
+    component: pgbouncer
+spec:
+  replicas: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app: saas-idp
+      component: pgbouncer
+  template:
+    metadata:
+      labels:
+        app: saas-idp
+        component: pgbouncer
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9127"
+        prometheus.io/path: "/metrics"
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        fsGroup: 999
+      containers:
+      - name: pgbouncer
+        image: pgbouncer/pgbouncer:1.20.1
+        ports:
+        - name: pgbouncer
+          containerPort: 5432
+        env:
+        - name: DATABASES_HOST
+          value: postgres-primary-us-east-rw
+        - name: DATABASES_PORT
+          value: "5432"
+        - name: DATABASES_USER
+          value: saasidp_user
+        - name: DATABASES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: postgres-credentials
+              key: password
+        - name: DATABASES_DBNAME
+          value: saasidp
+        - name: POOL_MODE
+          value: transaction
+        - name: SERVER_RESET_QUERY
+          value: DISCARD ALL
+        - name: MAX_CLIENT_CONN
+          value: "1000"
+        - name: DEFAULT_POOL_SIZE
+          value: "100"
+        - name: MIN_POOL_SIZE
+          value: "10"
+        - name: RESERVE_POOL_SIZE
+          value: "20"
+        - name: RESERVE_POOL_TIMEOUT
+          value: "5"
+        - name: MAX_DB_CONNECTIONS
+          value: "200"
+        - name: MAX_USER_CONNECTIONS
+          value: "200"
+        - name: SERVER_ROUND_ROBIN
+          value: "1"
+        - name: LOG_CONNECTIONS
+          value: "1"
+        - name: LOG_DISCONNECTIONS
+          value: "1"
+        - name: LOG_POOLER_ERRORS
+          value: "1"
+        volumeMounts:
+        - name: pgbouncer-config
+          mountPath: /etc/pgbouncer
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          tcpSocket:
+            port: pgbouncer
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          tcpSocket:
+            port: pgbouncer
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+      
+      # PgBouncer Exporter for metrics
+      - name: pgbouncer-exporter
+        image: pgbouncer/pgbouncer_exporter:latest
+        ports:
+        - name: metrics
+          containerPort: 9127
+        env:
+        - name: PGBOUNCER_EXPORTER_HOST
+          value: "localhost"
+        - name: PGBOUNCER_EXPORTER_PORT
+          value: "5432"
+        - name: PGBOUNCER_USER
+          value: "pgbouncer"
+        - name: PGBOUNCER_PASS
+          valueFrom:
+            secretKeyRef:
+              name: pgbouncer-credentials
+              key: password
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "100m"
+      
+      volumes:
+      - name: pgbouncer-config
+        configMap:
+          name: pgbouncer-config
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pgbouncer-config
+  namespace: saas-idp-production
+  labels:
+    app: saas-idp
+    component: pgbouncer
+data:
+  pgbouncer.ini: |
+    [databases]
+    saasidp_write = host=postgres-primary-us-east-rw.saas-idp-production.svc.cluster.local port=5432 dbname=saasidp
+    saasidp_read_us = host=postgres-primary-us-east-ro.saas-idp-production.svc.cluster.local port=5432 dbname=saasidp
+    saasidp_read_eu = host=postgres-replica-eu-west-ro.saas-idp-production.svc.cluster.local port=5432 dbname=saasidp
+    saasidp_read_ap = host=postgres-replica-ap-southeast-ro.saas-idp-production.svc.cluster.local port=5432 dbname=saasidp
+    
+    [pgbouncer]
+    listen_port = 5432
+    listen_addr = *
+    auth_type = md5
+    auth_file = /etc/pgbouncer/userlist.txt
+    
+    # Connection limits
+    max_client_conn = 1000
+    default_pool_size = 100
+    min_pool_size = 10
+    reserve_pool_size = 20
+    reserve_pool_timeout = 5
+    max_db_connections = 200
+    max_user_connections = 200
+    
+    # Pool mode
+    pool_mode = transaction
+    server_reset_query = DISCARD ALL
+    server_reset_query_always = 0
+    server_check_delay = 30
+    server_check_query = select 1
+    server_lifetime = 3600
+    server_idle_timeout = 600
+    
+    # Logging
+    log_connections = 1
+    log_disconnections = 1
+    log_pooler_errors = 1
+    stats_period = 60
+    
+    # Performance
+    server_round_robin = 1
+    ignore_startup_parameters = extra_float_digits
+    
+    # Admin
+    admin_users = pgbouncer, admin
+    stats_users = stats, pgbouncer, admin
+    
+  userlist.txt: |
+    "saasidp_user" "md5hash_of_password"
+    "pgbouncer" "md5hash_of_pgbouncer_password"
+    "admin" "md5hash_of_admin_password"
+    "stats" "md5hash_of_stats_password"
+
+---
+# Database Failover Automation
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: db-failover-controller
+  namespace: saas-idp-production
+  labels:
+    app: saas-idp
+    component: db-failover
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: saas-idp
+      component: db-failover
+  template:
+    metadata:
+      labels:
+        app: saas-idp
+        component: db-failover
+    spec:
+      serviceAccountName: db-failover-sa
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        fsGroup: 1001
+      containers:
+      - name: failover-controller
+        image: saas-idp/db-failover:latest
+        env:
+        - name: PRIMARY_CLUSTER
+          value: "postgres-primary-us-east"
+        - name: REPLICA_CLUSTERS
+          value: "postgres-replica-eu-west,postgres-replica-ap-southeast"
+        - name: HEALTH_CHECK_INTERVAL
+          value: "30s"
+        - name: FAILOVER_TIMEOUT
+          value: "300s"
+        - name: RECOVERY_TIMEOUT
+          value: "600s"
+        - name: SLACK_WEBHOOK_URL
+          valueFrom:
+            secretKeyRef:
+              name: notification-credentials
+              key: slack-webhook
+        envFrom:
+        - configMapRef:
+            name: db-failover-config
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "200m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: db-failover-config
+  namespace: saas-idp-production
+  labels:
+    app: saas-idp
+    component: db-failover
+data:
+  config.yaml: |
+    failover:
+      enabled: true
+      automatic: true
+      health_checks:
+        primary:
+          endpoint: "postgres-primary-us-east-rw:5432"
+          query: "SELECT 1"
+          timeout: "10s"
+          failure_threshold: 3
+          check_interval: "30s"
+        replicas:
+          - endpoint: "postgres-replica-eu-west-ro:5432"
+            query: "SELECT 1"
+            timeout: "10s"
+          - endpoint: "postgres-replica-ap-southeast-ro:5432"
+            query: "SELECT 1"
+            timeout: "10s"
+      
+      failover_strategy:
+        preferred_replica: "postgres-replica-eu-west"
+        promotion_timeout: "300s"
+        rollback_conditions:
+          - primary_recovery_time: "600s"
+          - data_consistency_check: true
+        
+      notifications:
+        channels:
+          - type: "slack"
+            webhook_url_secret: "notification-credentials"
+            webhook_url_key: "slack-webhook"
+          - type: "email"
+            smtp_config_secret: "smtp-credentials"
+          - type: "pagerduty"
+            integration_key_secret: "pagerduty-credentials"
+            integration_key: "pagerduty-key"
+        
+        events:
+          - "failover_initiated"
+          - "failover_completed"
+          - "failover_failed"
+          - "primary_recovered"
+          - "replica_lag_high"
+
+---
+# Cross-region replication monitoring
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: replication-monitor
+  namespace: saas-idp-production
+  labels:
+    app: saas-idp
+    component: replication-monitor
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: saas-idp
+      component: replication-monitor
+  template:
+    metadata:
+      labels:
+        app: saas-idp
+        component: replication-monitor
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/metrics"
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        fsGroup: 1001
+      containers:
+      - name: replication-monitor
+        image: saas-idp/replication-monitor:latest
+        ports:
+        - name: http
+          containerPort: 8080
+        - name: metrics
+          containerPort: 9090
+        env:
+        - name: PRIMARY_DB_URL
+          valueFrom:
+            secretKeyRef:
+              name: postgres-credentials
+              key: primary-url
+        - name: REPLICA_EU_DB_URL
+          valueFrom:
+            secretKeyRef:
+              name: postgres-credentials
+              key: replica-eu-url
+        - name: REPLICA_AP_DB_URL
+          valueFrom:
+            secretKeyRef:
+              name: postgres-credentials
+              key: replica-ap-url
+        - name: LAG_ALERT_THRESHOLD
+          value: "5"
+        - name: CHECK_INTERVAL
+          value: "30"
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "50m"
+          limits:
+            memory: "256Mi"
+            cpu: "100m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: http
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+
+---
+# Service accounts and RBAC
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: db-failover-sa
+  namespace: saas-idp-production
+  labels:
+    app: saas-idp
+    component: db-failover
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: db-failover-controller
+rules:
+- apiGroups: ["postgresql.cnpg.io"]
+  resources: ["clusters"]
+  verbs: ["get", "list", "watch", "update", "patch"]
+- apiGroups: [""]
+  resources: ["services", "endpoints"]
+  verbs: ["get", "list", "watch", "update", "patch"]
+- apiGroups: [""]
+  resources: ["events"]
+  verbs: ["create"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: db-failover-controller
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: db-failover-controller
+subjects:
+- kind: ServiceAccount
+  name: db-failover-sa
+  namespace: saas-idp-production
+
+---
+# Services for database access
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-write
+  namespace: saas-idp-production
+  labels:
+    app: saas-idp
+    component: database
+    access: write
+spec:
+  type: ClusterIP
+  ports:
+  - name: postgres
+    port: 5432
+    targetPort: 5432
+  selector:
+    postgresql: postgres-primary-us-east
+    role: primary
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-read-us
+  namespace: saas-idp-production
+  labels:
+    app: saas-idp
+    component: database
+    access: read
+    region: us-east-1
+spec:
+  type: ClusterIP
+  ports:
+  - name: postgres
+    port: 5432
+    targetPort: 5432
+  selector:
+    postgresql: postgres-primary-us-east
+    role: replica
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-read-eu
+  namespace: saas-idp-production
+  labels:
+    app: saas-idp
+    component: database
+    access: read
+    region: eu-west-1
+spec:
+  type: ClusterIP
+  ports:
+  - name: postgres
+    port: 5432
+    targetPort: 5432
+  selector:
+    postgresql: postgres-replica-eu-west
+    role: replica
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-read-ap
+  namespace: saas-idp-production
+  labels:
+    app: saas-idp
+    component: database
+    access: read
+    region: ap-southeast-1
+spec:
+  type: ClusterIP
+  ports:
+  - name: postgres
+    port: 5432
+    targetPort: 5432
+  selector:
+    postgresql: postgres-replica-ap-southeast
+    role: replica

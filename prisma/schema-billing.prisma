@@ -1,0 +1,643 @@
+// Billing and Subscription Management Schema Extension
+// Comprehensive models for enterprise multi-tenant billing system
+
+// Subscription Plans
+model SubscriptionPlan {
+  id                  String            @id @default(cuid())
+  name                String
+  description         String?
+  tier                SubscriptionTier  @default(PROFESSIONAL)
+  price               Float
+  currency            String            @default("USD")
+  billingCycle        BillingCycle      @default(MONTHLY)
+  isActive            Boolean           @default(true)
+  trialDays           Int?              @default(14)
+  setupFee            Float?            @default(0)
+  discountPercentage  Float?            @default(0)
+  
+  // Plan Features and Limits
+  features            PlanFeature[]
+  limits              PlanLimits?
+  
+  // Pricing Configuration
+  usagePricing        UsagePricing[]
+  
+  // Relations
+  subscriptions       TenantSubscription[]
+  
+  // Metadata
+  metadata            Json?
+  createdAt           DateTime          @default(now())
+  updatedAt           DateTime          @updatedAt
+  
+  @@map("subscription_plans")
+  @@index([tier, isActive])
+  @@index([price, currency])
+}
+
+// Plan Features
+model PlanFeature {
+  id          String             @id @default(cuid())
+  planId      String
+  key         String             // feature identifier
+  name        String
+  description String?
+  included    Boolean            @default(true)
+  limit       Int?               // feature limit (null = unlimited)
+  unit        String?            // limit unit (users, GB, requests, etc.)
+  metadata    Json?
+  
+  // Relations
+  plan        SubscriptionPlan   @relation(fields: [planId], references: [id], onDelete: Cascade)
+  
+  @@unique([planId, key])
+  @@map("plan_features")
+  @@index([key, included])
+}
+
+// Plan Limits
+model PlanLimits {
+  id                  String             @id @default(cuid())
+  planId              String             @unique
+  maxUsers            Int                @default(10)
+  maxPlugins          Int                @default(20)
+  maxStorage          Int                @default(100) // GB
+  maxApiCalls         Int                @default(10000) // per month
+  maxIntegrations     Int                @default(5)
+  maxCustomDomains    Int                @default(1)
+  supportLevel        SupportLevel       @default(EMAIL)
+  slaUptime           Float              @default(99.0) // percentage
+  backupRetention     Int                @default(30) // days
+  
+  // Relations
+  plan                SubscriptionPlan   @relation(fields: [planId], references: [id], onDelete: Cascade)
+  
+  @@map("plan_limits")
+}
+
+// Usage-based Pricing
+model UsagePricing {
+  id            String             @id @default(cuid())
+  planId        String
+  resourceType  UsageResourceType
+  unitPrice     Float              // price per unit
+  unit          String             // billing unit (GB, request, user-month, etc.)
+  includedUnits Int                @default(0) // free tier included in base plan
+  overage       Boolean            @default(true) // charge for usage above included
+  tieredPricing Json?              // tiered pricing structure
+  
+  // Relations
+  plan          SubscriptionPlan   @relation(fields: [planId], references: [id], onDelete: Cascade)
+  
+  @@unique([planId, resourceType])
+  @@map("usage_pricing")
+  @@index([resourceType, unitPrice])
+}
+
+// Tenant Subscriptions
+model TenantSubscription {
+  id                    String               @id @default(cuid())
+  tenantId              String               @unique
+  planId                String
+  status                SubscriptionStatus   @default(TRIAL)
+  
+  // Billing Periods
+  currentPeriodStart    DateTime
+  currentPeriodEnd      DateTime
+  nextBillingDate       DateTime
+  lastBillingDate       DateTime?
+  
+  // Trial Information
+  trialStart            DateTime?
+  trialEnd              DateTime?
+  
+  // Cancellation
+  canceledAt            DateTime?
+  cancellationReason    String?
+  cancelAtPeriodEnd     Boolean              @default(false)
+  
+  // Settings
+  autoRenew             Boolean              @default(true)
+  prorationBehavior     ProrationBehavior    @default(CREATE_PRORATIONS)
+  
+  // Payment
+  defaultPaymentMethodId String?
+  
+  // Relations
+  organization          Organization         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  plan                  SubscriptionPlan     @relation(fields: [planId], references: [id])
+  defaultPaymentMethod  PaymentMethod?       @relation(fields: [defaultPaymentMethodId], references: [id])
+  invoices              Invoice[]
+  usageRecords          UsageRecord[]
+  billingAlerts         BillingAlert[]
+  
+  // Metadata
+  metadata              Json?
+  createdAt             DateTime             @default(now())
+  updatedAt             DateTime             @updatedAt
+  
+  @@map("tenant_subscriptions")
+  @@index([tenantId, status])
+  @@index([status, nextBillingDate])
+  @@index([planId, status])
+}
+
+// Payment Methods
+model PaymentMethod {
+  id              String               @id @default(cuid())
+  tenantId        String
+  type            PaymentMethodType    @default(CREDIT_CARD)
+  
+  // Card Information (encrypted)
+  last4           String?
+  brand           String?              // visa, mastercard, amex, etc.
+  expiryMonth     Int?
+  expiryYear      Int?
+  
+  // Bank Information
+  bankName        String?
+  accountLast4    String?
+  
+  // External Provider Information
+  stripeId        String?              // Stripe payment method ID
+  paypalId        String?              // PayPal payment method ID
+  
+  // Settings
+  isDefault       Boolean              @default(false)
+  isActive        Boolean              @default(true)
+  
+  // Relations
+  organization    Organization         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  subscriptions   TenantSubscription[]
+  payments        Payment[]
+  
+  // Metadata
+  metadata        Json?
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
+  
+  @@map("payment_methods")
+  @@index([tenantId, isDefault])
+  @@index([type, isActive])
+}
+
+// Invoices
+model Invoice {
+  id                    String               @id @default(cuid())
+  tenantId              String
+  subscriptionId        String
+  invoiceNumber         String               @unique
+  status                InvoiceStatus        @default(OPEN)
+  
+  // Amounts
+  subtotal              Float
+  tax                   Float                @default(0)
+  total                 Float
+  currency              String               @default("USD")
+  
+  // Billing Period
+  billingPeriodStart    DateTime
+  billingPeriodEnd      DateTime
+  
+  // Due Date and Payment
+  dueDate               DateTime
+  paidAt                DateTime?
+  
+  // Invoice Items
+  items                 InvoiceItem[]
+  
+  // Payment Information
+  paymentMethodId       String?
+  
+  // Relations
+  organization          Organization         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  subscription          TenantSubscription   @relation(fields: [subscriptionId], references: [id])
+  paymentMethod         PaymentMethod?       @relation(fields: [paymentMethodId], references: [id])
+  payments              Payment[]
+  
+  // Metadata
+  metadata              Json?
+  createdAt             DateTime             @default(now())
+  updatedAt             DateTime             @updatedAt
+  
+  @@map("invoices")
+  @@index([tenantId, status])
+  @@index([status, dueDate])
+  @@index([invoiceNumber])
+  @@index([subscriptionId, createdAt])
+}
+
+// Invoice Items
+model InvoiceItem {
+  id          String            @id @default(cuid())
+  invoiceId   String
+  description String
+  quantity    Float
+  unitPrice   Float
+  amount      Float
+  type        InvoiceItemType   @default(SUBSCRIPTION)
+  
+  // Usage Information
+  usageStart  DateTime?
+  usageEnd    DateTime?
+  
+  // Relations
+  invoice     Invoice           @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  
+  // Metadata
+  metadata    Json?
+  
+  @@map("invoice_items")
+  @@index([invoiceId, type])
+}
+
+// Payments
+model Payment {
+  id                String            @id @default(cuid())
+  tenantId          String
+  invoiceId         String
+  paymentMethodId   String
+  
+  // Amount Information
+  amount            Float
+  currency          String            @default("USD")
+  
+  // Status and Processing
+  status            PaymentStatus     @default(PENDING)
+  failureReason     String?
+  
+  // External Provider Information
+  externalId        String?           // Stripe payment intent ID, etc.
+  externalStatus    String?
+  
+  // Processing Timestamps
+  processedAt       DateTime?
+  failedAt          DateTime?
+  refundedAt        DateTime?
+  
+  // Relations
+  organization      Organization      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  invoice           Invoice           @relation(fields: [invoiceId], references: [id])
+  paymentMethod     PaymentMethod     @relation(fields: [paymentMethodId], references: [id])
+  refunds           Refund[]
+  
+  // Metadata
+  metadata          Json?
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+  
+  @@map("payments")
+  @@index([tenantId, status])
+  @@index([invoiceId, status])
+  @@index([externalId])
+  @@index([processedAt])
+}
+
+// Refunds
+model Refund {
+  id          String        @id @default(cuid())
+  paymentId   String
+  amount      Float
+  currency    String        @default("USD")
+  reason      String?
+  status      RefundStatus  @default(PENDING)
+  externalId  String?       // Stripe refund ID, etc.
+  processedAt DateTime?
+  
+  // Relations
+  payment     Payment       @relation(fields: [paymentId], references: [id])
+  
+  // Metadata
+  metadata    Json?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  
+  @@map("refunds")
+  @@index([paymentId, status])
+}
+
+// Usage Records
+model UsageRecord {
+  id              String               @id @default(cuid())
+  tenantId        String
+  subscriptionId  String
+  resourceType    UsageResourceType
+  
+  // Usage Information
+  quantity        Float
+  unit            String               @default("count")
+  unitPrice       Float                @default(0)
+  amount          Float                @default(0)
+  
+  // Time Information
+  period          DateTime             // billing period this usage belongs to
+  recordedAt      DateTime             @default(now())
+  
+  // Relations
+  organization    Organization         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  subscription    TenantSubscription   @relation(fields: [subscriptionId], references: [id])
+  
+  // Metadata
+  metadata        Json?
+  
+  @@map("usage_records")
+  @@index([tenantId, period])
+  @@index([subscriptionId, resourceType, period])
+  @@index([recordedAt])
+}
+
+// Billing Alerts
+model BillingAlert {
+  id              String               @id @default(cuid())
+  tenantId        String
+  subscriptionId  String?
+  type            BillingAlertType
+  severity        AlertSeverity        @default(INFO)
+  
+  // Alert Information
+  title           String
+  message         String
+  threshold       Float?               // alert threshold
+  currentValue    Float?               // current value that triggered alert
+  
+  // Status
+  isResolved      Boolean              @default(false)
+  resolvedAt      DateTime?
+  resolvedBy      String?              // user ID who resolved
+  
+  // Relations
+  organization    Organization         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  subscription    TenantSubscription?  @relation(fields: [subscriptionId], references: [id])
+  
+  // Metadata
+  metadata        Json?
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
+  
+  @@map("billing_alerts")
+  @@index([tenantId, isResolved])
+  @@index([type, severity])
+  @@index([createdAt])
+}
+
+// Billing Settings
+model BillingSettings {
+  id              String        @id @default(cuid())
+  tenantId        String        @unique
+  
+  // Contact Information
+  billingEmail    String?
+  billingAddress  Json?         // structured address
+  taxId           String?       // tax identification number
+  
+  // Invoice Settings
+  invoicePrefix   String?       @default("INV")
+  invoiceNotes    String?
+  paymentTerms    Int           @default(30) // days
+  
+  // Notifications
+  emailNotifications Boolean    @default(true)
+  usageAlerts     Boolean       @default(true)
+  paymentReminders Boolean      @default(true)
+  
+  // Currency and Locale
+  currency        String        @default("USD")
+  locale          String        @default("en-US")
+  timezone        String        @default("UTC")
+  
+  // Relations
+  organization    Organization  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  
+  // Metadata
+  metadata        Json?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  
+  @@map("billing_settings")
+}
+
+// Credit and Discounts
+model Credit {
+  id            String        @id @default(cuid())
+  tenantId      String
+  type          CreditType    @default(MANUAL)
+  amount        Float
+  currency      String        @default("USD")
+  
+  // Credit Information
+  description   String?
+  reason        String?
+  expiresAt     DateTime?
+  
+  // Usage
+  remainingAmount Float
+  isActive      Boolean       @default(true)
+  
+  // Relations
+  organization  Organization  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  
+  // Metadata
+  metadata      Json?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+  
+  @@map("credits")
+  @@index([tenantId, isActive])
+  @@index([expiresAt])
+}
+
+// Discount Codes
+model DiscountCode {
+  id              String          @id @default(cuid())
+  code            String          @unique
+  name            String?
+  description     String?
+  
+  // Discount Configuration
+  type            DiscountType    @default(PERCENTAGE)
+  value           Float           // percentage or fixed amount
+  currency        String?         @default("USD")
+  
+  // Validity
+  isActive        Boolean         @default(true)
+  validFrom       DateTime        @default(now())
+  validUntil      DateTime?
+  maxUses         Int?            // maximum number of uses
+  usedCount       Int             @default(0)
+  
+  // Restrictions
+  minimumAmount   Float?          // minimum order amount
+  applicablePlans String[]        // plan IDs this discount applies to
+  firstTimeOnly   Boolean         @default(false)
+  
+  // Metadata
+  metadata        Json?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  
+  @@map("discount_codes")
+  @@index([code, isActive])
+  @@index([validFrom, validUntil])
+}
+
+// Billing Enums
+enum SubscriptionTier {
+  FREE
+  STARTER
+  PROFESSIONAL
+  ENTERPRISE
+  CUSTOM
+}
+
+enum BillingCycle {
+  MONTHLY
+  QUARTERLY
+  YEARLY
+  CUSTOM
+}
+
+enum SubscriptionStatus {
+  TRIAL
+  ACTIVE
+  PAST_DUE
+  CANCELED
+  UNPAID
+  INCOMPLETE
+  INCOMPLETE_EXPIRED
+  PAUSED
+}
+
+enum ProrationBehavior {
+  CREATE_PRORATIONS
+  NONE
+  ALWAYS_INVOICE
+}
+
+enum PaymentMethodType {
+  CREDIT_CARD
+  DEBIT_CARD
+  BANK_TRANSFER
+  ACH
+  PAYPAL
+  STRIPE
+  MANUAL
+  WIRE_TRANSFER
+}
+
+enum InvoiceStatus {
+  DRAFT
+  OPEN
+  PAID
+  PAST_DUE
+  CANCELED
+  UNCOLLECTIBLE
+  VOID
+}
+
+enum InvoiceItemType {
+  SUBSCRIPTION
+  USAGE
+  ONE_TIME
+  SETUP
+  OVERAGE
+  DISCOUNT
+  TAX
+  REFUND
+}
+
+enum PaymentStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  CANCELED
+  REFUNDED
+  PARTIALLY_REFUNDED
+}
+
+enum RefundStatus {
+  PENDING
+  COMPLETED
+  FAILED
+  CANCELED
+}
+
+enum UsageResourceType {
+  USERS
+  STORAGE_GB
+  BANDWIDTH_GB
+  API_CALLS
+  PLUGINS
+  INTEGRATIONS
+  CUSTOM_DOMAINS
+  SUPPORT_TICKETS
+  WEBHOOKS
+  BUILDS
+  DEPLOYMENTS
+}
+
+enum BillingAlertType {
+  USAGE_LIMIT_APPROACHING
+  USAGE_LIMIT_EXCEEDED
+  PAYMENT_FAILED
+  INVOICE_OVERDUE
+  TRIAL_EXPIRING
+  SUBSCRIPTION_CANCELED
+  UPGRADE_RECOMMENDED
+  PAYMENT_METHOD_EXPIRING
+  CREDIT_RUNNING_LOW
+}
+
+enum AlertSeverity {
+  INFO
+  WARNING
+  CRITICAL
+}
+
+enum SupportLevel {
+  COMMUNITY
+  EMAIL
+  PRIORITY
+  DEDICATED
+  WHITE_GLOVE
+}
+
+enum CreditType {
+  MANUAL
+  PROMOTIONAL
+  REFUND
+  COMPENSATION
+  MIGRATION
+}
+
+enum DiscountType {
+  PERCENTAGE
+  FIXED_AMOUNT
+  FREE_TRIAL
+  FREE_MONTHS
+}
+
+// Add billing relations to existing models
+
+// Add to Organization model
+model Organization {
+  // ... existing fields ...
+  
+  // Billing relations
+  subscription      TenantSubscription?
+  billingSettings   BillingSettings?
+  paymentMethods    PaymentMethod[]
+  invoices          Invoice[]
+  payments          Payment[]
+  usageRecords      UsageRecord[]
+  billingAlerts     BillingAlert[]
+  credits           Credit[]
+}
+
+// Add to User model for billing audit trails
+model User {
+  // ... existing fields ...
+  
+  // Billing audit relations
+  resolvedBillingAlerts BillingAlert[] @relation("ResolvedBy")
+}

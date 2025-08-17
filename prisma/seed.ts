@@ -1,6 +1,5 @@
 /* eslint-disable @typescript-eslint/no-unused-vars, @typescript-eslint/no-misused-promises */
 import { PrismaClient } from '@prisma/client';
-import bcrypt from 'bcryptjs';
 
 const prisma = new PrismaClient();
 
@@ -254,15 +253,16 @@ async function main() {
  // Create some sample health checks
  const userService = await prisma.service.findUnique({ where: { name: 'user-service' } });
  if (userService) {
- await prisma.serviceHealthCheck.upsert({
- where: { 
- serviceId_name: {
+ const existingHealthCheck = await prisma.serviceHealthCheck.findFirst({
+ where: {
  serviceId: userService.id,
  name: 'API Health Check'
- }
  },
- update: {},
- create: {
+ });
+
+ if (!existingHealthCheck) {
+ await prisma.serviceHealthCheck.create({
+ data: {
  serviceId: userService.id,
  name: 'API Health Check',
  type: 'HTTP',
@@ -274,6 +274,7 @@ async function main() {
  isEnabled: true,
  },
  });
+ }
 
  // Create some health check results
  const healthCheck = await prisma.serviceHealthCheck.findFirst({
@@ -297,10 +298,13 @@ async function main() {
  }
 
  // Create some sample budgets
- await prisma.budget.upsert({
+ const existingBudget = await prisma.budget.findFirst({
  where: { name: 'Platform Team Monthly Budget' },
- update: {},
- create: {
+ });
+
+ if (!existingBudget) {
+ await prisma.budget.create({
+ data: {
  name: 'Platform Team Monthly Budget',
  amount: 5000.00,
  currency: 'USD',
@@ -310,6 +314,7 @@ async function main() {
  isActive: true,
  },
  });
+ }
 
  console.log(' Created sample budget');
 
@@ -349,6 +354,57 @@ async function main() {
  });
 
  console.log(' Created sample permissions');
+
+ // Create test-tenant organization for localhost:4400
+ const testTenant = await prisma.organization.upsert({
+   where: { name: 'test-tenant' },
+   update: {},
+   create: {
+     name: 'test-tenant',
+     displayName: 'Test Tenant Organization',
+     billingEmail: 'billing@localhost.com',
+     country: 'US',
+     currency: 'USD',
+     billingCycle: 'MONTHLY',
+     status: 'ACTIVE',
+   },
+ });
+
+ console.log(' Created test-tenant organization:', testTenant.name);
+
+ // Initialize system health records
+ const healthServices = [
+   { service: 'database', status: 'HEALTHY' as const },
+   { service: 'redis', status: 'HEALTHY' as const },
+   { service: 'api', status: 'HEALTHY' as const },
+   { service: 'websocket', status: 'HEALTHY' as const },
+   { service: 'plugin-manager', status: 'HEALTHY' as const },
+   { service: 'authentication', status: 'HEALTHY' as const },
+   { service: 'monitoring', status: 'HEALTHY' as const },
+ ];
+
+ for (const healthService of healthServices) {
+   await prisma.systemHealth.upsert({
+     where: { service: healthService.service },
+     update: {
+       status: healthService.status,
+       checkedAt: new Date(),
+       updatedAt: new Date(),
+     },
+     create: {
+       service: healthService.service,
+       status: healthService.status,
+       metadata: {
+         lastCheck: new Date().toISOString(),
+         environment: 'development',
+       },
+       checkedAt: new Date(),
+       updatedAt: new Date(),
+     },
+   });
+ }
+
+ console.log(' Initialized system health records');
 
  console.log(' Database seeded successfully!');
 }

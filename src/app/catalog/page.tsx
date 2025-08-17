@@ -126,13 +126,18 @@ const CatalogPage = () => {
  apiFilters.tag.forEach(tag => queryParams.append('tag', tag));
  }
  
- const entities = await trackApiCall('fetch_entities', async () => {
- const response = await fetch(`/api/backstage/entities?${queryParams.toString()}`);
+ const responseData = await trackApiCall('fetch_entities', async () => {
+ const response = await fetch(`/api/catalog/services?${queryParams.toString()}`);
  if (!response.ok) {
  throw new Error('Failed to fetch entities');
  }
- return await response.json() as ServiceEntity[];
+ return await response.json();
  }, { filters: apiFilters });
+
+ // Handle both direct array response and wrapped response formats
+ const entities = Array.isArray(responseData) 
+ ? responseData as ServiceEntity[]
+ : (responseData.entities || responseData.items || []) as ServiceEntity[];
  
  // Transform to ServiceWithMetrics
  const servicesWithMetrics = entities.map(entity => ({

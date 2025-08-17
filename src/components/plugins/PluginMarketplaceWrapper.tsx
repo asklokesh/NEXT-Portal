@@ -6,7 +6,7 @@ import { Loader2 } from 'lucide-react';
 
 // Dynamic import with no SSR to avoid window/localStorage issues
 const PluginMarketplace = dynamic(
- () => import('./PluginMarketplace').then(mod => ({ default: mod.PluginMarketplace })),
+ () => import('./PluginMarketplace'),
  {
  ssr: false,
  loading: () => (

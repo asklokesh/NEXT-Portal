@@ -3,23 +3,31 @@ import { NextResponse } from 'next/server';
 
 import type { NextRequest} from 'next/server';
 
-const BACKSTAGE_API_URL = process.env.BACKSTAGE_BACKEND_URL || 'http://localhost:4402';
+const BACKSTAGE_API_URL = process.env.BACKSTAGE_BACKEND_URL || 'http://localhost:7007';
 const BACKSTAGE_API_TOKEN = process.env.BACKSTAGE_API_TOKEN;
 
 export async function GET(request: NextRequest) {
  try {
- // First, try to fetch from real Backstage API
- const backstageResponse = await fetch(`${BACKSTAGE_API_URL}/api/scaffolder/v2/templates`, {
- headers: BACKSTAGE_API_TOKEN ? { Authorization: `Bearer ${BACKSTAGE_API_TOKEN}` } : {},
+ // First, try to fetch from real Backstage API using catalog entities
+ const backstageResponse = await fetch(`${BACKSTAGE_API_URL}/api/catalog/entities?filter=kind=Template`, {
+ headers: {
+ 'Content-Type': 'application/json',
+ ...(BACKSTAGE_API_TOKEN && { Authorization: `Bearer ${BACKSTAGE_API_TOKEN}` })
+ },
  });
 
  if (backstageResponse.ok) {
  console.log('Templates API returning real Backstage data');
  const data = await backstageResponse.json();
- return NextResponse.json(data);
+ 
+ // Transform catalog entities to template format if needed
+ const templates = data.items || data;
+ return NextResponse.json({
+ items: Array.isArray(templates) ? templates : []
+ });
  }
 
- console.warn('Backstage API unavailable, falling back to minimal template data');
+ console.warn('Backstage API unavailable, falling back to curated template data');
  return NextResponse.json({
  items: [
  {

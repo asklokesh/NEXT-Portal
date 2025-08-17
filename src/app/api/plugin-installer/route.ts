@@ -42,6 +42,20 @@ const generateInstallId = (pluginId: string) => {
   return `install-${hash}-${timestamp}`;
 };
 
+// Helper function to convert database status to management status
+function getPluginStatus(dbStatus: string, isEnabled: boolean): string {
+  if (!isEnabled) return 'stopped';
+  
+  switch (dbStatus) {
+    case 'ACTIVE': return 'running';
+    case 'INACTIVE': return 'stopped';
+    case 'ERROR': return 'error';
+    case 'PENDING': return 'building';
+    case 'DEPLOYING': return 'deploying';
+    default: return 'stopped';
+  }
+}
+
 // Create Dockerfile for Backstage plugin
 const createPluginDockerfile = (pluginId: string, version: string = 'latest') => {
   return `
@@ -624,15 +638,88 @@ export async function GET(request: NextRequest) {
     const action = searchParams.get('action') || 'status';
     
     if (action === 'list') {
-      // Return all installations
-      const installations = Array.from(installationStore.entries()).map(([id, status]) => ({
+      // Get Docker/K8s installations from in-memory store
+      const dockerInstallations = Array.from(installationStore.entries()).map(([id, status]) => ({
         installId: id,
+        pluginName: status.pluginId.replace(/@[^/]+\//, '').replace(/plugin-/, ''),
+        version: 'latest',
+        status: status.status,
+        environment: status.namespace ? 'kubernetes' : 'local',
+        namespace: status.namespace,
+        serviceUrl: status.serviceUrl,
+        healthCheckUrl: status.healthCheckUrl,
+        startedAt: status.startedAt,
+        lastCheck: new Date().toISOString(),
         ...status
       }));
       
+      // Get simple database installations
+      const { getSafePrismaClient } = await import('@/lib/db/safe-client');
+      const prisma = getSafePrismaClient();
+      
+      let dbInstallations: any[] = [];
+      try {
+        const plugins = await prisma.plugin.findMany({
+          where: {
+            isInstalled: true
+          },
+          select: {
+            id: true,
+            name: true,
+            displayName: true,
+            description: true,
+            category: true,
+            isInstalled: true,
+            isEnabled: true,
+            status: true,
+            lifecycle: true,
+            installedAt: true,
+            updatedAt: true,
+            configurations: {
+              where: { environment: 'production' },
+              select: {
+                config: true,
+                isActive: true,
+                environment: true
+              }
+            }
+          },
+          orderBy: { installedAt: 'desc' }
+        });
+        
+        dbInstallations = plugins.map(plugin => ({
+          installId: plugin.id,
+          pluginId: plugin.name,
+          pluginName: plugin.displayName || plugin.name.replace(/@[^/]+\//, '').replace(/plugin-/, ''),
+          version: 'latest',
+          status: getPluginStatus(plugin.status, plugin.isEnabled),
+          environment: 'database', // Mark as database-managed
+          namespace: null,
+          serviceUrl: null,
+          healthCheckUrl: null,
+          startedAt: plugin.installedAt || plugin.updatedAt,
+          lastCheck: plugin.updatedAt,
+          description: plugin.description,
+          category: plugin.category,
+          configurations: plugin.configurations,
+          logs: [`Plugin ${plugin.name} installed via marketplace`],
+          resources: {
+            cpu: 'N/A',
+            memory: 'N/A',
+            storage: 'N/A'
+          }
+        }));
+      } catch (error) {
+        console.error('Failed to fetch database plugins:', error);
+      }
+      
+      // Combine both types
+      const allInstallations = [...dockerInstallations, ...dbInstallations];
+      
       return NextResponse.json({
         success: true,
-        installations
+        installations: allInstallations,
+        total: allInstallations.length
       });
     }
     
@@ -679,53 +766,79 @@ export async function DELETE(request: NextRequest) {
       }, { status: 400 });
     }
     
-    const status = installationStore.get(installId);
+    // Check if it's a Docker/K8s installation first
+    const dockerStatus = installationStore.get(installId);
     
-    if (!status) {
+    if (dockerStatus) {
+      // Handle Docker/K8s installation deletion
+      if (dockerStatus.containerId) {
+        try {
+          await execAsync(`docker rm -f ${dockerStatus.containerId}`);
+          dockerStatus.logs.push('Container stopped and removed');
+        } catch (error) {
+          dockerStatus.logs.push(`Failed to remove container: ${error}`);
+        }
+      }
+      
+      if (dockerStatus.namespace) {
+        try {
+          await execAsync(`kubectl delete namespace ${dockerStatus.namespace}`);
+          dockerStatus.logs.push(`Namespace ${dockerStatus.namespace} deleted`);
+        } catch (error) {
+          dockerStatus.logs.push(`Failed to delete namespace: ${error}`);
+        }
+      }
+      
+      const workDir = path.join(process.cwd(), 'plugin-runtime', installId);
+      try {
+        await fs.rm(workDir, { recursive: true, force: true });
+        dockerStatus.logs.push('Workspace cleaned up');
+      } catch (error) {
+        dockerStatus.logs.push(`Failed to clean workspace: ${error}`);
+      }
+      
+      dockerStatus.status = 'stopped';
+      dockerStatus.completedAt = new Date().toISOString();
+      
+      return NextResponse.json({
+        success: true,
+        message: `Plugin installation ${installId} stopped and cleaned up`
+      });
+    }
+    
+    // If not Docker/K8s, check if it's a database plugin
+    const { getSafePrismaClient } = await import('@/lib/db/safe-client');
+    const prisma = getSafePrismaClient();
+    
+    try {
+      const plugin = await prisma.plugin.findFirst({
+        where: { id: installId }
+      });
+      
+      if (!plugin) {
+        return NextResponse.json({
+          success: false,
+          error: 'Plugin not found'
+        }, { status: 404 });
+      }
+      
+      // Delete the plugin from database
+      await prisma.plugin.delete({
+        where: { id: installId }
+      });
+      
+      return NextResponse.json({
+        success: true,
+        message: `Plugin ${plugin.displayName || plugin.name} uninstalled successfully`
+      });
+      
+    } catch (dbError) {
+      console.error('Database plugin deletion error:', dbError);
       return NextResponse.json({
         success: false,
-        error: 'Installation not found'
-      }, { status: 404 });
+        error: 'Failed to uninstall plugin from database'
+      }, { status: 500 });
     }
-    
-    // Stop and remove resources
-    if (status.containerId) {
-      // Docker container
-      try {
-        await execAsync(`docker rm -f ${status.containerId}`);
-        status.logs.push('Container stopped and removed');
-      } catch (error) {
-        status.logs.push(`Failed to remove container: ${error}`);
-      }
-    }
-    
-    if (status.namespace) {
-      // Kubernetes resources
-      try {
-        await execAsync(`kubectl delete namespace ${status.namespace}`);
-        status.logs.push(`Namespace ${status.namespace} deleted`);
-      } catch (error) {
-        status.logs.push(`Failed to delete namespace: ${error}`);
-      }
-    }
-    
-    // Clean up workspace
-    const workDir = path.join(process.cwd(), 'plugin-runtime', installId);
-    try {
-      await fs.rm(workDir, { recursive: true, force: true });
-      status.logs.push('Workspace cleaned up');
-    } catch (error) {
-      status.logs.push(`Failed to clean workspace: ${error}`);
-    }
-    
-    // Update status
-    status.status = 'stopped';
-    status.completedAt = new Date().toISOString();
-    
-    return NextResponse.json({
-      success: true,
-      message: `Plugin installation ${installId} stopped and cleaned up`
-    });
     
   } catch (error) {
     console.error('Error stopping plugin installation:', error);

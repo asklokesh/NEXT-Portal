@@ -1,0 +1,4777 @@
+{
+  "company": {
+    "name": "TechCorp",
+    "employees": 5000,
+    "revenue": "$500M",
+    "industry": "Financial Services",
+    "locations": [
+      "New York",
+      "London",
+      "Singapore",
+      "Tokyo"
+    ],
+    "techStack": [
+      "Java",
+      "Python",
+      "React",
+      "Kubernetes",
+      "AWS",
+      "PostgreSQL"
+    ]
+  },
+  "teams": [
+    {
+      "id": "platform",
+      "name": "Platform Engineering",
+      "size": 25,
+      "lead": "Sarah Chen"
+    },
+    {
+      "id": "frontend",
+      "name": "Frontend Engineering",
+      "size": 40,
+      "lead": "Mike Johnson"
+    },
+    {
+      "id": "backend",
+      "name": "Backend Services",
+      "size": 55,
+      "lead": "Priya Patel"
+    },
+    {
+      "id": "mobile",
+      "name": "Mobile Development",
+      "size": 30,
+      "lead": "Alex Kim"
+    },
+    {
+      "id": "data",
+      "name": "Data Engineering",
+      "size": 35,
+      "lead": "Carlos Rodriguez"
+    },
+    {
+      "id": "security",
+      "name": "Security Engineering",
+      "size": 20,
+      "lead": "Emma Wilson"
+    },
+    {
+      "id": "devops",
+      "name": "DevOps & SRE",
+      "size": 28,
+      "lead": "James Liu"
+    },
+    {
+      "id": "ml",
+      "name": "Machine Learning",
+      "size": 22,
+      "lead": "Fatima Al-Rashid"
+    }
+  ],
+  "services": [
+    {
+      "apiVersion": "backstage.io/v1alpha1",
+      "kind": "Component",
+      "metadata": {
+        "name": "user-service",
+        "title": "User Service",
+        "description": "user-service - Critical service for TechCorp operations",
+        "tags": [
+          "backend",
+          "techcorp"
+        ],
+        "annotations": {
+          "backstage.io/kubernetes-id": "user-service",
+          "github.com/project-slug": "techcorp/user-service",
+          "backstage.io/techdocs-ref": "dir:.",
+          "pagerduty.com/integration-key": "PD-USER-SERVICE",
+          "datadog.com/dashboard-url": "https://app.datadoghq.com/dashboard/user-service"
+        }
+      },
+      "spec": {
+        "type": "api",
+        "lifecycle": "production",
+        "owner": "platform",
+        "system": "identity",
+        "dependsOn": [],
+        "providesApis": []
+      },
+      "status": {
+        "health": "unhealthy",
+        "metrics": {
+          "responseTime": 194,
+          "errorRate": 7.617263422579836,
+          "throughput": 10258,
+          "availability": 95
+        },
+        "lastDeployment": "2025-07-28T14:04:35.469Z",
+        "deploymentFrequency": 17,
+        "incidents": 3
+      }
+    },
+    {
+      "apiVersion": "backstage.io/v1alpha1",
+      "kind": "Component",
+      "metadata": {
+        "name": "auth-service",
+        "title": "Auth Service",
+        "description": "auth-service - Critical service for TechCorp operations",
+        "tags": [
+          "backend",
+          "techcorp"
+        ],
+        "annotations": {
+          "backstage.io/kubernetes-id": "auth-service",
+          "github.com/project-slug": "techcorp/auth-service",
+          "backstage.io/techdocs-ref": "dir:.",
+          "pagerduty.com/integration-key": "PD-AUTH-SERVICE",
+          "datadog.com/dashboard-url": "https://app.datadoghq.com/dashboard/auth-service"
+        }
+      },
+      "spec": {
+        "type": "website",
+        "lifecycle": "staging",
+        "owner": "frontend",
+        "system": "identity",
+        "dependsOn": [
+          "Component:default/config-service"
+        ],
+        "providesApis": []
+      },
+      "status": {
+        "health": "healthy",
+        "metrics": {
+          "responseTime": 112,
+          "errorRate": 1.1485363065522205,
+          "throughput": 9889,
+          "availability": 99.9
+        },
+        "lastDeployment": "2025-07-11T14:04:35.470Z",
+        "deploymentFrequency": 11,
+        "incidents": 0
+      }
+    },
+    {
+      "apiVersion": "backstage.io/v1alpha1",
+      "kind": "Component",
+      "metadata": {
+        "name": "payment-processor",
+        "title": "Payment Processor",
+        "description": "payment-processor - Critical service for TechCorp operations",
+        "tags": [
+          "techcorp"
+        ],
+        "annotations": {
+          "backstage.io/kubernetes-id": "payment-processor",
+          "github.com/project-slug": "techcorp/payment-processor",
+          "backstage.io/techdocs-ref": "dir:.",
+          "pagerduty.com/integration-key": "PD-PAYMENT-PROCESSOR",
+          "datadog.com/dashboard-url": "https://app.datadoghq.com/dashboard/payment-processor"
+        }
+      },
+      "spec": {
+        "type": "library",
+        "lifecycle": "experimental",
+        "owner": "backend",
+        "system": "financial",
+        "dependsOn": [
+          "Component:default/auth-service",
+          "Component:default/config-service"
+        ],
+        "providesApis": []
+      },
+      "status": {
+        "health": "healthy",
+        "metrics": {
+          "responseTime": 373,
+          "errorRate": 1.265243920493035,
+          "throughput": 3141,
+          "availability": 99.9
+        },
+        "lastDeployment": "2025-07-29T14:04:35.470Z",
+        "deploymentFrequency": 18,
+        "incidents": 0
+      }
+    },
+    {
+      "apiVersion": "backstage.io/v1alpha1",
+      "kind": "Component",
+      "metadata": {
+        "name": "notification-engine",
+        "title": "Notification Engine",
+        "description": "notification-engine - Critical service for TechCorp operations",
+        "tags": [
+          "techcorp"
+        ],
+        "annotations": {
+          "backstage.io/kubernetes-id": "notification-engine",
+          "github.com/project-slug": "techcorp/notification-engine",
+          "backstage.io/techdocs-ref": "dir:.",
+          "pagerduty.com/integration-key": "PD-NOTIFICATION-ENGINE",
+          "datadog.com/dashboard-url": "https://app.datadoghq.com/dashboard/notification-engine"
+        }
+      },
+      "spec": {
+        "type": "database",
+        "lifecycle": "deprecated",
+        "owner": "mobile",
+        "system": "core",
+        "dependsOn": [
+          "Component:default/auth-service"
+        ],
+        "providesApis": []
+      },
+      "status": {
+        "health": "healthy",
+        "metrics": {
+          "responseTime": 145,
+          "errorRate": 0.6634345892420974,
+          "throughput": 2392,
+          "availability": 99.9
+        },
+        "lastDeployment": "2025-08-07T14:04:35.470Z",
+        "deploymentFrequency": 17,
+        "incidents": 0
+      }
+    },
+    {
+      "apiVersion": "backstage.io/v1alpha1",
+      "kind": "Component",
+      "metadata": {
+        "name": "analytics-api",
+        "title": "Analytics Api",
+        "description": "analytics-api - Critical service for TechCorp operations",
+        "tags": [
+          "api",
+          "techcorp"
+        ],
+        "annotations": {
+          "backstage.io/kubernetes-id": "analytics-api",
+          "github.com/project-slug": "techcorp/analytics-api",
+          "backstage.io/techdocs-ref": "dir:.",
+          "pagerduty.com/integration-key": "PD-ANALYTICS-API",
+          "datadog.com/dashboard-url": "https://app.datadoghq.com/dashboard/analytics-api"
+        }
+      },
+      "spec": {
+        "type": "tool",
+        "lifecycle": "production",
+        "owner": "data",
+        "system": "core",
+        "dependsOn": [
+          "Component:default/auth-service",
+          "Component:default/config-service"
+        ],
+        "providesApis": [
+          "analytics-api-api"
+        ]
+      },
+      "status": {
+        "health": "healthy",
+        "metrics": {
+          "responseTime": 169,
+          "errorRate": 1.2078073889900272,
+          "throughput": 10262,
+          "availability": 99.9
+        },
+        "lastDeployment": "2025-07-21T14:04:35.470Z",
+        "deploymentFrequency": 4,
+        "incidents": 0
+      }
+    },
+    {
+      "apiVersion": "backstage.io/v1alpha1",
+      "kind": "Component",
+      "metadata": {
+        "name": "reporting-service",
+        "title": "Reporting Service",
+        "description": "reporting-service - Critical service for TechCorp operations",
+        "tags": [
+          "backend",
+          "techcorp"
+        ],
+        "annotations": {
+          "backstage.io/kubernetes-id": "reporting-service",
+          "github.com/project-slug": "techcorp/reporting-service",
+          "backstage.io/techdocs-ref": "dir:.",
+          "pagerduty.com/integration-key": "PD-REPORTING-SERVICE",
+          "datadog.com/dashboard-url": "https://app.datadoghq.com/dashboard/reporting-service"
+        }
+      },
+      "spec": {
+        "type": "service",
+        "lifecycle": "staging",
+        "owner": "security",
+        "system": "core",
+        "dependsOn": [
+          "Component:default/auth-service",
+          "Component:default/config-service"
+        ],
+        "providesApis": []
+      },
+      "status": {
+        "health": "healthy",
+        "metrics": {
+          "responseTime": 110,
+          "errorRate": 1.3494182000008408,
+          "throughput": 8602,
+          "availability": 99.9
+        },
+        "lastDeployment": "2025-08-08T14:04:35.470Z",
+        "deploymentFrequency": 12,
+        "incidents": 0
+      }
+    },
+    {
+      "apiVersion": "backstage.io/v1alpha1",
+      "kind": "Component",
+      "metadata": {
+        "name": "audit-logger",
+        "title": "Audit Logger",
+        "description": "audit-logger - Critical service for TechCorp operations",
+        "tags": [
+          "techcorp"
+        ],
+        "annotations": {
+          "backstage.io/kubernetes-id": "audit-logger",
+          "github.com/project-slug": "techcorp/audit-logger",
+          "backstage.io/techdocs-ref": "dir:.",
+          "pagerduty.com/integration-key": "PD-AUDIT-LOGGER",
+          "datadog.com/dashboard-url": "https://app.datadoghq.com/dashboard/audit-logger"
+        }
+      },
+      "spec": {
+        "type": "api",
+        "lifecycle": "experimental",
+        "owner": "devops",
+        "system": "core",
+        "dependsOn": [
+          "Component:default/auth-service"
+        ],
+        "providesApis": []
+      },
+      "status": {
+        "health": "unhealthy",
+        "metrics": {
+          "responseTime": 102,
+          "errorRate": 3.4306075743878583,
+          "throughput": 9063,
+          "availability": 95
+        },
+        "lastDeployment": "2025-08-03T14:04:35.470Z",
+        "deploymentFrequency": 12,
+        "incidents": 4
+      }
+    },
+    {
+      "apiVersion": "backstage.io/v1alpha1",
+      "kind": "Component",
+      "metadata": {
+        "name": "config-service",
+        "title": "Config Service",
+        "description": "config-service - Critical service for TechCorp operations",
+        "tags": [
+          "backend",
+          "techcorp"
+        ],
+        "annotations": {
+          "backstage.io/kubernetes-id": "config-service",
+          "github.com/project-slug": "techcorp/config-service",
+          "backstage.io/techdocs-ref": "dir:.",
+          "pagerduty.com/integration-key": "PD-CONFIG-SERVICE",
+          "datadog.com/dashboard-url": "https://app.datadoghq.com/dashboard/config-service"
+        }
+      },
+      "spec": {
+        "type": "website",
+        "lifecycle": "deprecated",
+        "owner": "ml",
+        "system": "core",
+        "dependsOn": [],
+        "providesApis": []
+      },
+      "status": {
+        "health": "unhealthy",
+        "metrics": {
+          "responseTime": 430,
+          "errorRate": 5.35015520089261,
+          "throughput": 8812,
+          "availability": 95
+        },
+        "lastDeployment": "2025-07-14T14:04:35.470Z",
+        "deploymentFrequency": 10,
+        "incidents": 3
+      }
+    },
+    {
+      "apiVersion": "backstage.io/v1alpha1",
+      "kind": "Component",
+      "metadata": {
+        "name": "customer-portal",
+        "title": "Customer Portal",
+        "description": "customer-portal - Critical service for TechCorp operations",
+        "tags": [
+          "frontend",
+          "techcorp"
+        ],
+        "annotations": {
+          "backstage.io/kubernetes-id": "customer-portal",
+          "github.com/project-slug": "techcorp/customer-portal",
+          "backstage.io/techdocs-ref": "dir:.",
+          "pagerduty.com/integration-key": "PD-CUSTOMER-PORTAL",
+          "datadog.com/dashboard-url": "https://app.datadoghq.com/dashboard/customer-portal"
+        }
+      },
+      "spec": {
+        "type": "library",
+        "lifecycle": "production",
+        "owner": "platform",
+        "system": "core",
+        "dependsOn": [
+          "Component:default/auth-service",
+          "Component:default/config-service"
+        ],
+        "providesApis": []
+      },
+      "status": {
+        "health": "healthy",
+        "metrics": {
+          "responseTime": 221,
+          "errorRate": 1.4587731839415343,
+          "throughput": 5821,
+          "availability": 99.9
+        },
+        "lastDeployment": "2025-07-31T14:04:35.470Z",
+        "deploymentFrequency": 3,
+        "incidents": 0
+      }
+    },
+    {
+      "apiVersion": "backstage.io/v1alpha1",
+      "kind": "Component",
+      "metadata": {
+        "name": "admin-dashboard",
+        "title": "Admin Dashboard",
+        "description": "admin-dashboard - Critical service for TechCorp operations",
+        "tags": [
+          "techcorp"
+        ],
+        "annotations": {
+          "backstage.io/kubernetes-id": "admin-dashboard",
+          "github.com/project-slug": "techcorp/admin-dashboard",
+          "backstage.io/techdocs-ref": "dir:.",
+          "pagerduty.com/integration-key": "PD-ADMIN-DASHBOARD",
+          "datadog.com/dashboard-url": "https://app.datadoghq.com/dashboard/admin-dashboard"
+        }
+      },
+      "spec": {
+        "type": "database",
+        "lifecycle": "staging",
+        "owner": "frontend",
+        "system": "core",
+        "dependsOn": [
+          "Component:default/auth-service"
+        ],
+        "providesApis": []
+      },
+      "status": {
+        "health": "healthy",
+        "metrics": {
+          "responseTime": 313,
+          "errorRate": 0.6954586462065508,
+          "throughput": 1748,
+          "availability": 99.9
+        },
+        "lastDeployment": "2025-07-11T14:04:35.470Z",
+        "deploymentFrequency": 14,
+        "incidents": 0
+      }
+    },
+    {
+      "apiVersion": "backstage.io/v1alpha1",
+      "kind": "Component",
+      "metadata": {
+        "name": "mobile-api-gateway",
+        "title": "Mobile Api Gateway",
+        "description": "mobile-api-gateway - Critical service for TechCorp operations",
+        "tags": [
+          "api",
+          "techcorp"
+        ],
+        "annotations": {
+          "backstage.io/kubernetes-id": "mobile-api-gateway",
+          "github.com/project-slug": "techcorp/mobile-api-gateway",
+          "backstage.io/techdocs-ref": "dir:.",
+          "pagerduty.com/integration-key": "PD-MOBILE-API-GATEWAY",
+          "datadog.com/dashboard-url": "https://app.datadoghq.com/dashboard/mobile-api-gateway"
+        }
+      },
+      "spec": {
+        "type": "tool",
+        "lifecycle": "experimental",
+        "owner": "backend",
+        "system": "core",
+        "dependsOn": [
+          "Component:default/auth-service",
+          "Component:default/config-service"
+        ],
+        "providesApis": [
+          "mobile-api-gateway-api"
+        ]
+      },
+      "status": {
+        "health": "healthy",
+        "metrics": {
+          "responseTime": 117,
+          "errorRate": 1.3047967302343748,
+          "throughput": 9704,
+          "availability": 99.9
+        },
+        "lastDeployment": "2025-07-18T14:04:35.470Z",
+        "deploymentFrequency": 2,
+        "incidents": 0
+      }
+    },
+    {
+      "apiVersion": "backstage.io/v1alpha1",
+      "kind": "Component",
+      "metadata": {
+        "name": "web-app",
+        "title": "Web App",
+        "description": "web-app - Critical service for TechCorp operations",
+        "tags": [
+          "frontend",
+          "techcorp"
+        ],
+        "annotations": {
+          "backstage.io/kubernetes-id": "web-app",
+          "github.com/project-slug": "techcorp/web-app",
+          "backstage.io/techdocs-ref": "dir:.",
+          "pagerduty.com/integration-key": "PD-WEB-APP",
+          "datadog.com/dashboard-url": "https://app.datadoghq.com/dashboard/web-app"
+        }
+      },
+      "spec": {
+        "type": "service",
+        "lifecycle": "deprecated",
+        "owner": "mobile",
+        "system": "core",
+        "dependsOn": [
+          "Component:default/auth-service",
+          "Component:default/config-service"
+        ],
+        "providesApis": []
+      },
+      "status": {
+        "health": "healthy",
+        "metrics": {
+          "responseTime": 206,
+          "errorRate": 0.4650880947255174,
+          "throughput": 7079,
+          "availability": 99.9
+        },
+        "lastDeployment": "2025-07-10T14:04:35.470Z",
+        "deploymentFrequency": 4,
+        "incidents": 0
+      }
+    },
+    {
+      "apiVersion": "backstage.io/v1alpha1",
+      "kind": "Component",
+      "metadata": {
+        "name": "partner-portal",
+        "title": "Partner Portal",
+        "description": "partner-portal - Critical service for TechCorp operations",
+        "tags": [
+          "frontend",
+          "techcorp"
+        ],
+        "annotations": {
+          "backstage.io/kubernetes-id": "partner-portal",
+          "github.com/project-slug": "techcorp/partner-portal",
+          "backstage.io/techdocs-ref": "dir:.",
+          "pagerduty.com/integration-key": "PD-PARTNER-PORTAL",
+          "datadog.com/dashboard-url": "https://app.datadoghq.com/dashboard/partner-portal"
+        }
+      },
+      "spec": {
+        "type": "api",
+        "lifecycle": "production",
+        "owner": "data",
+        "system": "core",
+        "dependsOn": [
+          "Component:default/auth-service"
+        ],
+        "providesApis": []
+      },
+      "status": {
+        "health": "healthy",
+        "metrics": {
+          "responseTime": 538,
+          "errorRate": 0.048594671580419746,
+          "throughput": 2049,
+          "availability": 99.9
+        },
+        "lastDeployment": "2025-08-03T14:04:35.470Z",
+        "deploymentFrequency": 15,
+        "incidents": 0
+      }
+    },
+    {
+      "apiVersion": "backstage.io/v1alpha1",
+      "kind": "Component",
+      "metadata": {
+        "name": "developer-portal",
+        "title": "Developer Portal",
+        "description": "developer-portal - Critical service for TechCorp operations",
+        "tags": [
+          "frontend",
+          "techcorp"
+        ],
+        "annotations": {
+          "backstage.io/kubernetes-id": "developer-portal",
+          "github.com/project-slug": "techcorp/developer-portal",
+          "backstage.io/techdocs-ref": "dir:.",
+          "pagerduty.com/integration-key": "PD-DEVELOPER-PORTAL",
+          "datadog.com/dashboard-url": "https://app.datadoghq.com/dashboard/developer-portal"
+        }
+      },
+      "spec": {
+        "type": "website",
+        "lifecycle": "staging",
+        "owner": "security",
+        "system": "core",
+        "dependsOn": [
+          "Component:default/auth-service"
+        ],
+        "providesApis": []
+      },
+      "status": {
+        "health": "degraded",
+        "metrics": {
+          "responseTime": 433,
+          "errorRate": 5.64618025566207,
+          "throughput": 4409,
+          "availability": 98.5
+        },
+        "lastDeployment": "2025-07-14T14:04:35.470Z",
+        "deploymentFrequency": 20,
+        "incidents": 0
+      }
+    },
+    {
+      "apiVersion": "backstage.io/v1alpha1",
+      "kind": "Component",
+      "metadata": {
+        "name": "marketing-site",
+        "title": "Marketing Site",
+        "description": "marketing-site - Critical service for TechCorp operations",
+        "tags": [
+          "techcorp"
+        ],
+        "annotations": {
+          "backstage.io/kubernetes-id": "marketing-site",
+          "github.com/project-slug": "techcorp/marketing-site",
+          "backstage.io/techdocs-ref": "dir:.",
+          "pagerduty.com/integration-key": "PD-MARKETING-SITE",
+          "datadog.com/dashboard-url": "https://app.datadoghq.com/dashboard/marketing-site"
+        }
+      },
+      "spec": {
+        "type": "library",
+        "lifecycle": "experimental",
+        "owner": "devops",
+        "system": "core",
+        "dependsOn": [
+          "Component:default/auth-service",
+          "Component:default/config-service"
+        ],
+        "providesApis": []
+      },
+      "status": {
+        "health": "healthy",
+        "metrics": {
+          "responseTime": 525,
+          "errorRate": 1.1345986236255707,
+          "throughput": 1815,
+          "availability": 99.9
+        },
+        "lastDeployment": "2025-07-29T14:04:35.470Z",
+        "deploymentFrequency": 3,
+        "incidents": 0
+      }
+    },
+    {
+      "apiVersion": "backstage.io/v1alpha1",
+      "kind": "Component",
+      "metadata": {
+        "name": "docs-site",
+        "title": "Docs Site",
+        "description": "docs-site - Critical service for TechCorp operations",
+        "tags": [
+          "techcorp"
+        ],
+        "annotations": {
+          "backstage.io/kubernetes-id": "docs-site",
+          "github.com/project-slug": "techcorp/docs-site",
+          "backstage.io/techdocs-ref": "dir:.",
+          "pagerduty.com/integration-key": "PD-DOCS-SITE",
+          "datadog.com/dashboard-url": "https://app.datadoghq.com/dashboard/docs-site"
+        }
+      },
+      "spec": {
+        "type": "database",
+        "lifecycle": "deprecated",
+        "owner": "ml",
+        "system": "core",
+        "dependsOn": [
+          "Component:default/auth-service"
+        ],
+        "providesApis": []
+      },
+      "status": {
+        "health": "healthy",
+        "metrics": {
+          "responseTime": 274,
+          "errorRate": 1.3762635967586228,
+          "throughput": 1100,
+          "availability": 99.9
+        },
+        "lastDeployment": "2025-07-13T14:04:35.470Z",
+        "deploymentFrequency": 17,
+        "incidents": 0
+      }
+    },
+    {
+      "apiVersion": "backstage.io/v1alpha1",
+      "kind": "Component",
+      "metadata": {
+        "name": "data-pipeline",
+        "title": "Data Pipeline",
+        "description": "data-pipeline - Critical service for TechCorp operations",
+        "tags": [
+          "data",
+          "techcorp"
+        ],
+        "annotations": {
+          "backstage.io/kubernetes-id": "data-pipeline",
+          "github.com/project-slug": "techcorp/data-pipeline",
+          "backstage.io/techdocs-ref": "dir:.",
+          "pagerduty.com/integration-key": "PD-DATA-PIPELINE",
+          "datadog.com/dashboard-url": "https://app.datadoghq.com/dashboard/data-pipeline"
+        }
+      },
+      "spec": {
+        "type": "tool",
+        "lifecycle": "production",
+        "owner": "platform",
+        "system": "data-platform",
+        "dependsOn": [
+          "Component:default/auth-service"
+        ],
+        "providesApis": []
+      },
+      "status": {
+        "health": "unhealthy",
+        "metrics": {
+          "responseTime": 298,
+          "errorRate": 2.897730255489699,
+          "throughput": 10459,
+          "availability": 95
+        },
+        "lastDeployment": "2025-07-11T14:04:35.470Z",
+        "deploymentFrequency": 18,
+        "incidents": 5
+      }
+    },
+    {
+      "apiVersion": "backstage.io/v1alpha1",
+      "kind": "Component",
+      "metadata": {
+        "name": "etl-processor",
+        "title": "Etl Processor",
+        "description": "etl-processor - Critical service for TechCorp operations",
+        "tags": [
+          "data",
+          "techcorp"
+        ],
+        "annotations": {
+          "backstage.io/kubernetes-id": "etl-processor",
+          "github.com/project-slug": "techcorp/etl-processor",
+          "backstage.io/techdocs-ref": "dir:.",
+          "pagerduty.com/integration-key": "PD-ETL-PROCESSOR",
+          "datadog.com/dashboard-url": "https://app.datadoghq.com/dashboard/etl-processor"
+        }
+      },
+      "spec": {
+        "type": "service",
+        "lifecycle": "staging",
+        "owner": "frontend",
+        "system": "data-platform",
+        "dependsOn": [
+          "Component:default/auth-service",
+          "Component:default/config-service"
+        ],
+        "providesApis": []
+      },
+      "status": {
+        "health": "degraded",
+        "metrics": {
+          "responseTime": 245,
+          "errorRate": 7.7542012675715055,
+          "throughput": 5514,
+          "availability": 98.5
+        },
+        "lastDeployment": "2025-07-13T14:04:35.470Z",
+        "deploymentFrequency": 11,
+        "incidents": 0
+      }
+    },
+    {
+      "apiVersion": "backstage.io/v1alpha1",
+      "kind": "Component",
+      "metadata": {
+        "name": "stream-processor",
+        "title": "Stream Processor",
+        "description": "stream-processor - Critical service for TechCorp operations",
+        "tags": [
+          "techcorp"
+        ],
+        "annotations": {
+          "backstage.io/kubernetes-id": "stream-processor",
+          "github.com/project-slug": "techcorp/stream-processor",
+          "backstage.io/techdocs-ref": "dir:.",
+          "pagerduty.com/integration-key": "PD-STREAM-PROCESSOR",
+          "datadog.com/dashboard-url": "https://app.datadoghq.com/dashboard/stream-processor"
+        }
+      },
+      "spec": {
+        "type": "api",
+        "lifecycle": "experimental",
+        "owner": "backend",
+        "system": "core",
+        "dependsOn": [
+          "Component:default/auth-service",
+          "Component:default/config-service"
+        ],
+        "providesApis": []
+      },
+      "status": {
+        "health": "healthy",
+        "metrics": {
+          "responseTime": 220,
+          "errorRate": 1.0279057916861651,
+          "throughput": 9667,
+          "availability": 99.9
+        },
+        "lastDeployment": "2025-07-12T14:04:35.470Z",
+        "deploymentFrequency": 14,
+        "incidents": 0
+      }
+    },
+    {
+      "apiVersion": "backstage.io/v1alpha1",
+      "kind": "Component",
+      "metadata": {
+        "name": "batch-scheduler",
+        "title": "Batch Scheduler",
+        "description": "batch-scheduler - Critical service for TechCorp operations",
+        "tags": [
+          "techcorp"
+        ],
+        "annotations": {
+          "backstage.io/kubernetes-id": "batch-scheduler",
+          "github.com/project-slug": "techcorp/batch-scheduler",
+          "backstage.io/techdocs-ref": "dir:.",
+          "pagerduty.com/integration-key": "PD-BATCH-SCHEDULER",
+          "datadog.com/dashboard-url": "https://app.datadoghq.com/dashboard/batch-scheduler"
+        }
+      },
+      "spec": {
+        "type": "website",
+        "lifecycle": "deprecated",
+        "owner": "mobile",
+        "system": "core",
+        "dependsOn": [
+          "Component:default/auth-service",
+          "Component:default/config-service"
+        ],
+        "providesApis": []
+      },
+      "status": {
+        "health": "degraded",
+        "metrics": {
+          "responseTime": 190,
+          "errorRate": 5.0295239294744,
+          "throughput": 4831,
+          "availability": 98.5
+        },
+        "lastDeployment": "2025-07-29T14:04:35.470Z",
+        "deploymentFrequency": 7,
+        "incidents": 0
+      }
+    },
+    {
+      "apiVersion": "backstage.io/v1alpha1",
+      "kind": "Component",
+      "metadata": {
+        "name": "data-warehouse",
+        "title": "Data Warehouse",
+        "description": "data-warehouse - Critical service for TechCorp operations",
+        "tags": [
+          "data",
+          "techcorp"
+        ],
+        "annotations": {
+          "backstage.io/kubernetes-id": "data-warehouse",
+          "github.com/project-slug": "techcorp/data-warehouse",
+          "backstage.io/techdocs-ref": "dir:.",
+          "pagerduty.com/integration-key": "PD-DATA-WAREHOUSE",
+          "datadog.com/dashboard-url": "https://app.datadoghq.com/dashboard/data-warehouse"
+        }
+      },
+      "spec": {
+        "type": "library",
+        "lifecycle": "production",
+        "owner": "data",
+        "system": "data-platform",
+        "dependsOn": [
+          "Component:default/config-service"
+        ],
+        "providesApis": []
+      },
+      "status": {
+        "health": "healthy",
+        "metrics": {
+          "responseTime": 303,
+          "errorRate": 0.04176022082794795,
+          "throughput": 1395,
+          "availability": 99.9
+        },
+        "lastDeployment": "2025-08-08T14:04:35.470Z",
+        "deploymentFrequency": 1,
+        "incidents": 0
+      }
+    },
+    {
+      "apiVersion": "backstage.io/v1alpha1",
+      "kind": "Component",
+      "metadata": {
+        "name": "feature-store",
+        "title": "Feature Store",
+        "description": "feature-store - Critical service for TechCorp operations",
+        "tags": [
+          "techcorp"
+        ],
+        "annotations": {
+          "backstage.io/kubernetes-id": "feature-store",
+          "github.com/project-slug": "techcorp/feature-store",
+          "backstage.io/techdocs-ref": "dir:.",
+          "pagerduty.com/integration-key": "PD-FEATURE-STORE",
+          "datadog.com/dashboard-url": "https://app.datadoghq.com/dashboard/feature-store"
+        }
+      },
+      "spec": {
+        "type": "database",
+        "lifecycle": "staging",
+        "owner": "security",
+        "system": "core",
+        "dependsOn": [
+          "Component:default/config-service"
+        ],
+        "providesApis": []
+      },
+      "status": {
+        "health": "healthy",
+        "metrics": {
+          "responseTime": 234,
+          "errorRate": 1.7198935452852449,
+          "throughput": 8804,
+          "availability": 99.9
+        },
+        "lastDeployment": "2025-07-12T14:04:35.470Z",
+        "deploymentFrequency": 1,
+        "incidents": 0
+      }
+    },
+    {
+      "apiVersion": "backstage.io/v1alpha1",
+      "kind": "Component",
+      "metadata": {
+        "name": "ml-pipeline",
+        "title": "Ml Pipeline",
+        "description": "ml-pipeline - Critical service for TechCorp operations",
+        "tags": [
+          "ml",
+          "techcorp"
+        ],
+        "annotations": {
+          "backstage.io/kubernetes-id": "ml-pipeline",
+          "github.com/project-slug": "techcorp/ml-pipeline",
+          "backstage.io/techdocs-ref": "dir:.",
+          "pagerduty.com/integration-key": "PD-ML-PIPELINE",
+          "datadog.com/dashboard-url": "https://app.datadoghq.com/dashboard/ml-pipeline"
+        }
+      },
+      "spec": {
+        "type": "tool",
+        "lifecycle": "experimental",
+        "owner": "devops",
+        "system": "ml-platform",
+        "dependsOn": [
+          "Component:default/auth-service",
+          "Component:default/config-service"
+        ],
+        "providesApis": []
+      },
+      "status": {
+        "health": "healthy",
+        "metrics": {
+          "responseTime": 176,
+          "errorRate": 0.17883465251049646,
+          "throughput": 6339,
+          "availability": 99.9
+        },
+        "lastDeployment": "2025-08-02T14:04:35.470Z",
+        "deploymentFrequency": 20,
+        "incidents": 0
+      }
+    },
+    {
+      "apiVersion": "backstage.io/v1alpha1",
+      "kind": "Component",
+      "metadata": {
+        "name": "recommendation-engine",
+        "title": "Recommendation Engine",
+        "description": "recommendation-engine - Critical service for TechCorp operations",
+        "tags": [
+          "techcorp"
+        ],
+        "annotations": {
+          "backstage.io/kubernetes-id": "recommendation-engine",
+          "github.com/project-slug": "techcorp/recommendation-engine",
+          "backstage.io/techdocs-ref": "dir:.",
+          "pagerduty.com/integration-key": "PD-RECOMMENDATION-ENGINE",
+          "datadog.com/dashboard-url": "https://app.datadoghq.com/dashboard/recommendation-engine"
+        }
+      },
+      "spec": {
+        "type": "service",
+        "lifecycle": "deprecated",
+        "owner": "ml",
+        "system": "core",
+        "dependsOn": [
+          "Component:default/auth-service"
+        ],
+        "providesApis": []
+      },
+      "status": {
+        "health": "degraded",
+        "metrics": {
+          "responseTime": 276,
+          "errorRate": 4.746256443432237,
+          "throughput": 1402,
+          "availability": 98.5
+        },
+        "lastDeployment": "2025-07-23T14:04:35.470Z",
+        "deploymentFrequency": 8,
+        "incidents": 0
+      }
+    },
+    {
+      "apiVersion": "backstage.io/v1alpha1",
+      "kind": "Component",
+      "metadata": {
+        "name": "api-gateway",
+        "title": "Api Gateway",
+        "description": "api-gateway - Critical service for TechCorp operations",
+        "tags": [
+          "api",
+          "techcorp"
+        ],
+        "annotations": {
+          "backstage.io/kubernetes-id": "api-gateway",
+          "github.com/project-slug": "techcorp/api-gateway",
+          "backstage.io/techdocs-ref": "dir:.",
+          "pagerduty.com/integration-key": "PD-API-GATEWAY",
+          "datadog.com/dashboard-url": "https://app.datadoghq.com/dashboard/api-gateway"
+        }
+      },
+      "spec": {
+        "type": "api",
+        "lifecycle": "production",
+        "owner": "platform",
+        "system": "core",
+        "dependsOn": [],
+        "providesApis": [
+          "api-gateway-api"
+        ]
+      },
+      "status": {
+        "health": "healthy",
+        "metrics": {
+          "responseTime": 186,
+          "errorRate": 0.08930807097496762,
+          "throughput": 9085,
+          "availability": 99.9
+        },
+        "lastDeployment": "2025-07-17T14:04:35.470Z",
+        "deploymentFrequency": 1,
+        "incidents": 0
+      }
+    },
+    {
+      "apiVersion": "backstage.io/v1alpha1",
+      "kind": "Component",
+      "metadata": {
+        "name": "service-mesh",
+        "title": "Service Mesh",
+        "description": "service-mesh - Critical service for TechCorp operations",
+        "tags": [
+          "backend",
+          "techcorp"
+        ],
+        "annotations": {
+          "backstage.io/kubernetes-id": "service-mesh",
+          "github.com/project-slug": "techcorp/service-mesh",
+          "backstage.io/techdocs-ref": "dir:.",
+          "pagerduty.com/integration-key": "PD-SERVICE-MESH",
+          "datadog.com/dashboard-url": "https://app.datadoghq.com/dashboard/service-mesh"
+        }
+      },
+      "spec": {
+        "type": "website",
+        "lifecycle": "staging",
+        "owner": "frontend",
+        "system": "core",
+        "dependsOn": [
+          "Component:default/auth-service"
+        ],
+        "providesApis": []
+      },
+      "status": {
+        "health": "healthy",
+        "metrics": {
+          "responseTime": 283,
+          "errorRate": 0.3782456663424205,
+          "throughput": 9488,
+          "availability": 99.9
+        },
+        "lastDeployment": "2025-07-30T14:04:35.470Z",
+        "deploymentFrequency": 18,
+        "incidents": 0
+      }
+    },
+    {
+      "apiVersion": "backstage.io/v1alpha1",
+      "kind": "Component",
+      "metadata": {
+        "name": "secret-manager",
+        "title": "Secret Manager",
+        "description": "secret-manager - Critical service for TechCorp operations",
+        "tags": [
+          "techcorp"
+        ],
+        "annotations": {
+          "backstage.io/kubernetes-id": "secret-manager",
+          "github.com/project-slug": "techcorp/secret-manager",
+          "backstage.io/techdocs-ref": "dir:.",
+          "pagerduty.com/integration-key": "PD-SECRET-MANAGER",
+          "datadog.com/dashboard-url": "https://app.datadoghq.com/dashboard/secret-manager"
+        }
+      },
+      "spec": {
+        "type": "library",
+        "lifecycle": "experimental",
+        "owner": "backend",
+        "system": "core",
+        "dependsOn": [
+          "Component:default/auth-service"
+        ],
+        "providesApis": []
+      },
+      "status": {
+        "health": "healthy",
+        "metrics": {
+          "responseTime": 385,
+          "errorRate": 1.8019068449211484,
+          "throughput": 10173,
+          "availability": 99.9
+        },
+        "lastDeployment": "2025-07-27T14:04:35.470Z",
+        "deploymentFrequency": 12,
+        "incidents": 0
+      }
+    },
+    {
+      "apiVersion": "backstage.io/v1alpha1",
+      "kind": "Component",
+      "metadata": {
+        "name": "certificate-manager",
+        "title": "Certificate Manager",
+        "description": "certificate-manager - Critical service for TechCorp operations",
+        "tags": [
+          "techcorp"
+        ],
+        "annotations": {
+          "backstage.io/kubernetes-id": "certificate-manager",
+          "github.com/project-slug": "techcorp/certificate-manager",
+          "backstage.io/techdocs-ref": "dir:.",
+          "pagerduty.com/integration-key": "PD-CERTIFICATE-MANAGER",
+          "datadog.com/dashboard-url": "https://app.datadoghq.com/dashboard/certificate-manager"
+        }
+      },
+      "spec": {
+        "type": "database",
+        "lifecycle": "deprecated",
+        "owner": "mobile",
+        "system": "core",
+        "dependsOn": [
+          "Component:default/auth-service",
+          "Component:default/config-service"
+        ],
+        "providesApis": []
+      },
+      "status": {
+        "health": "healthy",
+        "metrics": {
+          "responseTime": 213,
+          "errorRate": 1.959534756907276,
+          "throughput": 2435,
+          "availability": 99.9
+        },
+        "lastDeployment": "2025-07-12T14:04:35.470Z",
+        "deploymentFrequency": 5,
+        "incidents": 0
+      }
+    },
+    {
+      "apiVersion": "backstage.io/v1alpha1",
+      "kind": "Component",
+      "metadata": {
+        "name": "load-balancer",
+        "title": "Load Balancer",
+        "description": "load-balancer - Critical service for TechCorp operations",
+        "tags": [
+          "techcorp"
+        ],
+        "annotations": {
+          "backstage.io/kubernetes-id": "load-balancer",
+          "github.com/project-slug": "techcorp/load-balancer",
+          "backstage.io/techdocs-ref": "dir:.",
+          "pagerduty.com/integration-key": "PD-LOAD-BALANCER",
+          "datadog.com/dashboard-url": "https://app.datadoghq.com/dashboard/load-balancer"
+        }
+      },
+      "spec": {
+        "type": "tool",
+        "lifecycle": "production",
+        "owner": "data",
+        "system": "core",
+        "dependsOn": [
+          "Component:default/auth-service"
+        ],
+        "providesApis": []
+      },
+      "status": {
+        "health": "healthy",
+        "metrics": {
+          "responseTime": 377,
+          "errorRate": 1.7822935596318499,
+          "throughput": 9028,
+          "availability": 99.9
+        },
+        "lastDeployment": "2025-08-06T14:04:35.470Z",
+        "deploymentFrequency": 18,
+        "incidents": 0
+      }
+    },
+    {
+      "apiVersion": "backstage.io/v1alpha1",
+      "kind": "Component",
+      "metadata": {
+        "name": "cdn-manager",
+        "title": "Cdn Manager",
+        "description": "cdn-manager - Critical service for TechCorp operations",
+        "tags": [
+          "techcorp"
+        ],
+        "annotations": {
+          "backstage.io/kubernetes-id": "cdn-manager",
+          "github.com/project-slug": "techcorp/cdn-manager",
+          "backstage.io/techdocs-ref": "dir:.",
+          "pagerduty.com/integration-key": "PD-CDN-MANAGER",
+          "datadog.com/dashboard-url": "https://app.datadoghq.com/dashboard/cdn-manager"
+        }
+      },
+      "spec": {
+        "type": "service",
+        "lifecycle": "staging",
+        "owner": "security",
+        "system": "core",
+        "dependsOn": [
+          "Component:default/auth-service",
+          "Component:default/config-service"
+        ],
+        "providesApis": []
+      },
+      "status": {
+        "health": "unhealthy",
+        "metrics": {
+          "responseTime": 450,
+          "errorRate": 1.2152173882863648,
+          "throughput": 6386,
+          "availability": 95
+        },
+        "lastDeployment": "2025-07-16T14:04:35.470Z",
+        "deploymentFrequency": 6,
+        "incidents": 1
+      }
+    },
+    {
+      "apiVersion": "backstage.io/v1alpha1",
+      "kind": "Component",
+      "metadata": {
+        "name": "dns-service",
+        "title": "Dns Service",
+        "description": "dns-service - Critical service for TechCorp operations",
+        "tags": [
+          "backend",
+          "techcorp"
+        ],
+        "annotations": {
+          "backstage.io/kubernetes-id": "dns-service",
+          "github.com/project-slug": "techcorp/dns-service",
+          "backstage.io/techdocs-ref": "dir:.",
+          "pagerduty.com/integration-key": "PD-DNS-SERVICE",
+          "datadog.com/dashboard-url": "https://app.datadoghq.com/dashboard/dns-service"
+        }
+      },
+      "spec": {
+        "type": "api",
+        "lifecycle": "experimental",
+        "owner": "devops",
+        "system": "core",
+        "dependsOn": [
+          "Component:default/auth-service",
+          "Component:default/config-service"
+        ],
+        "providesApis": []
+      },
+      "status": {
+        "health": "healthy",
+        "metrics": {
+          "responseTime": 538,
+          "errorRate": 0.11158349571677117,
+          "throughput": 1525,
+          "availability": 99.9
+        },
+        "lastDeployment": "2025-07-19T14:04:35.470Z",
+        "deploymentFrequency": 8,
+        "incidents": 0
+      }
+    },
+    {
+      "apiVersion": "backstage.io/v1alpha1",
+      "kind": "Component",
+      "metadata": {
+        "name": "monitoring-aggregator",
+        "title": "Monitoring Aggregator",
+        "description": "monitoring-aggregator - Critical service for TechCorp operations",
+        "tags": [
+          "techcorp"
+        ],
+        "annotations": {
+          "backstage.io/kubernetes-id": "monitoring-aggregator",
+          "github.com/project-slug": "techcorp/monitoring-aggregator",
+          "backstage.io/techdocs-ref": "dir:.",
+          "pagerduty.com/integration-key": "PD-MONITORING-AGGREGATOR",
+          "datadog.com/dashboard-url": "https://app.datadoghq.com/dashboard/monitoring-aggregator"
+        }
+      },
+      "spec": {
+        "type": "website",
+        "lifecycle": "deprecated",
+        "owner": "ml",
+        "system": "core",
+        "dependsOn": [],
+        "providesApis": []
+      },
+      "status": {
+        "health": "degraded",
+        "metrics": {
+          "responseTime": 74,
+          "errorRate": 3.1899380778641673,
+          "throughput": 7656,
+          "availability": 98.5
+        },
+        "lastDeployment": "2025-07-30T14:04:35.470Z",
+        "deploymentFrequency": 9,
+        "incidents": 0
+      }
+    },
+    {
+      "apiVersion": "backstage.io/v1alpha1",
+      "kind": "Component",
+      "metadata": {
+        "name": "invoice-generator",
+        "title": "Invoice Generator",
+        "description": "invoice-generator - Critical service for TechCorp operations",
+        "tags": [
+          "techcorp"
+        ],
+        "annotations": {
+          "backstage.io/kubernetes-id": "invoice-generator",
+          "github.com/project-slug": "techcorp/invoice-generator",
+          "backstage.io/techdocs-ref": "dir:.",
+          "pagerduty.com/integration-key": "PD-INVOICE-GENERATOR",
+          "datadog.com/dashboard-url": "https://app.datadoghq.com/dashboard/invoice-generator"
+        }
+      },
+      "spec": {
+        "type": "library",
+        "lifecycle": "production",
+        "owner": "platform",
+        "system": "core",
+        "dependsOn": [],
+        "providesApis": []
+      },
+      "status": {
+        "health": "unhealthy",
+        "metrics": {
+          "responseTime": 258,
+          "errorRate": 2.6466251038898925,
+          "throughput": 10124,
+          "availability": 95
+        },
+        "lastDeployment": "2025-07-18T14:04:35.470Z",
+        "deploymentFrequency": 2,
+        "incidents": 4
+      }
+    },
+    {
+      "apiVersion": "backstage.io/v1alpha1",
+      "kind": "Component",
+      "metadata": {
+        "name": "tax-calculator",
+        "title": "Tax Calculator",
+        "description": "tax-calculator - Critical service for TechCorp operations",
+        "tags": [
+          "techcorp"
+        ],
+        "annotations": {
+          "backstage.io/kubernetes-id": "tax-calculator",
+          "github.com/project-slug": "techcorp/tax-calculator",
+          "backstage.io/techdocs-ref": "dir:.",
+          "pagerduty.com/integration-key": "PD-TAX-CALCULATOR",
+          "datadog.com/dashboard-url": "https://app.datadoghq.com/dashboard/tax-calculator"
+        }
+      },
+      "spec": {
+        "type": "database",
+        "lifecycle": "staging",
+        "owner": "frontend",
+        "system": "core",
+        "dependsOn": [
+          "Component:default/auth-service"
+        ],
+        "providesApis": []
+      },
+      "status": {
+        "health": "healthy",
+        "metrics": {
+          "responseTime": 477,
+          "errorRate": 0.0339001538360586,
+          "throughput": 4431,
+          "availability": 99.9
+        },
+        "lastDeployment": "2025-07-19T14:04:35.470Z",
+        "deploymentFrequency": 6,
+        "incidents": 0
+      }
+    },
+    {
+      "apiVersion": "backstage.io/v1alpha1",
+      "kind": "Component",
+      "metadata": {
+        "name": "risk-analyzer",
+        "title": "Risk Analyzer",
+        "description": "risk-analyzer - Critical service for TechCorp operations",
+        "tags": [
+          "techcorp"
+        ],
+        "annotations": {
+          "backstage.io/kubernetes-id": "risk-analyzer",
+          "github.com/project-slug": "techcorp/risk-analyzer",
+          "backstage.io/techdocs-ref": "dir:.",
+          "pagerduty.com/integration-key": "PD-RISK-ANALYZER",
+          "datadog.com/dashboard-url": "https://app.datadoghq.com/dashboard/risk-analyzer"
+        }
+      },
+      "spec": {
+        "type": "tool",
+        "lifecycle": "experimental",
+        "owner": "backend",
+        "system": "core",
+        "dependsOn": [
+          "Component:default/auth-service",
+          "Component:default/config-service"
+        ],
+        "providesApis": []
+      },
+      "status": {
+        "health": "healthy",
+        "metrics": {
+          "responseTime": 122,
+          "errorRate": 1.076845981258137,
+          "throughput": 8282,
+          "availability": 99.9
+        },
+        "lastDeployment": "2025-07-25T14:04:35.470Z",
+        "deploymentFrequency": 16,
+        "incidents": 0
+      }
+    },
+    {
+      "apiVersion": "backstage.io/v1alpha1",
+      "kind": "Component",
+      "metadata": {
+        "name": "fraud-detector",
+        "title": "Fraud Detector",
+        "description": "fraud-detector - Critical service for TechCorp operations",
+        "tags": [
+          "techcorp"
+        ],
+        "annotations": {
+          "backstage.io/kubernetes-id": "fraud-detector",
+          "github.com/project-slug": "techcorp/fraud-detector",
+          "backstage.io/techdocs-ref": "dir:.",
+          "pagerduty.com/integration-key": "PD-FRAUD-DETECTOR",
+          "datadog.com/dashboard-url": "https://app.datadoghq.com/dashboard/fraud-detector"
+        }
+      },
+      "spec": {
+        "type": "service",
+        "lifecycle": "deprecated",
+        "owner": "mobile",
+        "system": "core",
+        "dependsOn": [],
+        "providesApis": []
+      },
+      "status": {
+        "health": "degraded",
+        "metrics": {
+          "responseTime": 352,
+          "errorRate": 8.184706328966236,
+          "throughput": 9292,
+          "availability": 98.5
+        },
+        "lastDeployment": "2025-07-24T14:04:35.470Z",
+        "deploymentFrequency": 14,
+        "incidents": 0
+      }
+    },
+    {
+      "apiVersion": "backstage.io/v1alpha1",
+      "kind": "Component",
+      "metadata": {
+        "name": "kyc-processor",
+        "title": "Kyc Processor",
+        "description": "kyc-processor - Critical service for TechCorp operations",
+        "tags": [
+          "techcorp"
+        ],
+        "annotations": {
+          "backstage.io/kubernetes-id": "kyc-processor",
+          "github.com/project-slug": "techcorp/kyc-processor",
+          "backstage.io/techdocs-ref": "dir:.",
+          "pagerduty.com/integration-key": "PD-KYC-PROCESSOR",
+          "datadog.com/dashboard-url": "https://app.datadoghq.com/dashboard/kyc-processor"
+        }
+      },
+      "spec": {
+        "type": "api",
+        "lifecycle": "production",
+        "owner": "data",
+        "system": "core",
+        "dependsOn": [
+          "Component:default/config-service"
+        ],
+        "providesApis": []
+      },
+      "status": {
+        "health": "unhealthy",
+        "metrics": {
+          "responseTime": 106,
+          "errorRate": 9.86500558389633,
+          "throughput": 4789,
+          "availability": 95
+        },
+        "lastDeployment": "2025-07-14T14:04:35.470Z",
+        "deploymentFrequency": 19,
+        "incidents": 3
+      }
+    },
+    {
+      "apiVersion": "backstage.io/v1alpha1",
+      "kind": "Component",
+      "metadata": {
+        "name": "compliance-checker",
+        "title": "Compliance Checker",
+        "description": "compliance-checker - Critical service for TechCorp operations",
+        "tags": [
+          "techcorp"
+        ],
+        "annotations": {
+          "backstage.io/kubernetes-id": "compliance-checker",
+          "github.com/project-slug": "techcorp/compliance-checker",
+          "backstage.io/techdocs-ref": "dir:.",
+          "pagerduty.com/integration-key": "PD-COMPLIANCE-CHECKER",
+          "datadog.com/dashboard-url": "https://app.datadoghq.com/dashboard/compliance-checker"
+        }
+      },
+      "spec": {
+        "type": "website",
+        "lifecycle": "staging",
+        "owner": "security",
+        "system": "core",
+        "dependsOn": [
+          "Component:default/auth-service"
+        ],
+        "providesApis": []
+      },
+      "status": {
+        "health": "unhealthy",
+        "metrics": {
+          "responseTime": 463,
+          "errorRate": 4.582177005080457,
+          "throughput": 2237,
+          "availability": 95
+        },
+        "lastDeployment": "2025-07-22T14:04:35.470Z",
+        "deploymentFrequency": 8,
+        "incidents": 1
+      }
+    },
+    {
+      "apiVersion": "backstage.io/v1alpha1",
+      "kind": "Component",
+      "metadata": {
+        "name": "reporting-engine",
+        "title": "Reporting Engine",
+        "description": "reporting-engine - Critical service for TechCorp operations",
+        "tags": [
+          "techcorp"
+        ],
+        "annotations": {
+          "backstage.io/kubernetes-id": "reporting-engine",
+          "github.com/project-slug": "techcorp/reporting-engine",
+          "backstage.io/techdocs-ref": "dir:.",
+          "pagerduty.com/integration-key": "PD-REPORTING-ENGINE",
+          "datadog.com/dashboard-url": "https://app.datadoghq.com/dashboard/reporting-engine"
+        }
+      },
+      "spec": {
+        "type": "library",
+        "lifecycle": "experimental",
+        "owner": "devops",
+        "system": "core",
+        "dependsOn": [
+          "Component:default/auth-service",
+          "Component:default/config-service"
+        ],
+        "providesApis": []
+      },
+      "status": {
+        "health": "healthy",
+        "metrics": {
+          "responseTime": 304,
+          "errorRate": 1.7782966471021546,
+          "throughput": 8939,
+          "availability": 99.9
+        },
+        "lastDeployment": "2025-07-17T14:04:35.470Z",
+        "deploymentFrequency": 13,
+        "incidents": 0
+      }
+    },
+    {
+      "apiVersion": "backstage.io/v1alpha1",
+      "kind": "Component",
+      "metadata": {
+        "name": "billing-service",
+        "title": "Billing Service",
+        "description": "billing-service - Critical service for TechCorp operations",
+        "tags": [
+          "backend",
+          "techcorp"
+        ],
+        "annotations": {
+          "backstage.io/kubernetes-id": "billing-service",
+          "github.com/project-slug": "techcorp/billing-service",
+          "backstage.io/techdocs-ref": "dir:.",
+          "pagerduty.com/integration-key": "PD-BILLING-SERVICE",
+          "datadog.com/dashboard-url": "https://app.datadoghq.com/dashboard/billing-service"
+        }
+      },
+      "spec": {
+        "type": "database",
+        "lifecycle": "deprecated",
+        "owner": "ml",
+        "system": "financial",
+        "dependsOn": [
+          "Component:default/auth-service",
+          "Component:default/config-service"
+        ],
+        "providesApis": []
+      },
+      "status": {
+        "health": "healthy",
+        "metrics": {
+          "responseTime": 307,
+          "errorRate": 0.6503332850975538,
+          "throughput": 8086,
+          "availability": 99.9
+        },
+        "lastDeployment": "2025-07-14T14:04:35.470Z",
+        "deploymentFrequency": 13,
+        "incidents": 0
+      }
+    },
+    {
+      "apiVersion": "backstage.io/v1alpha1",
+      "kind": "Component",
+      "metadata": {
+        "name": "salesforce-connector",
+        "title": "Salesforce Connector",
+        "description": "salesforce-connector - Critical service for TechCorp operations",
+        "tags": [
+          "techcorp"
+        ],
+        "annotations": {
+          "backstage.io/kubernetes-id": "salesforce-connector",
+          "github.com/project-slug": "techcorp/salesforce-connector",
+          "backstage.io/techdocs-ref": "dir:.",
+          "pagerduty.com/integration-key": "PD-SALESFORCE-CONNECTOR",
+          "datadog.com/dashboard-url": "https://app.datadoghq.com/dashboard/salesforce-connector"
+        }
+      },
+      "spec": {
+        "type": "tool",
+        "lifecycle": "production",
+        "owner": "platform",
+        "system": "core",
+        "dependsOn": [
+          "Component:default/auth-service"
+        ],
+        "providesApis": []
+      },
+      "status": {
+        "health": "degraded",
+        "metrics": {
+          "responseTime": 514,
+          "errorRate": 5.625733256939485,
+          "throughput": 6000,
+          "availability": 98.5
+        },
+        "lastDeployment": "2025-07-22T14:04:35.470Z",
+        "deploymentFrequency": 15,
+        "incidents": 0
+      }
+    },
+    {
+      "apiVersion": "backstage.io/v1alpha1",
+      "kind": "Component",
+      "metadata": {
+        "name": "slack-integration",
+        "title": "Slack Integration",
+        "description": "slack-integration - Critical service for TechCorp operations",
+        "tags": [
+          "techcorp"
+        ],
+        "annotations": {
+          "backstage.io/kubernetes-id": "slack-integration",
+          "github.com/project-slug": "techcorp/slack-integration",
+          "backstage.io/techdocs-ref": "dir:.",
+          "pagerduty.com/integration-key": "PD-SLACK-INTEGRATION",
+          "datadog.com/dashboard-url": "https://app.datadoghq.com/dashboard/slack-integration"
+        }
+      },
+      "spec": {
+        "type": "service",
+        "lifecycle": "staging",
+        "owner": "frontend",
+        "system": "core",
+        "dependsOn": [
+          "Component:default/config-service"
+        ],
+        "providesApis": []
+      },
+      "status": {
+        "health": "unhealthy",
+        "metrics": {
+          "responseTime": 479,
+          "errorRate": 5.160437338355955,
+          "throughput": 8821,
+          "availability": 95
+        },
+        "lastDeployment": "2025-07-22T14:04:35.470Z",
+        "deploymentFrequency": 11,
+        "incidents": 1
+      }
+    },
+    {
+      "apiVersion": "backstage.io/v1alpha1",
+      "kind": "Component",
+      "metadata": {
+        "name": "github-sync",
+        "title": "Github Sync",
+        "description": "github-sync - Critical service for TechCorp operations",
+        "tags": [
+          "techcorp"
+        ],
+        "annotations": {
+          "backstage.io/kubernetes-id": "github-sync",
+          "github.com/project-slug": "techcorp/github-sync",
+          "backstage.io/techdocs-ref": "dir:.",
+          "pagerduty.com/integration-key": "PD-GITHUB-SYNC",
+          "datadog.com/dashboard-url": "https://app.datadoghq.com/dashboard/github-sync"
+        }
+      },
+      "spec": {
+        "type": "api",
+        "lifecycle": "experimental",
+        "owner": "backend",
+        "system": "core",
+        "dependsOn": [
+          "Component:default/config-service"
+        ],
+        "providesApis": []
+      },
+      "status": {
+        "health": "degraded",
+        "metrics": {
+          "responseTime": 103,
+          "errorRate": 7.638908869432914,
+          "throughput": 3309,
+          "availability": 98.5
+        },
+        "lastDeployment": "2025-07-17T14:04:35.470Z",
+        "deploymentFrequency": 7,
+        "incidents": 0
+      }
+    },
+    {
+      "apiVersion": "backstage.io/v1alpha1",
+      "kind": "Component",
+      "metadata": {
+        "name": "jira-bridge",
+        "title": "Jira Bridge",
+        "description": "jira-bridge - Critical service for TechCorp operations",
+        "tags": [
+          "techcorp"
+        ],
+        "annotations": {
+          "backstage.io/kubernetes-id": "jira-bridge",
+          "github.com/project-slug": "techcorp/jira-bridge",
+          "backstage.io/techdocs-ref": "dir:.",
+          "pagerduty.com/integration-key": "PD-JIRA-BRIDGE",
+          "datadog.com/dashboard-url": "https://app.datadoghq.com/dashboard/jira-bridge"
+        }
+      },
+      "spec": {
+        "type": "website",
+        "lifecycle": "deprecated",
+        "owner": "mobile",
+        "system": "core",
+        "dependsOn": [
+          "Component:default/auth-service",
+          "Component:default/config-service"
+        ],
+        "providesApis": []
+      },
+      "status": {
+        "health": "healthy",
+        "metrics": {
+          "responseTime": 430,
+          "errorRate": 0.6042783882014486,
+          "throughput": 10704,
+          "availability": 99.9
+        },
+        "lastDeployment": "2025-07-25T14:04:35.470Z",
+        "deploymentFrequency": 7,
+        "incidents": 0
+      }
+    },
+    {
+      "apiVersion": "backstage.io/v1alpha1",
+      "kind": "Component",
+      "metadata": {
+        "name": "aws-cost-analyzer",
+        "title": "Aws Cost Analyzer",
+        "description": "aws-cost-analyzer - Critical service for TechCorp operations",
+        "tags": [
+          "techcorp"
+        ],
+        "annotations": {
+          "backstage.io/kubernetes-id": "aws-cost-analyzer",
+          "github.com/project-slug": "techcorp/aws-cost-analyzer",
+          "backstage.io/techdocs-ref": "dir:.",
+          "pagerduty.com/integration-key": "PD-AWS-COST-ANALYZER",
+          "datadog.com/dashboard-url": "https://app.datadoghq.com/dashboard/aws-cost-analyzer"
+        }
+      },
+      "spec": {
+        "type": "library",
+        "lifecycle": "production",
+        "owner": "data",
+        "system": "core",
+        "dependsOn": [
+          "Component:default/auth-service",
+          "Component:default/config-service"
+        ],
+        "providesApis": []
+      },
+      "status": {
+        "health": "healthy",
+        "metrics": {
+          "responseTime": 144,
+          "errorRate": 0.774461955691133,
+          "throughput": 2520,
+          "availability": 99.9
+        },
+        "lastDeployment": "2025-08-02T14:04:35.470Z",
+        "deploymentFrequency": 6,
+        "incidents": 0
+      }
+    },
+    {
+      "apiVersion": "backstage.io/v1alpha1",
+      "kind": "Component",
+      "metadata": {
+        "name": "datadog-exporter",
+        "title": "Datadog Exporter",
+        "description": "datadog-exporter - Critical service for TechCorp operations",
+        "tags": [
+          "data",
+          "techcorp"
+        ],
+        "annotations": {
+          "backstage.io/kubernetes-id": "datadog-exporter",
+          "github.com/project-slug": "techcorp/datadog-exporter",
+          "backstage.io/techdocs-ref": "dir:.",
+          "pagerduty.com/integration-key": "PD-DATADOG-EXPORTER",
+          "datadog.com/dashboard-url": "https://app.datadoghq.com/dashboard/datadog-exporter"
+        }
+      },
+      "spec": {
+        "type": "database",
+        "lifecycle": "staging",
+        "owner": "security",
+        "system": "data-platform",
+        "dependsOn": [
+          "Component:default/auth-service"
+        ],
+        "providesApis": []
+      },
+      "status": {
+        "health": "healthy",
+        "metrics": {
+          "responseTime": 337,
+          "errorRate": 1.2914162120079093,
+          "throughput": 5100,
+          "availability": 99.9
+        },
+        "lastDeployment": "2025-07-17T14:04:35.470Z",
+        "deploymentFrequency": 11,
+        "incidents": 0
+      }
+    },
+    {
+      "apiVersion": "backstage.io/v1alpha1",
+      "kind": "Component",
+      "metadata": {
+        "name": "pagerduty-integration",
+        "title": "Pagerduty Integration",
+        "description": "pagerduty-integration - Critical service for TechCorp operations",
+        "tags": [
+          "techcorp"
+        ],
+        "annotations": {
+          "backstage.io/kubernetes-id": "pagerduty-integration",
+          "github.com/project-slug": "techcorp/pagerduty-integration",
+          "backstage.io/techdocs-ref": "dir:.",
+          "pagerduty.com/integration-key": "PD-PAGERDUTY-INTEGRATION",
+          "datadog.com/dashboard-url": "https://app.datadoghq.com/dashboard/pagerduty-integration"
+        }
+      },
+      "spec": {
+        "type": "tool",
+        "lifecycle": "experimental",
+        "owner": "devops",
+        "system": "core",
+        "dependsOn": [
+          "Component:default/auth-service",
+          "Component:default/config-service"
+        ],
+        "providesApis": []
+      },
+      "status": {
+        "health": "healthy",
+        "metrics": {
+          "responseTime": 279,
+          "errorRate": 0.07717608987568658,
+          "throughput": 8538,
+          "availability": 99.9
+        },
+        "lastDeployment": "2025-07-15T14:04:35.470Z",
+        "deploymentFrequency": 18,
+        "incidents": 0
+      }
+    },
+    {
+      "apiVersion": "backstage.io/v1alpha1",
+      "kind": "Component",
+      "metadata": {
+        "name": "email-service",
+        "title": "Email Service",
+        "description": "email-service - Critical service for TechCorp operations",
+        "tags": [
+          "backend",
+          "ml",
+          "techcorp"
+        ],
+        "annotations": {
+          "backstage.io/kubernetes-id": "email-service",
+          "github.com/project-slug": "techcorp/email-service",
+          "backstage.io/techdocs-ref": "dir:.",
+          "pagerduty.com/integration-key": "PD-EMAIL-SERVICE",
+          "datadog.com/dashboard-url": "https://app.datadoghq.com/dashboard/email-service"
+        }
+      },
+      "spec": {
+        "type": "service",
+        "lifecycle": "deprecated",
+        "owner": "ml",
+        "system": "ml-platform",
+        "dependsOn": [
+          "Component:default/auth-service"
+        ],
+        "providesApis": []
+      },
+      "status": {
+        "health": "healthy",
+        "metrics": {
+          "responseTime": 492,
+          "errorRate": 0.3551734888602356,
+          "throughput": 5409,
+          "availability": 99.9
+        },
+        "lastDeployment": "2025-07-21T14:04:35.470Z",
+        "deploymentFrequency": 5,
+        "incidents": 0
+      }
+    },
+    {
+      "apiVersion": "backstage.io/v1alpha1",
+      "kind": "Component",
+      "metadata": {
+        "name": "deployment-orchestrator",
+        "title": "Deployment Orchestrator",
+        "description": "deployment-orchestrator - Critical service for TechCorp operations",
+        "tags": [
+          "techcorp"
+        ],
+        "annotations": {
+          "backstage.io/kubernetes-id": "deployment-orchestrator",
+          "github.com/project-slug": "techcorp/deployment-orchestrator",
+          "backstage.io/techdocs-ref": "dir:.",
+          "pagerduty.com/integration-key": "PD-DEPLOYMENT-ORCHESTRATOR",
+          "datadog.com/dashboard-url": "https://app.datadoghq.com/dashboard/deployment-orchestrator"
+        }
+      },
+      "spec": {
+        "type": "api",
+        "lifecycle": "production",
+        "owner": "platform",
+        "system": "core",
+        "dependsOn": [
+          "Component:default/auth-service"
+        ],
+        "providesApis": []
+      },
+      "status": {
+        "health": "unhealthy",
+        "metrics": {
+          "responseTime": 160,
+          "errorRate": 7.138340110128841,
+          "throughput": 8572,
+          "availability": 95
+        },
+        "lastDeployment": "2025-08-02T14:04:35.470Z",
+        "deploymentFrequency": 10,
+        "incidents": 1
+      }
+    },
+    {
+      "apiVersion": "backstage.io/v1alpha1",
+      "kind": "Component",
+      "metadata": {
+        "name": "feature-flag-service",
+        "title": "Feature Flag Service",
+        "description": "feature-flag-service - Critical service for TechCorp operations",
+        "tags": [
+          "backend",
+          "techcorp"
+        ],
+        "annotations": {
+          "backstage.io/kubernetes-id": "feature-flag-service",
+          "github.com/project-slug": "techcorp/feature-flag-service",
+          "backstage.io/techdocs-ref": "dir:.",
+          "pagerduty.com/integration-key": "PD-FEATURE-FLAG-SERVICE",
+          "datadog.com/dashboard-url": "https://app.datadoghq.com/dashboard/feature-flag-service"
+        }
+      },
+      "spec": {
+        "type": "website",
+        "lifecycle": "staging",
+        "owner": "frontend",
+        "system": "core",
+        "dependsOn": [
+          "Component:default/auth-service"
+        ],
+        "providesApis": []
+      },
+      "status": {
+        "health": "healthy",
+        "metrics": {
+          "responseTime": 454,
+          "errorRate": 1.748773338040888,
+          "throughput": 5593,
+          "availability": 99.9
+        },
+        "lastDeployment": "2025-08-06T14:04:35.470Z",
+        "deploymentFrequency": 17,
+        "incidents": 0
+      }
+    },
+    {
+      "apiVersion": "backstage.io/v1alpha1",
+      "kind": "Component",
+      "metadata": {
+        "name": "a-b-testing-platform",
+        "title": "A B Testing Platform",
+        "description": "a-b-testing-platform - Critical service for TechCorp operations",
+        "tags": [
+          "techcorp"
+        ],
+        "annotations": {
+          "backstage.io/kubernetes-id": "a-b-testing-platform",
+          "github.com/project-slug": "techcorp/a-b-testing-platform",
+          "backstage.io/techdocs-ref": "dir:.",
+          "pagerduty.com/integration-key": "PD-A-B-TESTING-PLATFORM",
+          "datadog.com/dashboard-url": "https://app.datadoghq.com/dashboard/a-b-testing-platform"
+        }
+      },
+      "spec": {
+        "type": "library",
+        "lifecycle": "experimental",
+        "owner": "backend",
+        "system": "core",
+        "dependsOn": [
+          "Component:default/auth-service",
+          "Component:default/config-service"
+        ],
+        "providesApis": []
+      },
+      "status": {
+        "health": "healthy",
+        "metrics": {
+          "responseTime": 472,
+          "errorRate": 0.4650242835873528,
+          "throughput": 5531,
+          "availability": 99.9
+        },
+        "lastDeployment": "2025-08-03T14:04:35.470Z",
+        "deploymentFrequency": 7,
+        "incidents": 0
+      }
+    },
+    {
+      "apiVersion": "backstage.io/v1alpha1",
+      "kind": "Component",
+      "metadata": {
+        "name": "performance-profiler",
+        "title": "Performance Profiler",
+        "description": "performance-profiler - Critical service for TechCorp operations",
+        "tags": [
+          "techcorp"
+        ],
+        "annotations": {
+          "backstage.io/kubernetes-id": "performance-profiler",
+          "github.com/project-slug": "techcorp/performance-profiler",
+          "backstage.io/techdocs-ref": "dir:.",
+          "pagerduty.com/integration-key": "PD-PERFORMANCE-PROFILER",
+          "datadog.com/dashboard-url": "https://app.datadoghq.com/dashboard/performance-profiler"
+        }
+      },
+      "spec": {
+        "type": "database",
+        "lifecycle": "deprecated",
+        "owner": "mobile",
+        "system": "core",
+        "dependsOn": [
+          "Component:default/auth-service",
+          "Component:default/config-service"
+        ],
+        "providesApis": []
+      },
+      "status": {
+        "health": "unhealthy",
+        "metrics": {
+          "responseTime": 177,
+          "errorRate": 0.8400247308728659,
+          "throughput": 7451,
+          "availability": 95
+        },
+        "lastDeployment": "2025-07-17T14:04:35.470Z",
+        "deploymentFrequency": 13,
+        "incidents": 1
+      }
+    },
+    {
+      "apiVersion": "backstage.io/v1alpha1",
+      "kind": "Component",
+      "metadata": {
+        "name": "log-aggregator",
+        "title": "Log Aggregator",
+        "description": "log-aggregator - Critical service for TechCorp operations",
+        "tags": [
+          "techcorp"
+        ],
+        "annotations": {
+          "backstage.io/kubernetes-id": "log-aggregator",
+          "github.com/project-slug": "techcorp/log-aggregator",
+          "backstage.io/techdocs-ref": "dir:.",
+          "pagerduty.com/integration-key": "PD-LOG-AGGREGATOR",
+          "datadog.com/dashboard-url": "https://app.datadoghq.com/dashboard/log-aggregator"
+        }
+      },
+      "spec": {
+        "type": "tool",
+        "lifecycle": "production",
+        "owner": "data",
+        "system": "core",
+        "dependsOn": [
+          "Component:default/config-service"
+        ],
+        "providesApis": []
+      },
+      "status": {
+        "health": "degraded",
+        "metrics": {
+          "responseTime": 136,
+          "errorRate": 2.3728735215094954,
+          "throughput": 2463,
+          "availability": 98.5
+        },
+        "lastDeployment": "2025-08-06T14:04:35.470Z",
+        "deploymentFrequency": 5,
+        "incidents": 0
+      }
+    },
+    {
+      "apiVersion": "backstage.io/v1alpha1",
+      "kind": "Component",
+      "metadata": {
+        "name": "metric-collector",
+        "title": "Metric Collector",
+        "description": "metric-collector - Critical service for TechCorp operations",
+        "tags": [
+          "techcorp"
+        ],
+        "annotations": {
+          "backstage.io/kubernetes-id": "metric-collector",
+          "github.com/project-slug": "techcorp/metric-collector",
+          "backstage.io/techdocs-ref": "dir:.",
+          "pagerduty.com/integration-key": "PD-METRIC-COLLECTOR",
+          "datadog.com/dashboard-url": "https://app.datadoghq.com/dashboard/metric-collector"
+        }
+      },
+      "spec": {
+        "type": "service",
+        "lifecycle": "staging",
+        "owner": "security",
+        "system": "core",
+        "dependsOn": [
+          "Component:default/auth-service"
+        ],
+        "providesApis": []
+      },
+      "status": {
+        "health": "degraded",
+        "metrics": {
+          "responseTime": 128,
+          "errorRate": 3.3771029736074354,
+          "throughput": 8161,
+          "availability": 98.5
+        },
+        "lastDeployment": "2025-07-19T14:04:35.470Z",
+        "deploymentFrequency": 9,
+        "incidents": 0
+      }
+    },
+    {
+      "apiVersion": "backstage.io/v1alpha1",
+      "kind": "Component",
+      "metadata": {
+        "name": "trace-analyzer",
+        "title": "Trace Analyzer",
+        "description": "trace-analyzer - Critical service for TechCorp operations",
+        "tags": [
+          "techcorp"
+        ],
+        "annotations": {
+          "backstage.io/kubernetes-id": "trace-analyzer",
+          "github.com/project-slug": "techcorp/trace-analyzer",
+          "backstage.io/techdocs-ref": "dir:.",
+          "pagerduty.com/integration-key": "PD-TRACE-ANALYZER",
+          "datadog.com/dashboard-url": "https://app.datadoghq.com/dashboard/trace-analyzer"
+        }
+      },
+      "spec": {
+        "type": "api",
+        "lifecycle": "experimental",
+        "owner": "devops",
+        "system": "core",
+        "dependsOn": [
+          "Component:default/auth-service"
+        ],
+        "providesApis": []
+      },
+      "status": {
+        "health": "unhealthy",
+        "metrics": {
+          "responseTime": 163,
+          "errorRate": 9.16470241681986,
+          "throughput": 1296,
+          "availability": 95
+        },
+        "lastDeployment": "2025-07-29T14:04:35.470Z",
+        "deploymentFrequency": 5,
+        "incidents": 4
+      }
+    },
+    {
+      "apiVersion": "backstage.io/v1alpha1",
+      "kind": "Component",
+      "metadata": {
+        "name": "ios-app-backend",
+        "title": "Ios App Backend",
+        "description": "ios-app-backend - Critical service for TechCorp operations",
+        "tags": [
+          "frontend",
+          "techcorp"
+        ],
+        "annotations": {
+          "backstage.io/kubernetes-id": "ios-app-backend",
+          "github.com/project-slug": "techcorp/ios-app-backend",
+          "backstage.io/techdocs-ref": "dir:.",
+          "pagerduty.com/integration-key": "PD-IOS-APP-BACKEND",
+          "datadog.com/dashboard-url": "https://app.datadoghq.com/dashboard/ios-app-backend"
+        }
+      },
+      "spec": {
+        "type": "website",
+        "lifecycle": "deprecated",
+        "owner": "ml",
+        "system": "core",
+        "dependsOn": [
+          "Component:default/auth-service",
+          "Component:default/config-service"
+        ],
+        "providesApis": []
+      },
+      "status": {
+        "health": "healthy",
+        "metrics": {
+          "responseTime": 64,
+          "errorRate": 0.954146813432192,
+          "throughput": 9569,
+          "availability": 99.9
+        },
+        "lastDeployment": "2025-07-22T14:04:35.470Z",
+        "deploymentFrequency": 16,
+        "incidents": 0
+      }
+    },
+    {
+      "apiVersion": "backstage.io/v1alpha1",
+      "kind": "Component",
+      "metadata": {
+        "name": "android-app-backend",
+        "title": "Android App Backend",
+        "description": "android-app-backend - Critical service for TechCorp operations",
+        "tags": [
+          "frontend",
+          "techcorp"
+        ],
+        "annotations": {
+          "backstage.io/kubernetes-id": "android-app-backend",
+          "github.com/project-slug": "techcorp/android-app-backend",
+          "backstage.io/techdocs-ref": "dir:.",
+          "pagerduty.com/integration-key": "PD-ANDROID-APP-BACKEND",
+          "datadog.com/dashboard-url": "https://app.datadoghq.com/dashboard/android-app-backend"
+        }
+      },
+      "spec": {
+        "type": "library",
+        "lifecycle": "production",
+        "owner": "platform",
+        "system": "core",
+        "dependsOn": [
+          "Component:default/config-service"
+        ],
+        "providesApis": []
+      },
+      "status": {
+        "health": "unhealthy",
+        "metrics": {
+          "responseTime": 258,
+          "errorRate": 7.28249079708897,
+          "throughput": 7490,
+          "availability": 95
+        },
+        "lastDeployment": "2025-07-27T14:04:35.470Z",
+        "deploymentFrequency": 14,
+        "incidents": 4
+      }
+    },
+    {
+      "apiVersion": "backstage.io/v1alpha1",
+      "kind": "Component",
+      "metadata": {
+        "name": "push-notification-service",
+        "title": "Push Notification Service",
+        "description": "push-notification-service - Critical service for TechCorp operations",
+        "tags": [
+          "backend",
+          "techcorp"
+        ],
+        "annotations": {
+          "backstage.io/kubernetes-id": "push-notification-service",
+          "github.com/project-slug": "techcorp/push-notification-service",
+          "backstage.io/techdocs-ref": "dir:.",
+          "pagerduty.com/integration-key": "PD-PUSH-NOTIFICATION-SERVICE",
+          "datadog.com/dashboard-url": "https://app.datadoghq.com/dashboard/push-notification-service"
+        }
+      },
+      "spec": {
+        "type": "database",
+        "lifecycle": "staging",
+        "owner": "frontend",
+        "system": "core",
+        "dependsOn": [
+          "Component:default/auth-service",
+          "Component:default/config-service"
+        ],
+        "providesApis": []
+      },
+      "status": {
+        "health": "healthy",
+        "metrics": {
+          "responseTime": 137,
+          "errorRate": 1.5015028273767599,
+          "throughput": 10825,
+          "availability": 99.9
+        },
+        "lastDeployment": "2025-07-20T14:04:35.470Z",
+        "deploymentFrequency": 5,
+        "incidents": 0
+      }
+    },
+    {
+      "apiVersion": "backstage.io/v1alpha1",
+      "kind": "Component",
+      "metadata": {
+        "name": "mobile-analytics",
+        "title": "Mobile Analytics",
+        "description": "mobile-analytics - Critical service for TechCorp operations",
+        "tags": [
+          "techcorp"
+        ],
+        "annotations": {
+          "backstage.io/kubernetes-id": "mobile-analytics",
+          "github.com/project-slug": "techcorp/mobile-analytics",
+          "backstage.io/techdocs-ref": "dir:.",
+          "pagerduty.com/integration-key": "PD-MOBILE-ANALYTICS",
+          "datadog.com/dashboard-url": "https://app.datadoghq.com/dashboard/mobile-analytics"
+        }
+      },
+      "spec": {
+        "type": "tool",
+        "lifecycle": "experimental",
+        "owner": "backend",
+        "system": "core",
+        "dependsOn": [
+          "Component:default/auth-service",
+          "Component:default/config-service"
+        ],
+        "providesApis": []
+      },
+      "status": {
+        "health": "degraded",
+        "metrics": {
+          "responseTime": 246,
+          "errorRate": 2.8513800191036887,
+          "throughput": 5569,
+          "availability": 98.5
+        },
+        "lastDeployment": "2025-07-15T14:04:35.470Z",
+        "deploymentFrequency": 18,
+        "incidents": 0
+      }
+    },
+    {
+      "apiVersion": "backstage.io/v1alpha1",
+      "kind": "Component",
+      "metadata": {
+        "name": "app-config-service",
+        "title": "App Config Service",
+        "description": "app-config-service - Critical service for TechCorp operations",
+        "tags": [
+          "backend",
+          "frontend",
+          "techcorp"
+        ],
+        "annotations": {
+          "backstage.io/kubernetes-id": "app-config-service",
+          "github.com/project-slug": "techcorp/app-config-service",
+          "backstage.io/techdocs-ref": "dir:.",
+          "pagerduty.com/integration-key": "PD-APP-CONFIG-SERVICE",
+          "datadog.com/dashboard-url": "https://app.datadoghq.com/dashboard/app-config-service"
+        }
+      },
+      "spec": {
+        "type": "service",
+        "lifecycle": "deprecated",
+        "owner": "mobile",
+        "system": "core",
+        "dependsOn": [
+          "Component:default/auth-service"
+        ],
+        "providesApis": []
+      },
+      "status": {
+        "health": "unhealthy",
+        "metrics": {
+          "responseTime": 151,
+          "errorRate": 9.541527745534221,
+          "throughput": 3079,
+          "availability": 95
+        },
+        "lastDeployment": "2025-07-25T14:04:35.470Z",
+        "deploymentFrequency": 2,
+        "incidents": 5
+      }
+    },
+    {
+      "apiVersion": "backstage.io/v1alpha1",
+      "kind": "Component",
+      "metadata": {
+        "name": "mobile-auth-service",
+        "title": "Mobile Auth Service",
+        "description": "mobile-auth-service - Critical service for TechCorp operations",
+        "tags": [
+          "backend",
+          "techcorp"
+        ],
+        "annotations": {
+          "backstage.io/kubernetes-id": "mobile-auth-service",
+          "github.com/project-slug": "techcorp/mobile-auth-service",
+          "backstage.io/techdocs-ref": "dir:.",
+          "pagerduty.com/integration-key": "PD-MOBILE-AUTH-SERVICE",
+          "datadog.com/dashboard-url": "https://app.datadoghq.com/dashboard/mobile-auth-service"
+        }
+      },
+      "spec": {
+        "type": "api",
+        "lifecycle": "production",
+        "owner": "data",
+        "system": "identity",
+        "dependsOn": [
+          "Component:default/auth-service",
+          "Component:default/config-service"
+        ],
+        "providesApis": []
+      },
+      "status": {
+        "health": "healthy",
+        "metrics": {
+          "responseTime": 543,
+          "errorRate": 1.765470956433469,
+          "throughput": 1613,
+          "availability": 99.9
+        },
+        "lastDeployment": "2025-07-28T14:04:35.470Z",
+        "deploymentFrequency": 8,
+        "incidents": 0
+      }
+    },
+    {
+      "apiVersion": "backstage.io/v1alpha1",
+      "kind": "Component",
+      "metadata": {
+        "name": "vulnerability-scanner",
+        "title": "Vulnerability Scanner",
+        "description": "vulnerability-scanner - Critical service for TechCorp operations",
+        "tags": [
+          "techcorp"
+        ],
+        "annotations": {
+          "backstage.io/kubernetes-id": "vulnerability-scanner",
+          "github.com/project-slug": "techcorp/vulnerability-scanner",
+          "backstage.io/techdocs-ref": "dir:.",
+          "pagerduty.com/integration-key": "PD-VULNERABILITY-SCANNER",
+          "datadog.com/dashboard-url": "https://app.datadoghq.com/dashboard/vulnerability-scanner"
+        }
+      },
+      "spec": {
+        "type": "website",
+        "lifecycle": "staging",
+        "owner": "security",
+        "system": "core",
+        "dependsOn": [
+          "Component:default/auth-service",
+          "Component:default/config-service"
+        ],
+        "providesApis": []
+      },
+      "status": {
+        "health": "healthy",
+        "metrics": {
+          "responseTime": 523,
+          "errorRate": 0.5903272972019682,
+          "throughput": 4921,
+          "availability": 99.9
+        },
+        "lastDeployment": "2025-08-08T14:04:35.470Z",
+        "deploymentFrequency": 1,
+        "incidents": 0
+      }
+    },
+    {
+      "apiVersion": "backstage.io/v1alpha1",
+      "kind": "Component",
+      "metadata": {
+        "name": "secret-rotation-service",
+        "title": "Secret Rotation Service",
+        "description": "secret-rotation-service - Critical service for TechCorp operations",
+        "tags": [
+          "backend",
+          "techcorp"
+        ],
+        "annotations": {
+          "backstage.io/kubernetes-id": "secret-rotation-service",
+          "github.com/project-slug": "techcorp/secret-rotation-service",
+          "backstage.io/techdocs-ref": "dir:.",
+          "pagerduty.com/integration-key": "PD-SECRET-ROTATION-SERVICE",
+          "datadog.com/dashboard-url": "https://app.datadoghq.com/dashboard/secret-rotation-service"
+        }
+      },
+      "spec": {
+        "type": "library",
+        "lifecycle": "experimental",
+        "owner": "devops",
+        "system": "core",
+        "dependsOn": [],
+        "providesApis": []
+      },
+      "status": {
+        "health": "unhealthy",
+        "metrics": {
+          "responseTime": 262,
+          "errorRate": 6.829816184748941,
+          "throughput": 10235,
+          "availability": 95
+        },
+        "lastDeployment": "2025-07-30T14:04:35.470Z",
+        "deploymentFrequency": 18,
+        "incidents": 2
+      }
+    },
+    {
+      "apiVersion": "backstage.io/v1alpha1",
+      "kind": "Component",
+      "metadata": {
+        "name": "access-control-service",
+        "title": "Access Control Service",
+        "description": "access-control-service - Critical service for TechCorp operations",
+        "tags": [
+          "backend",
+          "techcorp"
+        ],
+        "annotations": {
+          "backstage.io/kubernetes-id": "access-control-service",
+          "github.com/project-slug": "techcorp/access-control-service",
+          "backstage.io/techdocs-ref": "dir:.",
+          "pagerduty.com/integration-key": "PD-ACCESS-CONTROL-SERVICE",
+          "datadog.com/dashboard-url": "https://app.datadoghq.com/dashboard/access-control-service"
+        }
+      },
+      "spec": {
+        "type": "database",
+        "lifecycle": "deprecated",
+        "owner": "ml",
+        "system": "core",
+        "dependsOn": [],
+        "providesApis": []
+      },
+      "status": {
+        "health": "degraded",
+        "metrics": {
+          "responseTime": 53,
+          "errorRate": 9.206866648328534,
+          "throughput": 7509,
+          "availability": 98.5
+        },
+        "lastDeployment": "2025-07-27T14:04:35.470Z",
+        "deploymentFrequency": 12,
+        "incidents": 0
+      }
+    },
+    {
+      "apiVersion": "backstage.io/v1alpha1",
+      "kind": "Component",
+      "metadata": {
+        "name": "encryption-service",
+        "title": "Encryption Service",
+        "description": "encryption-service - Critical service for TechCorp operations",
+        "tags": [
+          "backend",
+          "techcorp"
+        ],
+        "annotations": {
+          "backstage.io/kubernetes-id": "encryption-service",
+          "github.com/project-slug": "techcorp/encryption-service",
+          "backstage.io/techdocs-ref": "dir:.",
+          "pagerduty.com/integration-key": "PD-ENCRYPTION-SERVICE",
+          "datadog.com/dashboard-url": "https://app.datadoghq.com/dashboard/encryption-service"
+        }
+      },
+      "spec": {
+        "type": "tool",
+        "lifecycle": "production",
+        "owner": "platform",
+        "system": "core",
+        "dependsOn": [
+          "Component:default/auth-service"
+        ],
+        "providesApis": []
+      },
+      "status": {
+        "health": "degraded",
+        "metrics": {
+          "responseTime": 483,
+          "errorRate": 9.6531166802042,
+          "throughput": 1198,
+          "availability": 98.5
+        },
+        "lastDeployment": "2025-07-14T14:04:35.470Z",
+        "deploymentFrequency": 9,
+        "incidents": 0
+      }
+    },
+    {
+      "apiVersion": "backstage.io/v1alpha1",
+      "kind": "Component",
+      "metadata": {
+        "name": "key-management-service",
+        "title": "Key Management Service",
+        "description": "key-management-service - Critical service for TechCorp operations",
+        "tags": [
+          "backend",
+          "techcorp"
+        ],
+        "annotations": {
+          "backstage.io/kubernetes-id": "key-management-service",
+          "github.com/project-slug": "techcorp/key-management-service",
+          "backstage.io/techdocs-ref": "dir:.",
+          "pagerduty.com/integration-key": "PD-KEY-MANAGEMENT-SERVICE",
+          "datadog.com/dashboard-url": "https://app.datadoghq.com/dashboard/key-management-service"
+        }
+      },
+      "spec": {
+        "type": "service",
+        "lifecycle": "staging",
+        "owner": "frontend",
+        "system": "core",
+        "dependsOn": [
+          "Component:default/auth-service",
+          "Component:default/config-service"
+        ],
+        "providesApis": []
+      },
+      "status": {
+        "health": "unhealthy",
+        "metrics": {
+          "responseTime": 167,
+          "errorRate": 2.994691847629698,
+          "throughput": 2545,
+          "availability": 95
+        },
+        "lastDeployment": "2025-07-12T14:04:35.470Z",
+        "deploymentFrequency": 7,
+        "incidents": 1
+      }
+    },
+    {
+      "apiVersion": "backstage.io/v1alpha1",
+      "kind": "Component",
+      "metadata": {
+        "name": "security-audit-service",
+        "title": "Security Audit Service",
+        "description": "security-audit-service - Critical service for TechCorp operations",
+        "tags": [
+          "backend",
+          "techcorp"
+        ],
+        "annotations": {
+          "backstage.io/kubernetes-id": "security-audit-service",
+          "github.com/project-slug": "techcorp/security-audit-service",
+          "backstage.io/techdocs-ref": "dir:.",
+          "pagerduty.com/integration-key": "PD-SECURITY-AUDIT-SERVICE",
+          "datadog.com/dashboard-url": "https://app.datadoghq.com/dashboard/security-audit-service"
+        }
+      },
+      "spec": {
+        "type": "api",
+        "lifecycle": "experimental",
+        "owner": "backend",
+        "system": "core",
+        "dependsOn": [
+          "Component:default/config-service"
+        ],
+        "providesApis": []
+      },
+      "status": {
+        "health": "degraded",
+        "metrics": {
+          "responseTime": 516,
+          "errorRate": 1.742147520997137,
+          "throughput": 8737,
+          "availability": 98.5
+        },
+        "lastDeployment": "2025-07-10T14:04:35.470Z",
+        "deploymentFrequency": 20,
+        "incidents": 0
+      }
+    },
+    {
+      "apiVersion": "backstage.io/v1alpha1",
+      "kind": "Component",
+      "metadata": {
+        "name": "ml-model-server",
+        "title": "Ml Model Server",
+        "description": "ml-model-server - Critical service for TechCorp operations",
+        "tags": [
+          "ml",
+          "techcorp"
+        ],
+        "annotations": {
+          "backstage.io/kubernetes-id": "ml-model-server",
+          "github.com/project-slug": "techcorp/ml-model-server",
+          "backstage.io/techdocs-ref": "dir:.",
+          "pagerduty.com/integration-key": "PD-ML-MODEL-SERVER",
+          "datadog.com/dashboard-url": "https://app.datadoghq.com/dashboard/ml-model-server"
+        }
+      },
+      "spec": {
+        "type": "website",
+        "lifecycle": "deprecated",
+        "owner": "mobile",
+        "system": "ml-platform",
+        "dependsOn": [
+          "Component:default/config-service"
+        ],
+        "providesApis": []
+      },
+      "status": {
+        "health": "degraded",
+        "metrics": {
+          "responseTime": 120,
+          "errorRate": 1.03236644038043,
+          "throughput": 6482,
+          "availability": 98.5
+        },
+        "lastDeployment": "2025-07-18T14:04:35.470Z",
+        "deploymentFrequency": 14,
+        "incidents": 0
+      }
+    },
+    {
+      "apiVersion": "backstage.io/v1alpha1",
+      "kind": "Component",
+      "metadata": {
+        "name": "training-pipeline",
+        "title": "Training Pipeline",
+        "description": "training-pipeline - Critical service for TechCorp operations",
+        "tags": [
+          "ml",
+          "techcorp"
+        ],
+        "annotations": {
+          "backstage.io/kubernetes-id": "training-pipeline",
+          "github.com/project-slug": "techcorp/training-pipeline",
+          "backstage.io/techdocs-ref": "dir:.",
+          "pagerduty.com/integration-key": "PD-TRAINING-PIPELINE",
+          "datadog.com/dashboard-url": "https://app.datadoghq.com/dashboard/training-pipeline"
+        }
+      },
+      "spec": {
+        "type": "library",
+        "lifecycle": "production",
+        "owner": "data",
+        "system": "ml-platform",
+        "dependsOn": [
+          "Component:default/auth-service",
+          "Component:default/config-service"
+        ],
+        "providesApis": []
+      },
+      "status": {
+        "health": "unhealthy",
+        "metrics": {
+          "responseTime": 78,
+          "errorRate": 8.446127536899713,
+          "throughput": 7182,
+          "availability": 95
+        },
+        "lastDeployment": "2025-07-22T14:04:35.470Z",
+        "deploymentFrequency": 20,
+        "incidents": 1
+      }
+    },
+    {
+      "apiVersion": "backstage.io/v1alpha1",
+      "kind": "Component",
+      "metadata": {
+        "name": "inference-engine",
+        "title": "Inference Engine",
+        "description": "inference-engine - Critical service for TechCorp operations",
+        "tags": [
+          "techcorp"
+        ],
+        "annotations": {
+          "backstage.io/kubernetes-id": "inference-engine",
+          "github.com/project-slug": "techcorp/inference-engine",
+          "backstage.io/techdocs-ref": "dir:.",
+          "pagerduty.com/integration-key": "PD-INFERENCE-ENGINE",
+          "datadog.com/dashboard-url": "https://app.datadoghq.com/dashboard/inference-engine"
+        }
+      },
+      "spec": {
+        "type": "database",
+        "lifecycle": "staging",
+        "owner": "security",
+        "system": "core",
+        "dependsOn": [
+          "Component:default/auth-service",
+          "Component:default/config-service"
+        ],
+        "providesApis": []
+      },
+      "status": {
+        "health": "healthy",
+        "metrics": {
+          "responseTime": 416,
+          "errorRate": 1.4313071996170397,
+          "throughput": 4192,
+          "availability": 99.9
+        },
+        "lastDeployment": "2025-07-16T14:04:35.470Z",
+        "deploymentFrequency": 13,
+        "incidents": 0
+      }
+    },
+    {
+      "apiVersion": "backstage.io/v1alpha1",
+      "kind": "Component",
+      "metadata": {
+        "name": "feature-extraction",
+        "title": "Feature Extraction",
+        "description": "feature-extraction - Critical service for TechCorp operations",
+        "tags": [
+          "techcorp"
+        ],
+        "annotations": {
+          "backstage.io/kubernetes-id": "feature-extraction",
+          "github.com/project-slug": "techcorp/feature-extraction",
+          "backstage.io/techdocs-ref": "dir:.",
+          "pagerduty.com/integration-key": "PD-FEATURE-EXTRACTION",
+          "datadog.com/dashboard-url": "https://app.datadoghq.com/dashboard/feature-extraction"
+        }
+      },
+      "spec": {
+        "type": "tool",
+        "lifecycle": "experimental",
+        "owner": "devops",
+        "system": "core",
+        "dependsOn": [
+          "Component:default/auth-service",
+          "Component:default/config-service"
+        ],
+        "providesApis": []
+      },
+      "status": {
+        "health": "unhealthy",
+        "metrics": {
+          "responseTime": 272,
+          "errorRate": 2.7591989771079817,
+          "throughput": 5185,
+          "availability": 95
+        },
+        "lastDeployment": "2025-08-07T14:04:35.470Z",
+        "deploymentFrequency": 15,
+        "incidents": 4
+      }
+    },
+    {
+      "apiVersion": "backstage.io/v1alpha1",
+      "kind": "Component",
+      "metadata": {
+        "name": "nlp-processor",
+        "title": "Nlp Processor",
+        "description": "nlp-processor - Critical service for TechCorp operations",
+        "tags": [
+          "techcorp"
+        ],
+        "annotations": {
+          "backstage.io/kubernetes-id": "nlp-processor",
+          "github.com/project-slug": "techcorp/nlp-processor",
+          "backstage.io/techdocs-ref": "dir:.",
+          "pagerduty.com/integration-key": "PD-NLP-PROCESSOR",
+          "datadog.com/dashboard-url": "https://app.datadoghq.com/dashboard/nlp-processor"
+        }
+      },
+      "spec": {
+        "type": "service",
+        "lifecycle": "deprecated",
+        "owner": "ml",
+        "system": "core",
+        "dependsOn": [
+          "Component:default/config-service"
+        ],
+        "providesApis": []
+      },
+      "status": {
+        "health": "healthy",
+        "metrics": {
+          "responseTime": 457,
+          "errorRate": 0.19440990191567442,
+          "throughput": 5618,
+          "availability": 99.9
+        },
+        "lastDeployment": "2025-08-05T14:04:35.470Z",
+        "deploymentFrequency": 6,
+        "incidents": 0
+      }
+    },
+    {
+      "apiVersion": "backstage.io/v1alpha1",
+      "kind": "Component",
+      "metadata": {
+        "name": "computer-vision-api",
+        "title": "Computer Vision Api",
+        "description": "computer-vision-api - Critical service for TechCorp operations",
+        "tags": [
+          "api",
+          "techcorp"
+        ],
+        "annotations": {
+          "backstage.io/kubernetes-id": "computer-vision-api",
+          "github.com/project-slug": "techcorp/computer-vision-api",
+          "backstage.io/techdocs-ref": "dir:.",
+          "pagerduty.com/integration-key": "PD-COMPUTER-VISION-API",
+          "datadog.com/dashboard-url": "https://app.datadoghq.com/dashboard/computer-vision-api"
+        }
+      },
+      "spec": {
+        "type": "api",
+        "lifecycle": "production",
+        "owner": "platform",
+        "system": "core",
+        "dependsOn": [
+          "Component:default/auth-service",
+          "Component:default/config-service"
+        ],
+        "providesApis": [
+          "computer-vision-api-api"
+        ]
+      },
+      "status": {
+        "health": "healthy",
+        "metrics": {
+          "responseTime": 522,
+          "errorRate": 0.09050611706495859,
+          "throughput": 10414,
+          "availability": 99.9
+        },
+        "lastDeployment": "2025-08-04T14:04:35.470Z",
+        "deploymentFrequency": 17,
+        "incidents": 0
+      }
+    },
+    {
+      "apiVersion": "backstage.io/v1alpha1",
+      "kind": "Component",
+      "metadata": {
+        "name": "anomaly-detector",
+        "title": "Anomaly Detector",
+        "description": "anomaly-detector - Critical service for TechCorp operations",
+        "tags": [
+          "techcorp"
+        ],
+        "annotations": {
+          "backstage.io/kubernetes-id": "anomaly-detector",
+          "github.com/project-slug": "techcorp/anomaly-detector",
+          "backstage.io/techdocs-ref": "dir:.",
+          "pagerduty.com/integration-key": "PD-ANOMALY-DETECTOR",
+          "datadog.com/dashboard-url": "https://app.datadoghq.com/dashboard/anomaly-detector"
+        }
+      },
+      "spec": {
+        "type": "website",
+        "lifecycle": "staging",
+        "owner": "frontend",
+        "system": "core",
+        "dependsOn": [],
+        "providesApis": []
+      },
+      "status": {
+        "health": "healthy",
+        "metrics": {
+          "responseTime": 422,
+          "errorRate": 0.01738140879178207,
+          "throughput": 4484,
+          "availability": 99.9
+        },
+        "lastDeployment": "2025-07-11T14:04:35.470Z",
+        "deploymentFrequency": 11,
+        "incidents": 0
+      }
+    },
+    {
+      "apiVersion": "backstage.io/v1alpha1",
+      "kind": "Component",
+      "metadata": {
+        "name": "prediction-service",
+        "title": "Prediction Service",
+        "description": "prediction-service - Critical service for TechCorp operations",
+        "tags": [
+          "backend",
+          "techcorp"
+        ],
+        "annotations": {
+          "backstage.io/kubernetes-id": "prediction-service",
+          "github.com/project-slug": "techcorp/prediction-service",
+          "backstage.io/techdocs-ref": "dir:.",
+          "pagerduty.com/integration-key": "PD-PREDICTION-SERVICE",
+          "datadog.com/dashboard-url": "https://app.datadoghq.com/dashboard/prediction-service"
+        }
+      },
+      "spec": {
+        "type": "library",
+        "lifecycle": "experimental",
+        "owner": "backend",
+        "system": "core",
+        "dependsOn": [
+          "Component:default/auth-service"
+        ],
+        "providesApis": []
+      },
+      "status": {
+        "health": "unhealthy",
+        "metrics": {
+          "responseTime": 390,
+          "errorRate": 5.713278273022304,
+          "throughput": 9295,
+          "availability": 95
+        },
+        "lastDeployment": "2025-07-16T14:04:35.470Z",
+        "deploymentFrequency": 20,
+        "incidents": 1
+      }
+    }
+  ],
+  "plugins": [
+    {
+      "name": "datadog",
+      "title": "Datadog",
+      "category": "monitoring",
+      "vendor": "Datadog",
+      "id": "datadog",
+      "version": "2.6.0",
+      "state": "installed",
+      "installedAt": "2025-07-21T14:04:35.470Z",
+      "configuredBy": "platform-team",
+      "health": "healthy",
+      "usage": {
+        "activeUsers": 338,
+        "apiCalls": 31814,
+        "lastUsed": "2025-07-21T14:04:35.471Z"
+      },
+      "cost": {
+        "monthly": 4755,
+        "annual": 26383,
+        "users": 33
+      },
+      "features": [
+        "Real-time metrics",
+        "Custom dashboards",
+        "Alert management",
+        "Log aggregation"
+      ],
+      "integrations": [
+        "Metrics",
+        "Logs",
+        "APM",
+        "Synthetics"
+      ],
+      "benefits": "Reduce MTTR by 60% with real-time observability"
+    },
+    {
+      "name": "prometheus",
+      "title": "Prometheus",
+      "category": "monitoring",
+      "vendor": "CNCF",
+      "id": "prometheus",
+      "version": "latest",
+      "state": "available",
+      "installedAt": null,
+      "configuredBy": null,
+      "health": null,
+      "usage": null,
+      "cost": {
+        "monthly": 4633,
+        "annual": 47559,
+        "users": 102
+      },
+      "features": [
+        "Real-time metrics",
+        "Custom dashboards",
+        "Alert management",
+        "Log aggregation"
+      ],
+      "integrations": [],
+      "benefits": "Reduce MTTR by 60% with real-time observability"
+    },
+    {
+      "name": "grafana",
+      "title": "Grafana",
+      "category": "monitoring",
+      "vendor": "Grafana Labs",
+      "id": "grafana",
+      "version": "1.6.5",
+      "state": "installed",
+      "installedAt": "2025-07-24T14:04:35.471Z",
+      "configuredBy": "platform-team",
+      "health": "healthy",
+      "usage": {
+        "activeUsers": 64,
+        "apiCalls": 101255,
+        "lastUsed": "2025-07-15T14:04:35.471Z"
+      },
+      "cost": {
+        "monthly": 2719,
+        "annual": 25390,
+        "users": 80
+      },
+      "features": [
+        "Real-time metrics",
+        "Custom dashboards",
+        "Alert management",
+        "Log aggregation"
+      ],
+      "integrations": [],
+      "benefits": "Reduce MTTR by 60% with real-time observability"
+    },
+    {
+      "name": "new-relic",
+      "title": "New Relic",
+      "category": "monitoring",
+      "vendor": "New Relic",
+      "id": "new-relic",
+      "version": "latest",
+      "state": "available",
+      "installedAt": null,
+      "configuredBy": null,
+      "health": null,
+      "usage": null,
+      "cost": {
+        "monthly": 1466,
+        "annual": 17593,
+        "users": 63
+      },
+      "features": [
+        "Real-time metrics",
+        "Custom dashboards",
+        "Alert management",
+        "Log aggregation"
+      ],
+      "integrations": [],
+      "benefits": "Reduce MTTR by 60% with real-time observability"
+    },
+    {
+      "name": "elastic-apm",
+      "title": "Elastic APM",
+      "category": "monitoring",
+      "vendor": "Elastic",
+      "id": "elastic-apm",
+      "version": "2.6.2",
+      "state": "updating",
+      "installedAt": "2025-08-08T14:04:35.471Z",
+      "configuredBy": "platform-team",
+      "health": "healthy",
+      "usage": {
+        "activeUsers": 349,
+        "apiCalls": 81047,
+        "lastUsed": "2025-07-26T14:04:35.471Z"
+      },
+      "cost": {
+        "monthly": 3859,
+        "annual": 16353,
+        "users": 59
+      },
+      "features": [
+        "Real-time metrics",
+        "Custom dashboards",
+        "Alert management",
+        "Log aggregation"
+      ],
+      "integrations": [],
+      "benefits": "Reduce MTTR by 60% with real-time observability"
+    },
+    {
+      "name": "github-actions",
+      "title": "GitHub Actions",
+      "category": "ci-cd",
+      "vendor": "GitHub",
+      "id": "github-actions",
+      "version": "1.17.0",
+      "state": "installed",
+      "installedAt": "2025-08-01T14:04:35.471Z",
+      "configuredBy": "platform-team",
+      "health": "warning",
+      "usage": {
+        "activeUsers": 207,
+        "apiCalls": 65503,
+        "lastUsed": "2025-07-29T14:04:35.471Z"
+      },
+      "cost": {
+        "monthly": 784,
+        "annual": 13298,
+        "users": 24
+      },
+      "features": [
+        "Pipeline automation",
+        "Deployment tracking",
+        "Rollback support",
+        "Environment management"
+      ],
+      "integrations": [],
+      "benefits": "Deploy 10x faster with automated pipelines"
+    },
+    {
+      "name": "jenkins",
+      "title": "Jenkins",
+      "category": "ci-cd",
+      "vendor": "Jenkins",
+      "id": "jenkins",
+      "version": "latest",
+      "state": "available",
+      "installedAt": null,
+      "configuredBy": null,
+      "health": null,
+      "usage": null,
+      "cost": {
+        "monthly": 4501,
+        "annual": 31972,
+        "users": 29
+      },
+      "features": [
+        "Pipeline automation",
+        "Deployment tracking",
+        "Rollback support",
+        "Environment management"
+      ],
+      "integrations": [],
+      "benefits": "Deploy 10x faster with automated pipelines"
+    },
+    {
+      "name": "circleci",
+      "title": "CircleCI",
+      "category": "ci-cd",
+      "vendor": "CircleCI",
+      "id": "circleci",
+      "version": "2.13.2",
+      "state": "installed",
+      "installedAt": "2025-07-27T14:04:35.471Z",
+      "configuredBy": "platform-team",
+      "health": "healthy",
+      "usage": {
+        "activeUsers": 61,
+        "apiCalls": 92496,
+        "lastUsed": "2025-08-02T14:04:35.471Z"
+      },
+      "cost": {
+        "monthly": 2668,
+        "annual": 54686,
+        "users": 106
+      },
+      "features": [
+        "Pipeline automation",
+        "Deployment tracking",
+        "Rollback support",
+        "Environment management"
+      ],
+      "integrations": [],
+      "benefits": "Deploy 10x faster with automated pipelines"
+    },
+    {
+      "name": "gitlab-ci",
+      "title": "GitLab CI",
+      "category": "ci-cd",
+      "vendor": "GitLab",
+      "id": "gitlab-ci",
+      "version": "latest",
+      "state": "available",
+      "installedAt": null,
+      "configuredBy": null,
+      "health": null,
+      "usage": null,
+      "cost": {
+        "monthly": 5198,
+        "annual": 12638,
+        "users": 98
+      },
+      "features": [
+        "Pipeline automation",
+        "Deployment tracking",
+        "Rollback support",
+        "Environment management"
+      ],
+      "integrations": [],
+      "benefits": "Deploy 10x faster with automated pipelines"
+    },
+    {
+      "name": "argocd",
+      "title": "ArgoCD",
+      "category": "ci-cd",
+      "vendor": "CNCF",
+      "id": "argocd",
+      "version": "3.17.1",
+      "state": "updating",
+      "installedAt": "2025-07-17T14:04:35.471Z",
+      "configuredBy": "platform-team",
+      "health": "healthy",
+      "usage": {
+        "activeUsers": 415,
+        "apiCalls": 103510,
+        "lastUsed": "2025-07-27T14:04:35.471Z"
+      },
+      "cost": {
+        "monthly": 2103,
+        "annual": 20777,
+        "users": 69
+      },
+      "features": [
+        "Pipeline automation",
+        "Deployment tracking",
+        "Rollback support",
+        "Environment management"
+      ],
+      "integrations": [],
+      "benefits": "Deploy 10x faster with automated pipelines"
+    },
+    {
+      "name": "snyk",
+      "title": "Snyk Security",
+      "category": "security",
+      "vendor": "Snyk",
+      "id": "snyk",
+      "version": "2.12.2",
+      "state": "installed",
+      "installedAt": "2025-08-01T14:04:35.471Z",
+      "configuredBy": "platform-team",
+      "health": "healthy",
+      "usage": {
+        "activeUsers": 501,
+        "apiCalls": 104293,
+        "lastUsed": "2025-07-23T14:04:35.471Z"
+      },
+      "cost": {
+        "monthly": 2796,
+        "annual": 15202,
+        "users": 102
+      },
+      "features": [
+        "Vulnerability scanning",
+        "Secret management",
+        "Compliance reporting",
+        "Access control"
+      ],
+      "integrations": [],
+      "benefits": "Achieve 100% compliance with automated scanning"
+    },
+    {
+      "name": "sonarqube",
+      "title": "SonarQube",
+      "category": "security",
+      "vendor": "SonarSource",
+      "id": "sonarqube",
+      "version": "latest",
+      "state": "available",
+      "installedAt": null,
+      "configuredBy": null,
+      "health": null,
+      "usage": null,
+      "cost": {
+        "monthly": 2862,
+        "annual": 53666,
+        "users": 88
+      },
+      "features": [
+        "Vulnerability scanning",
+        "Secret management",
+        "Compliance reporting",
+        "Access control"
+      ],
+      "integrations": [],
+      "benefits": "Achieve 100% compliance with automated scanning"
+    },
+    {
+      "name": "vault",
+      "title": "HashiCorp Vault",
+      "category": "security",
+      "vendor": "HashiCorp",
+      "id": "vault",
+      "version": "3.10.0",
+      "state": "installed",
+      "installedAt": "2025-08-08T14:04:35.471Z",
+      "configuredBy": "platform-team",
+      "health": "healthy",
+      "usage": {
+        "activeUsers": 193,
+        "apiCalls": 66594,
+        "lastUsed": "2025-08-05T14:04:35.471Z"
+      },
+      "cost": {
+        "monthly": 3491,
+        "annual": 33189,
+        "users": 48
+      },
+      "features": [
+        "Vulnerability scanning",
+        "Secret management",
+        "Compliance reporting",
+        "Access control"
+      ],
+      "integrations": [],
+      "benefits": "Achieve 100% compliance with automated scanning"
+    },
+    {
+      "name": "aqua-security",
+      "title": "Aqua Security",
+      "category": "security",
+      "vendor": "Aqua",
+      "id": "aqua-security",
+      "version": "latest",
+      "state": "available",
+      "installedAt": null,
+      "configuredBy": null,
+      "health": null,
+      "usage": null,
+      "cost": {
+        "monthly": 4475,
+        "annual": 20115,
+        "users": 66
+      },
+      "features": [
+        "Vulnerability scanning",
+        "Secret management",
+        "Compliance reporting",
+        "Access control"
+      ],
+      "integrations": [],
+      "benefits": "Achieve 100% compliance with automated scanning"
+    },
+    {
+      "name": "twistlock",
+      "title": "Twistlock",
+      "category": "security",
+      "vendor": "Palo Alto",
+      "id": "twistlock",
+      "version": "1.14.5",
+      "state": "updating",
+      "installedAt": "2025-08-04T14:04:35.471Z",
+      "configuredBy": "platform-team",
+      "health": "warning",
+      "usage": {
+        "activeUsers": 80,
+        "apiCalls": 103642,
+        "lastUsed": "2025-07-24T14:04:35.471Z"
+      },
+      "cost": {
+        "monthly": 2534,
+        "annual": 34346,
+        "users": 79
+      },
+      "features": [
+        "Vulnerability scanning",
+        "Secret management",
+        "Compliance reporting",
+        "Access control"
+      ],
+      "integrations": [],
+      "benefits": "Achieve 100% compliance with automated scanning"
+    },
+    {
+      "name": "aws",
+      "title": "AWS Integration",
+      "category": "cloud",
+      "vendor": "Amazon",
+      "id": "aws",
+      "version": "2.7.6",
+      "state": "installed",
+      "installedAt": "2025-07-26T14:04:35.471Z",
+      "configuredBy": "platform-team",
+      "health": "warning",
+      "usage": {
+        "activeUsers": 529,
+        "apiCalls": 106614,
+        "lastUsed": "2025-07-31T14:04:35.471Z"
+      },
+      "cost": {
+        "monthly": 3332,
+        "annual": 33821,
+        "users": 44
+      },
+      "features": [
+        "Resource management",
+        "Cost tracking",
+        "Auto-scaling",
+        "Multi-region support"
+      ],
+      "integrations": [],
+      "benefits": "Reduce cloud costs by 30% with optimization"
+    },
+    {
+      "name": "gcp",
+      "title": "Google Cloud",
+      "category": "cloud",
+      "vendor": "Google",
+      "id": "gcp",
+      "version": "latest",
+      "state": "available",
+      "installedAt": null,
+      "configuredBy": null,
+      "health": null,
+      "usage": null,
+      "cost": {
+        "monthly": 2532,
+        "annual": 42971,
+        "users": 59
+      },
+      "features": [
+        "Resource management",
+        "Cost tracking",
+        "Auto-scaling",
+        "Multi-region support"
+      ],
+      "integrations": [],
+      "benefits": "Reduce cloud costs by 30% with optimization"
+    },
+    {
+      "name": "azure",
+      "title": "Microsoft Azure",
+      "category": "cloud",
+      "vendor": "Microsoft",
+      "id": "azure",
+      "version": "3.2.2",
+      "state": "installed",
+      "installedAt": "2025-07-10T14:04:35.471Z",
+      "configuredBy": "platform-team",
+      "health": "healthy",
+      "usage": {
+        "activeUsers": 456,
+        "apiCalls": 79152,
+        "lastUsed": "2025-07-17T14:04:35.471Z"
+      },
+      "cost": {
+        "monthly": 4747,
+        "annual": 9038,
+        "users": 67
+      },
+      "features": [
+        "Resource management",
+        "Cost tracking",
+        "Auto-scaling",
+        "Multi-region support"
+      ],
+      "integrations": [],
+      "benefits": "Reduce cloud costs by 30% with optimization"
+    },
+    {
+      "name": "kubernetes",
+      "title": "Kubernetes",
+      "category": "cloud",
+      "vendor": "CNCF",
+      "id": "kubernetes",
+      "version": "latest",
+      "state": "available",
+      "installedAt": null,
+      "configuredBy": null,
+      "health": null,
+      "usage": null,
+      "cost": {
+        "monthly": 4165,
+        "annual": 50882,
+        "users": 66
+      },
+      "features": [
+        "Resource management",
+        "Cost tracking",
+        "Auto-scaling",
+        "Multi-region support"
+      ],
+      "integrations": [
+        "Deployments",
+        "Services",
+        "Pods",
+        "ConfigMaps"
+      ],
+      "benefits": "Reduce cloud costs by 30% with optimization"
+    },
+    {
+      "name": "terraform",
+      "title": "Terraform",
+      "category": "cloud",
+      "vendor": "HashiCorp",
+      "id": "terraform",
+      "version": "3.1.3",
+      "state": "updating",
+      "installedAt": "2025-08-05T14:04:35.471Z",
+      "configuredBy": "platform-team",
+      "health": "healthy",
+      "usage": {
+        "activeUsers": 358,
+        "apiCalls": 14376,
+        "lastUsed": "2025-07-18T14:04:35.471Z"
+      },
+      "cost": {
+        "monthly": 599,
+        "annual": 21817,
+        "users": 86
+      },
+      "features": [
+        "Resource management",
+        "Cost tracking",
+        "Auto-scaling",
+        "Multi-region support"
+      ],
+      "integrations": [],
+      "benefits": "Reduce cloud costs by 30% with optimization"
+    },
+    {
+      "name": "slack",
+      "title": "Slack",
+      "category": "communication",
+      "vendor": "Slack",
+      "id": "slack",
+      "version": "1.4.6",
+      "state": "installed",
+      "installedAt": "2025-07-23T14:04:35.471Z",
+      "configuredBy": "platform-team",
+      "health": "healthy",
+      "usage": {
+        "activeUsers": 396,
+        "apiCalls": 16714,
+        "lastUsed": "2025-07-27T14:04:35.471Z"
+      },
+      "cost": {
+        "monthly": 1506,
+        "annual": 14759,
+        "users": 30
+      },
+      "features": [
+        "Real-time notifications",
+        "Incident management",
+        "Team collaboration",
+        "Status updates"
+      ],
+      "integrations": [
+        "Notifications",
+        "Commands",
+        "Workflows",
+        "Apps"
+      ],
+      "benefits": "Improve incident response by 50%"
+    },
+    {
+      "name": "teams",
+      "title": "Microsoft Teams",
+      "category": "communication",
+      "vendor": "Microsoft",
+      "id": "teams",
+      "version": "latest",
+      "state": "available",
+      "installedAt": null,
+      "configuredBy": null,
+      "health": null,
+      "usage": null,
+      "cost": {
+        "monthly": 1179,
+        "annual": 6844,
+        "users": 48
+      },
+      "features": [
+        "Real-time notifications",
+        "Incident management",
+        "Team collaboration",
+        "Status updates"
+      ],
+      "integrations": [],
+      "benefits": "Improve incident response by 50%"
+    },
+    {
+      "name": "pagerduty",
+      "title": "PagerDuty",
+      "category": "communication",
+      "vendor": "PagerDuty",
+      "id": "pagerduty",
+      "version": "1.18.0",
+      "state": "installed",
+      "installedAt": "2025-07-17T14:04:35.471Z",
+      "configuredBy": "platform-team",
+      "health": "healthy",
+      "usage": {
+        "activeUsers": 327,
+        "apiCalls": 64958,
+        "lastUsed": "2025-07-23T14:04:35.471Z"
+      },
+      "cost": {
+        "monthly": 1892,
+        "annual": 48493,
+        "users": 77
+      },
+      "features": [
+        "Real-time notifications",
+        "Incident management",
+        "Team collaboration",
+        "Status updates"
+      ],
+      "integrations": [],
+      "benefits": "Improve incident response by 50%"
+    },
+    {
+      "name": "opsgenie",
+      "title": "Opsgenie",
+      "category": "communication",
+      "vendor": "Atlassian",
+      "id": "opsgenie",
+      "version": "latest",
+      "state": "available",
+      "installedAt": null,
+      "configuredBy": null,
+      "health": null,
+      "usage": null,
+      "cost": {
+        "monthly": 4157,
+        "annual": 9888,
+        "users": 40
+      },
+      "features": [
+        "Real-time notifications",
+        "Incident management",
+        "Team collaboration",
+        "Status updates"
+      ],
+      "integrations": [],
+      "benefits": "Improve incident response by 50%"
+    },
+    {
+      "name": "discord",
+      "title": "Discord",
+      "category": "communication",
+      "vendor": "Discord",
+      "id": "discord",
+      "version": "3.10.1",
+      "state": "updating",
+      "installedAt": "2025-08-03T14:04:35.471Z",
+      "configuredBy": "platform-team",
+      "health": "healthy",
+      "usage": {
+        "activeUsers": 153,
+        "apiCalls": 19233,
+        "lastUsed": "2025-08-02T14:04:35.471Z"
+      },
+      "cost": {
+        "monthly": 2451,
+        "annual": 16846,
+        "users": 23
+      },
+      "features": [
+        "Real-time notifications",
+        "Incident management",
+        "Team collaboration",
+        "Status updates"
+      ],
+      "integrations": [],
+      "benefits": "Improve incident response by 50%"
+    },
+    {
+      "name": "snowflake",
+      "title": "Snowflake",
+      "category": "data",
+      "vendor": "Snowflake",
+      "id": "snowflake",
+      "version": "2.14.4",
+      "state": "installed",
+      "installedAt": "2025-07-22T14:04:35.471Z",
+      "configuredBy": "platform-team",
+      "health": "warning",
+      "usage": {
+        "activeUsers": 153,
+        "apiCalls": 31951,
+        "lastUsed": "2025-07-16T14:04:35.471Z"
+      },
+      "cost": {
+        "monthly": 2206,
+        "annual": 28825,
+        "users": 39
+      },
+      "features": [
+        "Data pipeline management",
+        "ETL orchestration",
+        "Data quality monitoring",
+        "Schema management"
+      ],
+      "integrations": [],
+      "benefits": "Process 100TB+ daily with managed pipelines"
+    },
+    {
+      "name": "databricks",
+      "title": "Databricks",
+      "category": "data",
+      "vendor": "Databricks",
+      "id": "databricks",
+      "version": "latest",
+      "state": "available",
+      "installedAt": null,
+      "configuredBy": null,
+      "health": null,
+      "usage": null,
+      "cost": {
+        "monthly": 872,
+        "annual": 52986,
+        "users": 63
+      },
+      "features": [
+        "Data pipeline management",
+        "ETL orchestration",
+        "Data quality monitoring",
+        "Schema management"
+      ],
+      "integrations": [],
+      "benefits": "Process 100TB+ daily with managed pipelines"
+    },
+    {
+      "name": "bigquery",
+      "title": "BigQuery",
+      "category": "data",
+      "vendor": "Google",
+      "id": "bigquery",
+      "version": "1.16.7",
+      "state": "installed",
+      "installedAt": "2025-07-25T14:04:35.471Z",
+      "configuredBy": "platform-team",
+      "health": "healthy",
+      "usage": {
+        "activeUsers": 260,
+        "apiCalls": 17944,
+        "lastUsed": "2025-08-03T14:04:35.471Z"
+      },
+      "cost": {
+        "monthly": 4908,
+        "annual": 6384,
+        "users": 105
+      },
+      "features": [
+        "Data pipeline management",
+        "ETL orchestration",
+        "Data quality monitoring",
+        "Schema management"
+      ],
+      "integrations": [],
+      "benefits": "Process 100TB+ daily with managed pipelines"
+    },
+    {
+      "name": "redshift",
+      "title": "Amazon Redshift",
+      "category": "data",
+      "vendor": "Amazon",
+      "id": "redshift",
+      "version": "latest",
+      "state": "available",
+      "installedAt": null,
+      "configuredBy": null,
+      "health": null,
+      "usage": null,
+      "cost": {
+        "monthly": 4869,
+        "annual": 20014,
+        "users": 27
+      },
+      "features": [
+        "Data pipeline management",
+        "ETL orchestration",
+        "Data quality monitoring",
+        "Schema management"
+      ],
+      "integrations": [],
+      "benefits": "Process 100TB+ daily with managed pipelines"
+    },
+    {
+      "name": "kafka",
+      "title": "Apache Kafka",
+      "category": "data",
+      "vendor": "Apache",
+      "id": "kafka",
+      "version": "1.18.2",
+      "state": "updating",
+      "installedAt": "2025-07-26T14:04:35.471Z",
+      "configuredBy": "platform-team",
+      "health": "healthy",
+      "usage": {
+        "activeUsers": 403,
+        "apiCalls": 93374,
+        "lastUsed": "2025-08-04T14:04:35.471Z"
+      },
+      "cost": {
+        "monthly": 4649,
+        "annual": 15629,
+        "users": 29
+      },
+      "features": [
+        "Data pipeline management",
+        "ETL orchestration",
+        "Data quality monitoring",
+        "Schema management"
+      ],
+      "integrations": [],
+      "benefits": "Process 100TB+ daily with managed pipelines"
+    },
+    {
+      "name": "jira",
+      "title": "Jira",
+      "category": "development",
+      "vendor": "Atlassian",
+      "id": "jira",
+      "version": "2.9.1",
+      "state": "installed",
+      "installedAt": "2025-07-25T14:04:35.471Z",
+      "configuredBy": "platform-team",
+      "health": "warning",
+      "usage": {
+        "activeUsers": 370,
+        "apiCalls": 29844,
+        "lastUsed": "2025-07-16T14:04:35.471Z"
+      },
+      "cost": {
+        "monthly": 2837,
+        "annual": 41322,
+        "users": 66
+      },
+      "features": [
+        "Core functionality",
+        "API access",
+        "Documentation",
+        "Support"
+      ],
+      "integrations": [],
+      "benefits": "Improve developer productivity"
+    },
+    {
+      "name": "confluence",
+      "title": "Confluence",
+      "category": "development",
+      "vendor": "Atlassian",
+      "id": "confluence",
+      "version": "latest",
+      "state": "available",
+      "installedAt": null,
+      "configuredBy": null,
+      "health": null,
+      "usage": null,
+      "cost": {
+        "monthly": 1507,
+        "annual": 13678,
+        "users": 67
+      },
+      "features": [
+        "Core functionality",
+        "API access",
+        "Documentation",
+        "Support"
+      ],
+      "integrations": [],
+      "benefits": "Improve developer productivity"
+    },
+    {
+      "name": "github",
+      "title": "GitHub",
+      "category": "development",
+      "vendor": "GitHub",
+      "id": "github",
+      "version": "1.15.9",
+      "state": "installed",
+      "installedAt": "2025-08-01T14:04:35.471Z",
+      "configuredBy": "platform-team",
+      "health": "warning",
+      "usage": {
+        "activeUsers": 382,
+        "apiCalls": 70454,
+        "lastUsed": "2025-07-28T14:04:35.471Z"
+      },
+      "cost": {
+        "monthly": 1529,
+        "annual": 48519,
+        "users": 11
+      },
+      "features": [
+        "Core functionality",
+        "API access",
+        "Documentation",
+        "Support"
+      ],
+      "integrations": [
+        "Pull requests",
+        "Issues",
+        "Actions",
+        "Releases"
+      ],
+      "benefits": "Improve developer productivity"
+    },
+    {
+      "name": "gitlab",
+      "title": "GitLab",
+      "category": "development",
+      "vendor": "GitLab",
+      "id": "gitlab",
+      "version": "latest",
+      "state": "available",
+      "installedAt": null,
+      "configuredBy": null,
+      "health": null,
+      "usage": null,
+      "cost": {
+        "monthly": 4559,
+        "annual": 40261,
+        "users": 75
+      },
+      "features": [
+        "Core functionality",
+        "API access",
+        "Documentation",
+        "Support"
+      ],
+      "integrations": [],
+      "benefits": "Improve developer productivity"
+    },
+    {
+      "name": "bitbucket",
+      "title": "Bitbucket",
+      "category": "development",
+      "vendor": "Atlassian",
+      "id": "bitbucket",
+      "version": "2.8.9",
+      "state": "updating",
+      "installedAt": "2025-08-04T14:04:35.471Z",
+      "configuredBy": "platform-team",
+      "health": "healthy",
+      "usage": {
+        "activeUsers": 528,
+        "apiCalls": 71093,
+        "lastUsed": "2025-07-20T14:04:35.471Z"
+      },
+      "cost": {
+        "monthly": 3428,
+        "annual": 49044,
+        "users": 93
+      },
+      "features": [
+        "Core functionality",
+        "API access",
+        "Documentation",
+        "Support"
+      ],
+      "integrations": [],
+      "benefits": "Improve developer productivity"
+    },
+    {
+      "name": "cloudability",
+      "title": "Cloudability",
+      "category": "finops",
+      "vendor": "Apptio",
+      "id": "cloudability",
+      "version": "2.9.5",
+      "state": "installed",
+      "installedAt": "2025-07-24T14:04:35.471Z",
+      "configuredBy": "platform-team",
+      "health": "warning",
+      "usage": {
+        "activeUsers": 502,
+        "apiCalls": 16465,
+        "lastUsed": "2025-07-28T14:04:35.471Z"
+      },
+      "cost": {
+        "monthly": 781,
+        "annual": 52331,
+        "users": 38
+      },
+      "features": [
+        "Core functionality",
+        "API access",
+        "Documentation",
+        "Support"
+      ],
+      "integrations": [],
+      "benefits": "Improve developer productivity"
+    },
+    {
+      "name": "cloudzero",
+      "title": "CloudZero",
+      "category": "finops",
+      "vendor": "CloudZero",
+      "id": "cloudzero",
+      "version": "latest",
+      "state": "available",
+      "installedAt": null,
+      "configuredBy": null,
+      "health": null,
+      "usage": null,
+      "cost": {
+        "monthly": 1761,
+        "annual": 50822,
+        "users": 85
+      },
+      "features": [
+        "Core functionality",
+        "API access",
+        "Documentation",
+        "Support"
+      ],
+      "integrations": [],
+      "benefits": "Improve developer productivity"
+    },
+    {
+      "name": "kubecost",
+      "title": "Kubecost",
+      "category": "finops",
+      "vendor": "Kubecost",
+      "id": "kubecost",
+      "version": "2.4.4",
+      "state": "installed",
+      "installedAt": "2025-07-27T14:04:35.471Z",
+      "configuredBy": "platform-team",
+      "health": "warning",
+      "usage": {
+        "activeUsers": 125,
+        "apiCalls": 20377,
+        "lastUsed": "2025-07-27T14:04:35.471Z"
+      },
+      "cost": {
+        "monthly": 4591,
+        "annual": 43029,
+        "users": 53
+      },
+      "features": [
+        "Core functionality",
+        "API access",
+        "Documentation",
+        "Support"
+      ],
+      "integrations": [],
+      "benefits": "Improve developer productivity"
+    },
+    {
+      "name": "launchdarkly",
+      "title": "LaunchDarkly",
+      "category": "features",
+      "vendor": "LaunchDarkly",
+      "id": "launchdarkly",
+      "version": "latest",
+      "state": "available",
+      "installedAt": null,
+      "configuredBy": null,
+      "health": null,
+      "usage": null,
+      "cost": {
+        "monthly": 1014,
+        "annual": 8961,
+        "users": 43
+      },
+      "features": [
+        "Core functionality",
+        "API access",
+        "Documentation",
+        "Support"
+      ],
+      "integrations": [],
+      "benefits": "Improve developer productivity"
+    },
+    {
+      "name": "split",
+      "title": "Split",
+      "category": "features",
+      "vendor": "Split",
+      "id": "split",
+      "version": "2.16.9",
+      "state": "updating",
+      "installedAt": "2025-07-17T14:04:35.471Z",
+      "configuredBy": "platform-team",
+      "health": "warning",
+      "usage": {
+        "activeUsers": 412,
+        "apiCalls": 11961,
+        "lastUsed": "2025-07-16T14:04:35.471Z"
+      },
+      "cost": {
+        "monthly": 3728,
+        "annual": 30528,
+        "users": 74
+      },
+      "features": [
+        "Core functionality",
+        "API access",
+        "Documentation",
+        "Support"
+      ],
+      "integrations": [],
+      "benefits": "Improve developer productivity"
+    },
+    {
+      "name": "optimizely",
+      "title": "Optimizely",
+      "category": "features",
+      "vendor": "Optimizely",
+      "id": "optimizely",
+      "version": "2.4.1",
+      "state": "installed",
+      "installedAt": "2025-07-16T14:04:35.471Z",
+      "configuredBy": "platform-team",
+      "health": "healthy",
+      "usage": {
+        "activeUsers": 545,
+        "apiCalls": 42500,
+        "lastUsed": "2025-07-21T14:04:35.471Z"
+      },
+      "cost": {
+        "monthly": 656,
+        "annual": 13154,
+        "users": 32
+      },
+      "features": [
+        "Core functionality",
+        "API access",
+        "Documentation",
+        "Support"
+      ],
+      "integrations": [],
+      "benefits": "Improve developer productivity"
+    },
+    {
+      "name": "selenium",
+      "title": "Selenium",
+      "category": "testing",
+      "vendor": "Selenium",
+      "id": "selenium",
+      "version": "latest",
+      "state": "available",
+      "installedAt": null,
+      "configuredBy": null,
+      "health": null,
+      "usage": null,
+      "cost": {
+        "monthly": 4903,
+        "annual": 16046,
+        "users": 85
+      },
+      "features": [
+        "Core functionality",
+        "API access",
+        "Documentation",
+        "Support"
+      ],
+      "integrations": [],
+      "benefits": "Improve developer productivity"
+    },
+    {
+      "name": "cypress",
+      "title": "Cypress",
+      "category": "testing",
+      "vendor": "Cypress",
+      "id": "cypress",
+      "version": "1.1.4",
+      "state": "installed",
+      "installedAt": "2025-08-02T14:04:35.471Z",
+      "configuredBy": "platform-team",
+      "health": "healthy",
+      "usage": {
+        "activeUsers": 425,
+        "apiCalls": 25618,
+        "lastUsed": "2025-07-17T14:04:35.471Z"
+      },
+      "cost": {
+        "monthly": 5085,
+        "annual": 39128,
+        "users": 51
+      },
+      "features": [
+        "Core functionality",
+        "API access",
+        "Documentation",
+        "Support"
+      ],
+      "integrations": [],
+      "benefits": "Improve developer productivity"
+    },
+    {
+      "name": "postman",
+      "title": "Postman",
+      "category": "testing",
+      "vendor": "Postman",
+      "id": "postman",
+      "version": "latest",
+      "state": "available",
+      "installedAt": null,
+      "configuredBy": null,
+      "health": null,
+      "usage": null,
+      "cost": {
+        "monthly": 1877,
+        "annual": 22739,
+        "users": 26
+      },
+      "features": [
+        "Core functionality",
+        "API access",
+        "Documentation",
+        "Support"
+      ],
+      "integrations": [],
+      "benefits": "Improve developer productivity"
+    },
+    {
+      "name": "vanta",
+      "title": "Vanta",
+      "category": "compliance",
+      "vendor": "Vanta",
+      "id": "vanta",
+      "version": "1.10.6",
+      "state": "updating",
+      "installedAt": "2025-07-27T14:04:35.471Z",
+      "configuredBy": "platform-team",
+      "health": "healthy",
+      "usage": {
+        "activeUsers": 152,
+        "apiCalls": 21477,
+        "lastUsed": "2025-07-23T14:04:35.471Z"
+      },
+      "cost": {
+        "monthly": 1678,
+        "annual": 29314,
+        "users": 73
+      },
+      "features": [
+        "Core functionality",
+        "API access",
+        "Documentation",
+        "Support"
+      ],
+      "integrations": [],
+      "benefits": "Improve developer productivity"
+    },
+    {
+      "name": "drata",
+      "title": "Drata",
+      "category": "compliance",
+      "vendor": "Drata",
+      "id": "drata",
+      "version": "1.12.5",
+      "state": "installed",
+      "installedAt": "2025-07-26T14:04:35.471Z",
+      "configuredBy": "platform-team",
+      "health": "warning",
+      "usage": {
+        "activeUsers": 415,
+        "apiCalls": 60869,
+        "lastUsed": "2025-08-02T14:04:35.471Z"
+      },
+      "cost": {
+        "monthly": 1694,
+        "annual": 7345,
+        "users": 53
+      },
+      "features": [
+        "Core functionality",
+        "API access",
+        "Documentation",
+        "Support"
+      ],
+      "integrations": [],
+      "benefits": "Improve developer productivity"
+    },
+    {
+      "name": "secureframe",
+      "title": "Secureframe",
+      "category": "compliance",
+      "vendor": "Secureframe",
+      "id": "secureframe",
+      "version": "latest",
+      "state": "available",
+      "installedAt": null,
+      "configuredBy": null,
+      "health": null,
+      "usage": null,
+      "cost": {
+        "monthly": 1071,
+        "annual": 18811,
+        "users": 72
+      },
+      "features": [
+        "Core functionality",
+        "API access",
+        "Documentation",
+        "Support"
+      ],
+      "integrations": [],
+      "benefits": "Improve developer productivity"
+    }
+  ],
+  "metrics": {
+    "dora": {
+      "deploymentFrequency": {
+        "value": 12.5,
+        "trend": 15,
+        "target": 20,
+        "unit": "per day"
+      },
+      "leadTime": {
+        "value": 2.3,
+        "trend": -20,
+        "target": 1,
+        "unit": "hours"
+      },
+      "mttr": {
+        "value": 45,
+        "trend": -30,
+        "target": 30,
+        "unit": "minutes"
+      },
+      "changeFailureRate": {
+        "value": 5.2,
+        "trend": -40,
+        "target": 5,
+        "unit": "%"
+      }
+    },
+    "productivity": {
+      "pullRequests": 1250,
+      "codeReviews": 980,
+      "commits": 4500,
+      "activeContributors": 245,
+      "cycleTime": 3.2,
+      "codeQuality": 92
+    },
+    "reliability": {
+      "uptime": 99.95,
+      "incidents": 3,
+      "alerts": 12,
+      "errorRate": 0.02,
+      "p99Latency": 250,
+      "throughput": 1500000
+    },
+    "security": {
+      "vulnerabilities": {
+        "critical": 0,
+        "high": 2,
+        "medium": 15,
+        "low": 47
+      },
+      "complianceScore": 94,
+      "lastScan": "2025-07-22T14:04:35.471Z",
+      "secretsRotated": 156
+    }
+  },
+  "costs": {
+    "current": {
+      "monthly": 485000,
+      "annual": 5820000,
+      "trend": -12.5
+    },
+    "breakdown": {
+      "compute": 185000,
+      "storage": 65000,
+      "network": 45000,
+      "database": 85000,
+      "monitoring": 35000,
+      "security": 25000,
+      "other": 45000
+    },
+    "optimization": {
+      "identified": 125000,
+      "implemented": 85000,
+      "potential": 40000,
+      "recommendations": [
+        {
+          "title": "Right-size EC2 instances",
+          "savings": 25000,
+          "effort": "low",
+          "impact": "high"
+        },
+        {
+          "title": "Implement auto-scaling",
+          "savings": 15000,
+          "effort": "medium",
+          "impact": "high"
+        },
+        {
+          "title": "Use Reserved Instances",
+          "savings": 35000,
+          "effort": "low",
+          "impact": "high"
+        },
+        {
+          "title": "Optimize S3 storage classes",
+          "savings": 10000,
+          "effort": "low",
+          "impact": "medium"
+        }
+      ]
+    },
+    "forecast": {
+      "nextMonth": 465000,
+      "nextQuarter": 1350000,
+      "nextYear": 5200000
+    }
+  },
+  "compliance": {
+    "frameworks": [
+      {
+        "name": "SOC2",
+        "status": "compliant",
+        "score": 98,
+        "lastAudit": "2024-06-15"
+      },
+      {
+        "name": "ISO27001",
+        "status": "compliant",
+        "score": 96,
+        "lastAudit": "2024-07-20"
+      },
+      {
+        "name": "GDPR",
+        "status": "compliant",
+        "score": 100,
+        "lastAudit": "2024-08-01"
+      },
+      {
+        "name": "HIPAA",
+        "status": "partial",
+        "score": 85,
+        "lastAudit": "2024-05-10"
+      },
+      {
+        "name": "PCI-DSS",
+        "status": "compliant",
+        "score": 99,
+        "lastAudit": "2024-07-30"
+      }
+    ],
+    "violations": [
+      {
+        "id": "VIO-001",
+        "severity": "medium",
+        "framework": "SOC2",
+        "control": "Access Control",
+        "description": "Missing MFA for 3 service accounts",
+        "remediation": "Enable MFA for identified accounts",
+        "deadline": "2024-08-15",
+        "owner": "security-team"
+      },
+      {
+        "id": "VIO-002",
+        "severity": "low",
+        "framework": "ISO27001",
+        "control": "Asset Management",
+        "description": "Incomplete asset inventory",
+        "remediation": "Update CMDB with missing assets",
+        "deadline": "2024-08-20",
+        "owner": "devops-team"
+      }
+    ],
+    "upcomingAudits": [
+      {
+        "framework": "SOC2",
+        "date": "2024-09-15",
+        "auditor": "Ernst & Young"
+      },
+      {
+        "framework": "PCI-DSS",
+        "date": "2024-10-01",
+        "auditor": "Trustwave"
+      }
+    ]
+  },
+  "incidents": [
+    {
+      "id": "INC-2024-001",
+      "title": "Database connection pool exhaustion",
+      "severity": "high",
+      "status": "resolved",
+      "service": "payment-processor",
+      "startTime": "2024-08-05T14:30:00Z",
+      "endTime": "2024-08-05T15:45:00Z",
+      "impact": "Payment processing delayed for 15% of transactions",
+      "rootCause": "Connection leak in payment service",
+      "resolution": "Deployed hotfix to properly close connections"
+    },
+    {
+      "id": "INC-2024-002",
+      "title": "CDN cache invalidation failure",
+      "severity": "medium",
+      "status": "resolved",
+      "service": "customer-portal",
+      "startTime": "2024-08-04T09:15:00Z",
+      "endTime": "2024-08-04T10:00:00Z",
+      "impact": "Stale content served to 5% of users",
+      "rootCause": "AWS CloudFront API rate limiting",
+      "resolution": "Implemented exponential backoff for API calls"
+    },
+    {
+      "id": "INC-2024-003",
+      "title": "Memory leak in analytics service",
+      "severity": "low",
+      "status": "investigating",
+      "service": "analytics-api",
+      "startTime": "2024-08-07T11:00:00Z",
+      "endTime": null,
+      "impact": "Gradual performance degradation",
+      "rootCause": "Under investigation",
+      "resolution": "Temporary mitigation: increased auto-scaling threshold"
+    }
+  ]
+}

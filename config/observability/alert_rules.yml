@@ -1,0 +1,335 @@
+# Prometheus Alerting Rules for SaaS IDP
+groups:
+  - name: saas_idp_critical
+    interval: 30s
+    rules:
+      # System Health Alerts
+      - alert: SystemHealthCritical
+        expr: saas_idp_system_health_score{component="overall"} < 50
+        for: 2m
+        labels:
+          severity: critical
+          service: platform
+          component: system
+        annotations:
+          summary: "System health is critically low"
+          description: "Overall system health score is {{ $value }}%, which is below the critical threshold of 50%"
+          runbook_url: "https://docs.saas-idp.com/runbooks/system-health-critical"
+
+      - alert: SystemHealthDegraded
+        expr: saas_idp_system_health_score{component="overall"} < 80
+        for: 5m
+        labels:
+          severity: warning
+          service: platform
+          component: system
+        annotations:
+          summary: "System health is degraded"
+          description: "Overall system health score is {{ $value }}%, which is below the warning threshold of 80%"
+          runbook_url: "https://docs.saas-idp.com/runbooks/system-health-degraded"
+
+      # High Error Rate Alerts
+      - alert: HighErrorRate
+        expr: rate(saas_idp_errors_total[5m]) > 0.1
+        for: 2m
+        labels:
+          severity: critical
+          service: "{{ $labels.service }}"
+          component: "{{ $labels.component }}"
+        annotations:
+          summary: "High error rate detected"
+          description: "Error rate is {{ $value }} errors/second for service {{ $labels.service }}"
+          runbook_url: "https://docs.saas-idp.com/runbooks/high-error-rate"
+
+      # Response Time Alerts
+      - alert: HighResponseTime
+        expr: histogram_quantile(0.95, rate(saas_idp_http_request_duration_seconds_bucket[5m])) > 2
+        for: 3m
+        labels:
+          severity: critical
+          service: api
+          component: "{{ $labels.route }}"
+        annotations:
+          summary: "High response time detected"
+          description: "95th percentile response time is {{ $value }}s for route {{ $labels.route }}"
+          runbook_url: "https://docs.saas-idp.com/runbooks/high-response-time"
+
+      - alert: SlowResponseTime
+        expr: histogram_quantile(0.95, rate(saas_idp_http_request_duration_seconds_bucket[5m])) > 1
+        for: 5m
+        labels:
+          severity: warning
+          service: api
+          component: "{{ $labels.route }}"
+        annotations:
+          summary: "Slow response time detected"
+          description: "95th percentile response time is {{ $value }}s for route {{ $labels.route }}"
+          runbook_url: "https://docs.saas-idp.com/runbooks/slow-response-time"
+
+  - name: saas_idp_infrastructure
+    interval: 30s
+    rules:
+      # Resource Usage Alerts
+      - alert: HighCpuUsage
+        expr: saas_idp_cpu_usage_percent{component="system"} > 90
+        for: 5m
+        labels:
+          severity: critical
+          service: infrastructure
+          component: cpu
+        annotations:
+          summary: "High CPU usage detected"
+          description: "CPU usage is {{ $value }}% on instance {{ $labels.instance }}"
+          runbook_url: "https://docs.saas-idp.com/runbooks/high-cpu-usage"
+
+      - alert: HighMemoryUsage
+        expr: (saas_idp_memory_usage_bytes{component="process", type="heap_used"} / saas_idp_memory_usage_bytes{component="process", type="heap_total"}) * 100 > 90
+        for: 5m
+        labels:
+          severity: critical
+          service: infrastructure
+          component: memory
+        annotations:
+          summary: "High memory usage detected"
+          description: "Memory usage is {{ $value }}% on instance {{ $labels.instance }}"
+          runbook_url: "https://docs.saas-idp.com/runbooks/high-memory-usage"
+
+      - alert: EventLoopLag
+        expr: saas_idp_cpu_usage_percent{component="event_loop_lag_ms"} > 100
+        for: 2m
+        labels:
+          severity: warning
+          service: infrastructure
+          component: nodejs
+        annotations:
+          summary: "High Event Loop lag detected"
+          description: "Event Loop lag is {{ $value }}ms on instance {{ $labels.instance }}"
+          runbook_url: "https://docs.saas-idp.com/runbooks/event-loop-lag"
+
+  - name: saas_idp_plugins
+    interval: 30s
+    rules:
+      # Plugin Health Alerts
+      - alert: PluginUnhealthy
+        expr: saas_idp_plugin_health_status == 0
+        for: 1m
+        labels:
+          severity: critical
+          service: plugins
+          component: "{{ $labels.plugin_id }}"
+        annotations:
+          summary: "Plugin is unhealthy"
+          description: "Plugin {{ $labels.plugin_id }} (version {{ $labels.version }}) is reporting unhealthy status"
+          runbook_url: "https://docs.saas-idp.com/runbooks/plugin-unhealthy"
+
+      - alert: PluginHighErrorRate
+        expr: rate(saas_idp_plugin_operations_total{status="error"}[5m]) / rate(saas_idp_plugin_operations_total[5m]) > 0.1
+        for: 3m
+        labels:
+          severity: warning
+          service: plugins
+          component: "{{ $labels.plugin_id }}"
+        annotations:
+          summary: "High error rate in plugin operations"
+          description: "Plugin {{ $labels.plugin_id }} has {{ $value | humanizePercentage }} error rate for {{ $labels.operation }} operations"
+          runbook_url: "https://docs.saas-idp.com/runbooks/plugin-high-error-rate"
+
+      - alert: SlowPluginOperation
+        expr: histogram_quantile(0.95, rate(saas_idp_plugin_operation_duration_seconds_bucket[5m])) > 30
+        for: 5m
+        labels:
+          severity: warning
+          service: plugins
+          component: "{{ $labels.plugin_id }}"
+        annotations:
+          summary: "Slow plugin operation detected"
+          description: "Plugin {{ $labels.plugin_id }} operation {{ $labels.operation }} is taking {{ $value }}s at 95th percentile"
+          runbook_url: "https://docs.saas-idp.com/runbooks/slow-plugin-operation"
+
+      - alert: FrequentPluginRollbacks
+        expr: increase(saas_idp_plugin_rollbacks_total[1h]) > 3
+        for: 0m
+        labels:
+          severity: warning
+          service: plugins
+          component: "{{ $labels.plugin_id }}"
+        annotations:
+          summary: "Frequent plugin rollbacks detected"
+          description: "Plugin {{ $labels.plugin_id }} has had {{ $value }} rollbacks in the last hour"
+          runbook_url: "https://docs.saas-idp.com/runbooks/frequent-plugin-rollbacks"
+
+  - name: saas_idp_database
+    interval: 30s
+    rules:
+      # Database Performance Alerts
+      - alert: SlowDatabaseQueries
+        expr: histogram_quantile(0.95, rate(saas_idp_database_query_duration_seconds_bucket[5m])) > 1
+        for: 3m
+        labels:
+          severity: warning
+          service: database
+          component: "{{ $labels.database }}"
+        annotations:
+          summary: "Slow database queries detected"
+          description: "95th percentile query time is {{ $value }}s for database {{ $labels.database }}"
+          runbook_url: "https://docs.saas-idp.com/runbooks/slow-database-queries"
+
+      - alert: HighDatabaseConnections
+        expr: saas_idp_database_connections_active > 80
+        for: 5m
+        labels:
+          severity: warning
+          service: database
+          component: connections
+        annotations:
+          summary: "High number of database connections"
+          description: "{{ $value }} active connections to database {{ $labels.database }}"
+          runbook_url: "https://docs.saas-idp.com/runbooks/high-database-connections"
+
+      - alert: DatabaseConnectionFailures
+        expr: rate(saas_idp_database_connections_total{status="error"}[5m]) > 0.1
+        for: 2m
+        labels:
+          severity: critical
+          service: database
+          component: connectivity
+        annotations:
+          summary: "Database connection failures detected"
+          description: "{{ $value }} connection failures/second to database {{ $labels.database }}"
+          runbook_url: "https://docs.saas-idp.com/runbooks/database-connection-failures"
+
+  - name: saas_idp_cache
+    interval: 30s
+    rules:
+      # Cache Performance Alerts
+      - alert: LowCacheHitRate
+        expr: rate(saas_idp_cache_hits_total[5m]) / (rate(saas_idp_cache_hits_total[5m]) + rate(saas_idp_cache_misses_total[5m])) < 0.8
+        for: 10m
+        labels:
+          severity: warning
+          service: cache
+          component: "{{ $labels.cache_name }}"
+        annotations:
+          summary: "Low cache hit rate"
+          description: "Cache {{ $labels.cache_name }} hit rate is {{ $value | humanizePercentage }}"
+          runbook_url: "https://docs.saas-idp.com/runbooks/low-cache-hit-rate"
+
+      - alert: HighCacheSize
+        expr: saas_idp_cache_size_bytes > 500000000  # 500MB
+        for: 10m
+        labels:
+          severity: warning
+          service: cache
+          component: "{{ $labels.cache_name }}"
+        annotations:
+          summary: "Cache size is too large"
+          description: "Cache {{ $labels.cache_name }} size is {{ $value | humanizeBytes }}"
+          runbook_url: "https://docs.saas-idp.com/runbooks/high-cache-size"
+
+  - name: saas_idp_websocket
+    interval: 30s
+    rules:
+      # WebSocket Alerts
+      - alert: HighWebSocketConnections
+        expr: saas_idp_websocket_connections_active > 1000
+        for: 5m
+        labels:
+          severity: warning
+          service: websocket
+          component: connections
+        annotations:
+          summary: "High number of WebSocket connections"
+          description: "{{ $value }} active WebSocket connections in namespace {{ $labels.namespace }}"
+          runbook_url: "https://docs.saas-idp.com/runbooks/high-websocket-connections"
+
+      - alert: WebSocketMessageBacklog
+        expr: rate(saas_idp_websocket_messages_total[5m]) > 1000
+        for: 3m
+        labels:
+          severity: warning
+          service: websocket
+          component: messaging
+        annotations:
+          summary: "High WebSocket message rate"
+          description: "{{ $value }} WebSocket messages/second in namespace {{ $labels.namespace }}"
+          runbook_url: "https://docs.saas-idp.com/runbooks/websocket-message-backlog"
+
+  - name: saas_idp_authentication
+    interval: 30s
+    rules:
+      # Authentication Alerts
+      - alert: HighAuthenticationFailures
+        expr: rate(saas_idp_authentication_failures_total[5m]) > 1
+        for: 2m
+        labels:
+          severity: warning
+          service: authentication
+          component: "{{ $labels.provider }}"
+        annotations:
+          summary: "High authentication failure rate"
+          description: "{{ $value }} authentication failures/second for provider {{ $labels.provider }}"
+          runbook_url: "https://docs.saas-idp.com/runbooks/high-authentication-failures"
+
+      - alert: AuthenticationProviderDown
+        expr: rate(saas_idp_authentication_attempts_total[5m]) == 0 and rate(saas_idp_authentication_attempts_total[1h] offset 1h) > 0
+        for: 5m
+        labels:
+          severity: critical
+          service: authentication
+          component: "{{ $labels.provider }}"
+        annotations:
+          summary: "Authentication provider appears to be down"
+          description: "No authentication attempts for provider {{ $labels.provider }} in the last 5 minutes"
+          runbook_url: "https://docs.saas-idp.com/runbooks/authentication-provider-down"
+
+      - alert: SlowAuthentication
+        expr: histogram_quantile(0.95, rate(saas_idp_authentication_duration_seconds_bucket[5m])) > 5
+        for: 3m
+        labels:
+          severity: warning
+          service: authentication
+          component: "{{ $labels.provider }}"
+        annotations:
+          summary: "Slow authentication response"
+          description: "95th percentile authentication time is {{ $value }}s for provider {{ $labels.provider }}"
+          runbook_url: "https://docs.saas-idp.com/runbooks/slow-authentication"
+
+  - name: saas_idp_business_metrics
+    interval: 60s
+    rules:
+      # Business Metrics Alerts
+      - alert: LowDailyActiveUsers
+        expr: saas_idp_developers_active_daily < 10
+        for: 0m
+        labels:
+          severity: info
+          service: business
+          component: users
+        annotations:
+          summary: "Low daily active user count"
+          description: "Only {{ $value }} active developers today for tenant {{ $labels.tenant_id }}"
+          runbook_url: "https://docs.saas-idp.com/runbooks/low-daily-active-users"
+
+      - alert: NoTemplateCreation
+        expr: increase(saas_idp_templates_created_total[24h]) == 0
+        for: 0m
+        labels:
+          severity: info
+          service: business
+          component: templates
+        annotations:
+          summary: "No templates created in 24 hours"
+          description: "No templates have been created in the last 24 hours"
+          runbook_url: "https://docs.saas-idp.com/runbooks/no-template-creation"
+
+      - alert: NoServiceDeployments
+        expr: increase(saas_idp_services_deployed_total[24h]) == 0
+        for: 0m
+        labels:
+          severity: info
+          service: business
+          component: deployments
+        annotations:
+          summary: "No service deployments in 24 hours"
+          description: "No services have been deployed in the last 24 hours"
+          runbook_url: "https://docs.saas-idp.com/runbooks/no-service-deployments"

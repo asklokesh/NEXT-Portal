@@ -2,7 +2,7 @@ import React from 'react';
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { PluginMarketplace } from '../PluginMarketplace';
+import PluginMarketplace from '../PluginMarketplace';
 import * as pluginService from '@/lib/plugins/marketplace-service';
 
 // Mock the plugin service

@@ -47,7 +47,7 @@
  "strictBindCallApply": true,
  "strictPropertyInitialization": true,
  "alwaysStrict": true,
- "types": ["jest", "@testing-library/jest-dom"]
+  
  },
  "include": [
  "next-env.d.ts",

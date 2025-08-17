@@ -1,0 +1,267 @@
+// Admin and Access Control Schema Extensions
+// Add these models to your main schema.prisma file
+
+model Role {
+  id          String     @id @default(cuid())
+  name        String     @unique
+  description String
+  permissions Json       // Array of Permission objects
+  parent      String?    // For role inheritance
+  isSystem    Boolean    @default(false)
+  metadata    Json?
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  @@map("roles")
+}
+
+model PolicyRule {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String
+  resource    String
+  actions     String[]
+  conditions  Json     // Array of condition objects
+  effect      String   // 'allow' or 'deny'
+  priority    Int      @default(0)
+  enabled     Boolean  @default(true)
+  createdBy   String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([resource, enabled])
+  @@index([priority])
+  @@map("policy_rules")
+}
+
+model AuditRetentionPolicy {
+  id                String   @id @default(cuid())
+  name              String   @unique
+  description       String
+  retentionDays     Int
+  archiveAfterDays  Int?
+  deleteAfterDays   Int?
+  categories        String[]
+  enabled           Boolean  @default(true)
+  createdBy         String
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@map("audit_retention_policies")
+}
+
+model AuditAlert {
+  id            String    @id @default(cuid())
+  name          String    @unique
+  description   String
+  condition     Json      // Array of condition objects
+  actions       Json      // Array of action objects
+  enabled       Boolean   @default(true)
+  lastTriggered DateTime?
+  createdBy     String
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@map("audit_alerts")
+}
+
+model ComplianceReport {
+  id          String   @id @default(cuid())
+  name        String
+  content     Json     // Full report content
+  generatedBy String
+  generatedAt DateTime
+  createdAt   DateTime @default(now())
+
+  @@index([generatedAt])
+  @@map("compliance_reports")
+}
+
+model UserActivity {
+  id         String   @id @default(cuid())
+  userId     String
+  action     String
+  resource   String?
+  details    Json?
+  ipAddress  String?
+  userAgent  String?
+  sessionId  String?
+  timestamp  DateTime @default(now())
+
+  @@index([userId, timestamp])
+  @@index([action, timestamp])
+  @@map("user_activities")
+}
+
+model AccessToken {
+  id         String    @id @default(cuid())
+  userId     String
+  token      String    @unique
+  type       String    // 'api', 'oauth', 'temporary'
+  scopes     String[]
+  expiresAt  DateTime
+  lastUsedAt DateTime?
+  revokedAt  DateTime?
+  metadata   Json?
+  createdAt  DateTime  @default(now())
+
+  @@index([userId, type])
+  @@index([expiresAt])
+  @@map("access_tokens")
+}
+
+model PermissionGrant {
+  id          String    @id @default(cuid())
+  userId      String
+  roleId      String?
+  permissions Json      // Direct permission grants
+  scope       Json?     // Scope restrictions
+  conditions  Json?     // ABAC conditions
+  expiresAt   DateTime?
+  grantedBy   String
+  reason      String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([userId, roleId])
+  @@index([expiresAt])
+  @@map("permission_grants")
+}
+
+model TenantSettings {
+  id                   String   @id @default(cuid())
+  tenantId             String   @unique
+  maxUsers             Int?
+  maxTeams             Int?
+  maxServices          Int?
+  allowedFeatures      String[]
+  customRoles          Json?
+  securityPolicies     Json?
+  integrationSettings  Json?
+  billingSettings      Json?
+  notificationSettings Json?
+  metadata             Json?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  @@map("tenant_settings")
+}
+
+model AdminAction {
+  id               String   @id @default(cuid())
+  adminId          String
+  action           String
+  targetType       String   // 'user', 'role', 'permission', 'tenant', etc.
+  targetId         String?
+  previousState    Json?
+  newState         Json?
+  reason           String?
+  approvedBy       String?
+  requiresApproval Boolean  @default(false)
+  status           String   @default("completed") // 'pending', 'approved', 'rejected', 'completed'
+  executedAt       DateTime?
+  createdAt        DateTime @default(now())
+
+  @@index([adminId, createdAt])
+  @@index([targetType, targetId])
+  @@index([status])
+  @@map("admin_actions")
+}
+
+model EmergencyAccess {
+  id          String    @id @default(cuid())
+  userId      String
+  grantedBy   String
+  reason      String
+  permissions Json      // Emergency permissions granted
+  expiresAt   DateTime
+  usedAt      DateTime?
+  revokedAt   DateTime?
+  revokedBy   String?
+  metadata    Json?
+  createdAt   DateTime  @default(now())
+
+  @@index([userId, expiresAt])
+  @@index([grantedBy])
+  @@map("emergency_access")
+}
+
+model SystemConfiguration {
+  id          String   @id @default(cuid())
+  key         String   @unique
+  value       Json
+  type        String   // 'security', 'performance', 'feature', 'integration'
+  description String?
+  isSecret    Boolean  @default(false)
+  isLocked    Boolean  @default(false)
+  modifiedBy  String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([type])
+  @@map("system_configuration")
+}
+
+model UserMetadata {
+  id                 String    @id @default(cuid())
+  userId             String    @unique
+  department         String?
+  jobTitle           String?
+  manager            String?
+  location           String?
+  timezone           String?
+  language           String?
+  preferences        Json?
+  customAttributes   Json?
+  onboardingStatus   String?
+  onboardingDate     DateTime?
+  lastPasswordChange DateTime?
+  passwordExpiry     DateTime?
+  trainingCompleted  String[]
+  certifications     Json?
+  notes              String?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  @@map("user_metadata")
+}
+
+model AccessReview {
+  id             String    @id @default(cuid())
+  reviewType     String    // 'periodic', 'manual', 'automated'
+  scope          Json      // Users/roles/permissions to review
+  reviewedBy     String
+  findings       Json
+  recommendations Json
+  actionsToken   String[]
+  status         String    @default("pending") // 'pending', 'in_progress', 'completed'
+  completedAt    DateTime?
+  nextReviewDate DateTime?
+  createdAt      DateTime  @default(now())
+
+  @@index([reviewType, status])
+  @@index([nextReviewDate])
+  @@map("access_reviews")
+}
+
+model SessionManagement {
+  id               String    @id @default(cuid())
+  sessionId        String    @unique
+  userId           String
+  deviceId         String?
+  deviceType       String?
+  browser          String?
+  os               String?
+  location         String?
+  ipAddress        String
+  isActive         Boolean   @default(true)
+  isSuspicious     Boolean   @default(false)
+  lastActivity     DateTime
+  terminatedBy     String?
+  terminatedReason String?
+  createdAt        DateTime  @default(now())
+
+  @@index([userId, isActive])
+  @@index([sessionId])
+  @@map("session_management")
+}

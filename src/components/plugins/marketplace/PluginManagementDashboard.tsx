@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { motion, AnimatePresence } from 'framer-motion';
 import {
   Settings,
   Play,
@@ -39,9 +40,23 @@ import {
   Minus,
   Plus,
   Archive,
+  ShieldCheck,
+  ShieldAlert,
+  ShieldX,
+  Rocket,
 } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import type { BackstagePlugin } from '@/services/backstage/plugin-registry';
+import CanaryDeploymentManager from '@/components/plugins/CanaryDeploymentManager';
+
+interface CompatibilityStatus {
+  overall: 'compatible' | 'compatible_with_warnings' | 'incompatible' | 'unknown';
+  apiCompatibility: { status: string; issues?: string[] };
+  runtimeCompatibility: { status: string; issues?: string[] };
+  resourceCompatibility?: { status: string; issues?: string[] };
+  lastChecked?: string;
+  checkInProgress?: boolean;
+}
 
 interface PluginStatus {
   id: string;
@@ -56,6 +71,7 @@ interface PluginStatus {
   version: string;
   configHash: string;
   lastRestart: string;
+  compatibility?: CompatibilityStatus;
   dependencies: {
     id: string;
     status: 'healthy' | 'unhealthy';
@@ -65,7 +81,7 @@ interface PluginStatus {
 
 interface PluginAction {
   id: string;
-  type: 'start' | 'stop' | 'restart' | 'update' | 'configure' | 'uninstall' | 'logs' | 'backup';
+  type: 'start' | 'stop' | 'restart' | 'update' | 'configure' | 'uninstall' | 'logs' | 'backup' | 'check-compatibility' | 'canary-deployment';
   label: string;
   icon: any;
   variant: 'primary' | 'secondary' | 'danger' | 'warning';
@@ -114,6 +130,32 @@ function formatUptime(seconds: number): string {
   return `${minutes}m`;
 }
 
+function getCompatibilityIcon(status: string) {
+  switch (status) {
+    case 'compatible':
+      return <ShieldCheck className="w-5 h-5 text-green-500" />;
+    case 'compatible_with_warnings':
+      return <ShieldAlert className="w-5 h-5 text-yellow-500" />;
+    case 'incompatible':
+      return <ShieldX className="w-5 h-5 text-red-500" />;
+    default:
+      return <Shield className="w-5 h-5 text-gray-500" />;
+  }
+}
+
+function getCompatibilityColor(status: string) {
+  switch (status) {
+    case 'compatible':
+      return 'text-green-600 bg-green-50 dark:bg-green-900/20';
+    case 'compatible_with_warnings':
+      return 'text-yellow-600 bg-yellow-50 dark:bg-yellow-900/20';
+    case 'incompatible':
+      return 'text-red-600 bg-red-50 dark:bg-red-900/20';
+    default:
+      return 'text-gray-600 bg-gray-50 dark:bg-gray-700/20';
+  }
+}
+
 function PluginStatusCard({ 
   plugin, 
   status, 
@@ -132,6 +174,23 @@ function PluginStatusCard({
       { id: 'logs', type: 'logs', label: 'View Logs', icon: FileText, variant: 'secondary' },
       { id: 'configure', type: 'configure', label: 'Configure', icon: Settings, variant: 'secondary', disabled: !plugin.configurable },
       { id: 'backup', type: 'backup', label: 'Backup Config', icon: Archive, variant: 'secondary' },
+      { 
+        id: 'check-compatibility', 
+        type: 'check-compatibility', 
+        label: status.compatibility?.checkInProgress ? 'Checking...' : 'Check Compatibility', 
+        icon: Shield, 
+        variant: 'secondary',
+        disabled: status.compatibility?.checkInProgress,
+        tooltip: 'Check plugin compatibility with current environment'
+      },
+      {
+        id: 'canary-deployment',
+        type: 'canary-deployment',
+        label: 'Canary Deploy',
+        icon: Rocket,
+        variant: 'primary',
+        tooltip: 'Start a safe, gradual deployment to new version'
+      },
     ];
 
     switch (status.status) {
@@ -202,6 +261,11 @@ function PluginStatusCard({
               {status.status.charAt(0).toUpperCase() + status.status.slice(1)}
             </span>
             <HealthIcon className={`w-5 h-5 ${HEALTH_COLORS[status.health]}`} />
+            {status.compatibility && (
+              <div className="flex items-center gap-1" title={`Compatibility: ${status.compatibility.overall}`}>
+                {getCompatibilityIcon(status.compatibility.overall)}
+              </div>
+            )}
           </div>
         </div>
 
@@ -357,6 +421,49 @@ function PluginStatusCard({
               </div>
             )}
 
+            {/* Compatibility Details */}
+            {status.compatibility && (
+              <div>
+                <h4 className="text-sm font-medium text-gray-900 dark:text-gray-100 mb-2">
+                  Compatibility Status
+                </h4>
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between p-2 bg-gray-50 dark:bg-gray-700 rounded">
+                    <span className="text-sm text-gray-700 dark:text-gray-300">Overall</span>
+                    <div className="flex items-center gap-2">
+                      {getCompatibilityIcon(status.compatibility.overall)}
+                      <span className={`text-xs px-2 py-1 rounded ${getCompatibilityColor(status.compatibility.overall)}`}>
+                        {status.compatibility.overall.replace('_', ' ').toUpperCase()}
+                      </span>
+                    </div>
+                  </div>
+                  
+                  <div className="flex items-center justify-between p-2 bg-gray-50 dark:bg-gray-700 rounded">
+                    <span className="text-sm text-gray-700 dark:text-gray-300">API Compatibility</span>
+                    <span className={`text-xs px-2 py-1 rounded ${getCompatibilityColor(status.compatibility.apiCompatibility.status)}`}>
+                      {status.compatibility.apiCompatibility.status.toUpperCase()}
+                    </span>
+                  </div>
+                  
+                  <div className="flex items-center justify-between p-2 bg-gray-50 dark:bg-gray-700 rounded">
+                    <span className="text-sm text-gray-700 dark:text-gray-300">Runtime Compatibility</span>
+                    <span className={`text-xs px-2 py-1 rounded ${getCompatibilityColor(status.compatibility.runtimeCompatibility.status)}`}>
+                      {status.compatibility.runtimeCompatibility.status.toUpperCase()}
+                    </span>
+                  </div>
+                  
+                  {status.compatibility.lastChecked && (
+                    <div className="flex items-center justify-between p-2 bg-gray-50 dark:bg-gray-700 rounded">
+                      <span className="text-sm text-gray-700 dark:text-gray-300">Last Checked</span>
+                      <span className="text-xs text-gray-500 dark:text-gray-400">
+                        {new Date(status.compatibility.lastChecked).toLocaleString()}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
             {/* Configuration Hash */}
             <div>
               <h4 className="text-sm font-medium text-gray-900 dark:text-gray-100 mb-2">
@@ -385,6 +492,12 @@ export function PluginManagementDashboard() {
     searchQuery: '',
   });
   const [expandedPlugins, setExpandedPlugins] = useState<Set<string>>(new Set());
+  const [canaryDeploymentModal, setCanaryDeploymentModal] = useState<{
+    open: boolean;
+    pluginId?: string;
+    pluginName?: string;
+    currentVersion?: string;
+  }>({ open: false });
 
   // Fetch installed plugins
   const { data: pluginsData, isLoading, error } = useQuery({
@@ -415,7 +528,10 @@ export function PluginManagementDashboard() {
   // Mock plugin statuses for demo
   const mockStatuses = useMemo(() => {
     const mock: Record<string, PluginStatus> = {};
-    plugins.forEach((plugin: BackstagePlugin) => {
+    plugins.forEach((plugin: BackstagePlugin, index: number) => {
+      const compatibilityStatuses = ['compatible', 'compatible_with_warnings', 'incompatible', 'unknown'];
+      const randomCompatibility = compatibilityStatuses[index % compatibilityStatuses.length];
+      
       mock[plugin.id] = {
         id: plugin.id,
         status: Math.random() > 0.8 ? 'error' : Math.random() > 0.3 ? 'running' : 'stopped',
@@ -429,6 +545,19 @@ export function PluginManagementDashboard() {
         version: plugin.version,
         configHash: Math.random().toString(36).substring(2, 15),
         lastRestart: new Date(Date.now() - Math.random() * 86400 * 1000 * 7).toISOString(),
+        compatibility: Math.random() > 0.3 ? {
+          overall: randomCompatibility,
+          apiCompatibility: { 
+            status: randomCompatibility === 'incompatible' ? 'incompatible' : 'compatible',
+            issues: randomCompatibility === 'incompatible' ? ['Missing catalog API v2.0'] : []
+          },
+          runtimeCompatibility: { 
+            status: randomCompatibility === 'compatible_with_warnings' ? 'compatible_with_warnings' : 'compatible',
+            issues: randomCompatibility === 'compatible_with_warnings' ? ['Node.js 16 deprecated'] : []
+          },
+          lastChecked: new Date(Date.now() - Math.random() * 86400 * 1000 * 3).toISOString(),
+          checkInProgress: false
+        } : undefined,
         dependencies: [
           { id: 'database', status: Math.random() > 0.2 ? 'healthy' : 'unhealthy', latency: Math.floor(Math.random() * 100) },
           { id: 'api-gateway', status: Math.random() > 0.1 ? 'healthy' : 'unhealthy', latency: Math.floor(Math.random() * 50) },
@@ -467,8 +596,76 @@ export function PluginManagementDashboard() {
     },
   });
 
+  // Compatibility check mutation
+  const compatibilityCheckMutation = useMutation({
+    mutationFn: async ({ pluginName, version }: { pluginName: string; version: string }) => {
+      const response = await fetch('/api/plugins/compatibility-check', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          pluginName,
+          version,
+          targetEnvironment: {
+            backstageVersion: '1.20.0',
+            nodeVersion: '18.17.0'
+          }
+        }),
+      });
+      
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || 'Compatibility check failed');
+      }
+      
+      return response.json();
+    },
+    onSuccess: (data, { pluginName }) => {
+      toast.success(`Compatibility check completed for ${pluginName}`);
+      queryClient.invalidateQueries({ queryKey: ['plugin-statuses'] });
+    },
+    onError: (error: any, { pluginName }) => {
+      toast.error(`Failed to check compatibility for ${pluginName}: ${error.message}`);
+    },
+  });
+
   const handlePluginAction = (action: string, pluginId: string) => {
-    pluginActionMutation.mutate({ action, pluginId });
+    if (action === 'check-compatibility') {
+      const plugin = plugins.find((p: BackstagePlugin) => p.id === pluginId);
+      if (plugin) {
+        // Update status to show checking in progress
+        queryClient.setQueryData(['plugin-statuses'], (oldData: any) => {
+          if (!oldData) return oldData;
+          const newStatuses = { ...oldData.statuses };
+          if (newStatuses[pluginId]) {
+            newStatuses[pluginId] = {
+              ...newStatuses[pluginId],
+              compatibility: {
+                ...newStatuses[pluginId].compatibility,
+                checkInProgress: true
+              }
+            };
+          }
+          return { ...oldData, statuses: newStatuses };
+        });
+
+        compatibilityCheckMutation.mutate({ 
+          pluginName: plugin.title, 
+          version: plugin.version || 'latest' 
+        });
+      }
+    } else if (action === 'canary-deployment') {
+      const plugin = plugins.find((p: BackstagePlugin) => p.id === pluginId);
+      if (plugin) {
+        setCanaryDeploymentModal({
+          open: true,
+          pluginId: plugin.id,
+          pluginName: plugin.title,
+          currentVersion: plugin.version
+        });
+      }
+    } else {
+      pluginActionMutation.mutate({ action, pluginId });
+    }
   };
 
   const toggleExpanded = (pluginId: string) => {
@@ -702,6 +899,62 @@ export function PluginManagementDashboard() {
           </p>
         </div>
       )}
+
+      {/* Canary Deployment Modal */}
+      <AnimatePresence>
+        {canaryDeploymentModal.open && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
+          >
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-white dark:bg-gray-800 rounded-lg w-full max-w-4xl max-h-[90vh] overflow-hidden"
+            >
+              <div className="flex items-center justify-between p-6 border-b border-gray-200 dark:border-gray-700">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 bg-gradient-to-br from-purple-50 to-purple-100 dark:from-purple-900/20 dark:to-purple-800/20 rounded-lg flex items-center justify-center">
+                    <Rocket className="w-5 h-5 text-purple-600" />
+                  </div>
+                  <div>
+                    <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">
+                      Canary Deployment
+                    </h2>
+                    <p className="text-sm text-gray-600 dark:text-gray-400">
+                      {canaryDeploymentModal.pluginName}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setCanaryDeploymentModal({ open: false })}
+                  className="p-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
+                >
+                  <XCircle className="w-5 h-5" />
+                </button>
+              </div>
+              
+              <div className="p-6 max-h-[calc(90vh-8rem)] overflow-y-auto">
+                {canaryDeploymentModal.pluginId && canaryDeploymentModal.pluginName && canaryDeploymentModal.currentVersion && (
+                  <CanaryDeploymentManager
+                    pluginId={canaryDeploymentModal.pluginId}
+                    pluginName={canaryDeploymentModal.pluginName}
+                    currentVersion={canaryDeploymentModal.currentVersion}
+                    availableVersions={['1.2.0', '1.3.0', '2.0.0-beta.1', '2.0.0']} // Mock versions
+                    onDeploymentComplete={() => {
+                      setCanaryDeploymentModal({ open: false });
+                      queryClient.invalidateQueries({ queryKey: ['plugin-statuses'] });
+                    }}
+                  />
+                )}
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

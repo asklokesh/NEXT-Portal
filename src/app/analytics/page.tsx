@@ -3,20 +3,7 @@
 import { useState } from 'react';
 import { LazyComponents, LazyPageWrapper } from '@/lib/lazy';
 import { ClientOnly } from '@/components/analytics/ClientOnly';
-import dynamic from 'next/dynamic';
-
-// Dynamically import the new Plugin Analytics Dashboard
-const PluginAnalyticsDashboard = dynamic(
-  () => import('@/components/analytics/PluginAnalyticsDashboard'),
-  {
-    loading: () => (
-      <div className="flex items-center justify-center h-96">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
-      </div>
-    ),
-    ssr: false,
-  }
-);
+import PluginAnalyticsDashboard from '@/components/analytics/PluginAnalyticsDashboard';
 
 const AnalyticsPage = () => {
   const [analyticsView, setAnalyticsView] = useState<'services' | 'plugins'>('plugins');

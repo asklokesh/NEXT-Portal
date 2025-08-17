@@ -1,0 +1,115 @@
+{
+  "timestamp": "2025-08-16T23:12:48.715Z",
+  "summary": {
+    "passed": 18,
+    "failed": 3,
+    "successRate": "85.7%"
+  },
+  "details": [
+    {
+      "name": "Home page redirects to dashboard",
+      "status": "FAIL",
+      "details": "Test returned false"
+    },
+    {
+      "name": "Dashboard page loads successfully",
+      "status": "PASS",
+      "details": true
+    },
+    {
+      "name": "Software Catalog page (/catalog) loads",
+      "status": "PASS",
+      "details": true
+    },
+    {
+      "name": "Create page (/create) loads",
+      "status": "PASS",
+      "details": true
+    },
+    {
+      "name": "Search page (/search) loads",
+      "status": "PASS",
+      "details": true
+    },
+    {
+      "name": "Docs page (/docs) loads",
+      "status": "PASS",
+      "details": true
+    },
+    {
+      "name": "Premium plugin: Soundcheck (/soundcheck) loads",
+      "status": "PASS",
+      "details": true
+    },
+    {
+      "name": "Premium plugin: AiKA (/aika) loads",
+      "status": "PASS",
+      "details": true
+    },
+    {
+      "name": "Premium plugin: Skill Exchange (/skill-exchange) loads",
+      "status": "PASS",
+      "details": true
+    },
+    {
+      "name": "Premium plugin: Insights (/insights) loads",
+      "status": "PASS",
+      "details": true
+    },
+    {
+      "name": "Premium plugin: RBAC (/rbac) loads",
+      "status": "PASS",
+      "details": true
+    },
+    {
+      "name": "Installed plugin: GitHub (/github) loads",
+      "status": "FAIL",
+      "details": "Test returned false"
+    },
+    {
+      "name": "Installed plugin: Kubernetes (/kubernetes) loads",
+      "status": "PASS",
+      "details": true
+    },
+    {
+      "name": "Installed plugin: Plugin Marketplace (/plugins) loads",
+      "status": "PASS",
+      "details": true
+    },
+    {
+      "name": "API endpoint: Catalog Stats API (/api/catalog/stats) responds",
+      "status": "PASS",
+      "details": true
+    },
+    {
+      "name": "API endpoint: Notifications API (/api/notifications) responds",
+      "status": "PASS",
+      "details": true
+    },
+    {
+      "name": "API endpoint: Backstage Entities API (/api/backstage/entities) responds",
+      "status": "FAIL",
+      "details": "Test returned false"
+    },
+    {
+      "name": "CSS assets load properly",
+      "status": "PASS",
+      "details": true
+    },
+    {
+      "name": "404 pages handled gracefully",
+      "status": "PASS",
+      "details": true
+    },
+    {
+      "name": "Dashboard includes mobile viewport meta tag",
+      "status": "PASS",
+      "details": true
+    },
+    {
+      "name": "Dashboard contains Spotify design system elements",
+      "status": "PASS",
+      "details": true
+    }
+  ]
+}

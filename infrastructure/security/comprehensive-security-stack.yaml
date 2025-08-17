@@ -1,0 +1,761 @@
+# Comprehensive Security Stack Integration
+# Enterprise-grade security with Snyk Enterprise, Veracode, OPA, and Falco
+
+---
+# Open Policy Agent (OPA) Gatekeeper Configuration
+apiVersion: config.gatekeeper.sh/v1alpha1
+kind: Config
+metadata:
+  name: config
+  namespace: gatekeeper-system
+spec:
+  match:
+    - excludedNamespaces: ["kube-system", "kube-public", "gatekeeper-system", "kube-node-lease"]
+      processes: ["*"]
+  validation:
+    traces:
+      - user:
+          kind:
+            group: "*"
+            version: "*"
+            kind: "*"
+        kind:
+          group: "*"
+          version: "*"
+          kind: "*"
+  readiness:
+    statsEnabled: true
+
+---
+# Security Policy: Require Security Context
+apiVersion: templates.gatekeeper.sh/v1beta1
+kind: ConstraintTemplate
+metadata:
+  name: k8srequiresecuritycontext
+  annotations:
+    description: "Requires security context to be set for containers"
+spec:
+  crd:
+    spec:
+      names:
+        kind: K8sRequireSecurityContext
+      validation:
+        openAPIV3Schema:
+          type: object
+          properties:
+            runAsNonRoot:
+              type: boolean
+            runAsUser:
+              type: integer
+            fsGroup:
+              type: integer
+  targets:
+    - target: admission.k8s.gatekeeper.sh
+      rego: |
+        package k8srequiresecuritycontext
+        
+        violation[{"msg": msg}] {
+          container := input.review.object.spec.containers[_]
+          not container.securityContext.runAsNonRoot
+          msg := "Container must run as non-root user"
+        }
+        
+        violation[{"msg": msg}] {
+          container := input.review.object.spec.containers[_]
+          not container.securityContext.runAsUser
+          msg := "Container must specify runAsUser"
+        }
+        
+        violation[{"msg": msg}] {
+          not input.review.object.spec.securityContext.fsGroup
+          msg := "Pod must specify fsGroup in security context"
+        }
+
+---
+# Apply Security Context Policy
+apiVersion: templates.gatekeeper.sh/v1beta1
+kind: K8sRequireSecurityContext
+metadata:
+  name: require-security-context
+spec:
+  match:
+    kinds:
+      - apiGroups: [""]
+        kinds: ["Pod"]
+    namespaces: ["saas-idp-production", "saas-idp-staging"]
+  parameters:
+    runAsNonRoot: true
+    runAsUser: 1000
+    fsGroup: 1000
+
+---
+# Network Policy Template
+apiVersion: templates.gatekeeper.sh/v1beta1
+kind: ConstraintTemplate
+metadata:
+  name: k8srequirenetworkpolicy
+  annotations:
+    description: "Requires NetworkPolicy to be present"
+spec:
+  crd:
+    spec:
+      names:
+        kind: K8sRequireNetworkPolicy
+      validation:
+        openAPIV3Schema:
+          type: object
+  targets:
+    - target: admission.k8s.gatekeeper.sh
+      rego: |
+        package k8srequirenetworkpolicy
+        
+        violation[{"msg": msg}] {
+          input.review.object.kind == "Namespace"
+          not has_network_policy
+          msg := "Namespace must have associated NetworkPolicy"
+        }
+        
+        has_network_policy {
+          data.inventory.namespace["networking.k8s.io/v1"]["NetworkPolicy"][input.review.object.metadata.name]
+        }
+
+---
+# Falco Runtime Security Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: falco-config
+  namespace: falco-system
+data:
+  falco.yaml: |
+    rules_file:
+      - /etc/falco/falco_rules.yaml
+      - /etc/falco/falco_rules.local.yaml
+      - /etc/falco/k8s_audit_rules.yaml
+      - /etc/falco/rules.d
+    
+    time_format_iso_8601: true
+    json_output: true
+    json_include_output_property: true
+    json_include_tags_property: true
+    
+    log_stderr: false
+    log_syslog: false
+    log_level: info
+    
+    priority: debug
+    
+    syscall_event_drops:
+      actions:
+        - log
+        - alert
+      rate: 0.03333
+      max_burst: 1000
+    
+    outputs:
+      rate: 1
+      max_burst: 1000
+    
+    syslog_output:
+      enabled: false
+    
+    file_output:
+      enabled: false
+    
+    stdout_output:
+      enabled: true
+    
+    program_output:
+      enabled: false
+    
+    http_output:
+      enabled: true
+      url: "http://falcosidekick:2801"
+      user_agent: "falco"
+    
+    grpc:
+      enabled: false
+    
+    grpc_output:
+      enabled: false
+    
+    webserver:
+      enabled: true
+      listen_port: 8765
+      k8s_healthz_endpoint: /healthz
+      ssl_enabled: false
+      ssl_certificate: /etc/ssl/certs/falco.crt
+      ssl_private_key: /etc/ssl/private/falco.key
+
+  falco_rules.local.yaml: |
+    # Custom rules for SaaS IDP
+    - rule: Suspicious Network Activity in SaaS IDP
+      desc: Detect suspicious network activity in SaaS IDP containers
+      condition: >
+        k8s_audit and
+        ka.verb in (create, update, patch) and
+        ka.uri.param[namespace] in (saas-idp-production, saas-idp-staging) and
+        (ka.uri.resource=networkpolicies or 
+         ka.uri.resource=services or 
+         ka.uri.resource=ingresses) and
+        not ka.user.name in (system:serviceaccount:saas-idp-production:saas-idp,
+                            system:serviceaccount:argocd:argocd-server)
+      output: >
+        Suspicious network resource modification in SaaS IDP
+        (user=%ka.user.name verb=%ka.verb uri=%ka.uri.uri
+         resource=%ka.uri.resource reason=%ka.reason.reason)
+      priority: WARNING
+      tags: [network, saas-idp, security]
+
+    - rule: Unauthorized File Access in SaaS IDP
+      desc: Detect unauthorized file access in SaaS IDP containers
+      condition: >
+        spawned_process and
+        container.name startswith "saas-idp" and
+        (proc.name in (cat, less, more, head, tail) and
+         fd.name contains "/etc/") or
+        (proc.name in (vi, vim, nano, emacs) and
+         fd.name contains "/app/")
+      output: >
+        Unauthorized file access detected in SaaS IDP container
+        (container=%container.name process=%proc.name file=%fd.name
+         user=%user.name command=%proc.cmdline)
+      priority: WARNING
+      tags: [filesystem, saas-idp, security]
+
+    - rule: Privileged Container in SaaS IDP
+      desc: Detect privileged containers in SaaS IDP namespaces
+      condition: >
+        k8s_audit and
+        ka.verb in (create, update) and
+        ka.uri.param[namespace] in (saas-idp-production, saas-idp-staging) and
+        ka.uri.resource=pods and
+        ka.req.pod.containers[*].securityContext.privileged=true
+      output: >
+        Privileged container created in SaaS IDP namespace
+        (user=%ka.user.name pod=%ka.req.pod.metadata.name
+         namespace=%ka.uri.param[namespace] container=%ka.req.pod.containers[*].name)
+      priority: CRITICAL
+      tags: [container, privilege-escalation, saas-idp]
+
+---
+# Falco Deployment
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: falco
+  namespace: falco-system
+  labels:
+    app.kubernetes.io/name: falco
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: falco
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: falco
+    spec:
+      serviceAccount: falco
+      hostNetwork: true
+      hostPID: true
+      tolerations:
+        - effect: NoSchedule
+          key: node-role.kubernetes.io/master
+        - effect: NoSchedule
+          key: node-role.kubernetes.io/control-plane
+      containers:
+        - name: falco
+          image: falcosecurity/falco:latest
+          imagePullPolicy: Always
+          resources:
+            limits:
+              memory: 1Gi
+              cpu: 1000m
+            requests:
+              memory: 512Mi
+              cpu: 100m
+          securityContext:
+            privileged: true
+          args:
+            - /usr/bin/falco
+            - --cri=/run/containerd/containerd.sock
+            - --k8s-api=https://kubernetes.default:443
+            - --k8s-api-cert=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+            - --k8s-api-token=/var/run/secrets/kubernetes.io/serviceaccount/token
+          env:
+            - name: FALCO_K8S_NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          volumeMounts:
+            - mountPath: /host/var/run/docker.sock
+              name: docker-sock
+              readOnly: true
+            - mountPath: /host/run/containerd/containerd.sock
+              name: containerd-sock
+              readOnly: true
+            - mountPath: /host/dev
+              name: dev-fs
+              readOnly: true
+            - mountPath: /host/proc
+              name: proc-fs
+              readOnly: true
+            - mountPath: /host/boot
+              name: boot-fs
+              readOnly: true
+            - mountPath: /host/lib/modules
+              name: lib-modules
+              readOnly: true
+            - mountPath: /host/usr
+              name: usr-fs
+              readOnly: true
+            - mountPath: /host/etc
+              name: etc-fs
+              readOnly: true
+            - mountPath: /etc/falco
+              name: config-volume
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8765
+            initialDelaySeconds: 60
+            periodSeconds: 15
+            timeoutSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8765
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            timeoutSeconds: 5
+      volumes:
+        - name: docker-sock
+          hostPath:
+            path: /var/run/docker.sock
+        - name: containerd-sock
+          hostPath:
+            path: /run/containerd/containerd.sock
+        - name: dev-fs
+          hostPath:
+            path: /dev
+        - name: proc-fs
+          hostPath:
+            path: /proc
+        - name: boot-fs
+          hostPath:
+            path: /boot
+        - name: lib-modules
+          hostPath:
+            path: /lib/modules
+        - name: usr-fs
+          hostPath:
+            path: /usr
+        - name: etc-fs
+          hostPath:
+            path: /etc
+        - name: config-volume
+          configMap:
+            name: falco-config
+
+---
+# Snyk Enterprise Integration
+apiVersion: v1
+kind: Secret
+metadata:
+  name: snyk-enterprise-credentials
+  namespace: tekton-pipelines
+type: Opaque
+stringData:
+  token: "YOUR_SNYK_ENTERPRISE_TOKEN"
+  org-id: "YOUR_SNYK_ORG_ID"
+  api-url: "https://api.snyk.io"
+
+---
+# Snyk Monitor CronJob for Continuous Monitoring
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: snyk-monitor
+  namespace: saas-idp-production
+spec:
+  schedule: "0 2 * * *"  # Daily at 2 AM
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+          - name: snyk-monitor
+            image: snyk/snyk:node
+            command:
+            - /bin/sh
+            - -c
+            - |
+              cd /workspace
+              git clone $GIT_REPO .
+              snyk monitor --org=$SNYK_ORG_ID --project-name="SaaS-IDP-Production"
+              snyk container monitor $CONTAINER_IMAGE --org=$SNYK_ORG_ID --project-name="SaaS-IDP-Container"
+            env:
+            - name: SNYK_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: snyk-enterprise-credentials
+                  key: token
+            - name: SNYK_ORG_ID
+              valueFrom:
+                secretKeyRef:
+                  name: snyk-enterprise-credentials
+                  key: org-id
+            - name: GIT_REPO
+              value: "https://github.com/your-org/saas-idp.git"
+            - name: CONTAINER_IMAGE
+              value: "registry.company.com/saas-idp:latest"
+            volumeMounts:
+            - name: workspace
+              mountPath: /workspace
+          volumes:
+          - name: workspace
+            emptyDir: {}
+
+---
+# Veracode Security Scanning Job
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: veracode-security-scan
+  namespace: saas-idp-production
+spec:
+  schedule: "0 3 * * 0"  # Weekly on Sunday at 3 AM
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+          - name: veracode-scanner
+            image: veracode/pipeline-scan:latest
+            command:
+            - /bin/bash
+            - -c
+            - |
+              echo "Starting Veracode Pipeline Scan..."
+              
+              # Download and prepare application
+              cd /workspace
+              git clone $GIT_REPO .
+              
+              # Build application for scanning
+              npm install
+              npm run build
+              
+              # Create scan artifact
+              zip -r saas-idp-scan.zip dist/ src/ package.json package-lock.json
+              
+              # Run Veracode Pipeline Scan
+              java -jar /opt/veracode/pipeline-scan.jar \
+                --veracode_api_id "$VERACODE_API_ID" \
+                --veracode_api_key "$VERACODE_API_KEY" \
+                --file saas-idp-scan.zip \
+                --app_id "$VERACODE_APP_ID" \
+                --project_name "SaaS-IDP-Production" \
+                --json_output_file veracode-results.json \
+                --summary_output true \
+                --policy_file /opt/veracode/policy.json
+              
+              # Upload results to S3
+              aws s3 cp veracode-results.json s3://security-reports/veracode/$(date +%Y%m%d)/
+              
+              # Send notification if high/critical findings
+              HIGH_FINDINGS=$(jq '.findings[] | select(.severity == "High" or .severity == "Critical") | length' veracode-results.json || echo 0)
+              if [ "$HIGH_FINDINGS" -gt 0 ]; then
+                curl -X POST "$SLACK_WEBHOOK" -H 'Content-type: application/json' --data "{\"text\":\"🚨 Veracode scan found $HIGH_FINDINGS high/critical security findings in SaaS IDP\"}"
+              fi
+            env:
+            - name: VERACODE_API_ID
+              valueFrom:
+                secretKeyRef:
+                  name: veracode-credentials
+                  key: api-id
+            - name: VERACODE_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: veracode-credentials
+                  key: api-key
+            - name: VERACODE_APP_ID
+              valueFrom:
+                secretKeyRef:
+                  name: veracode-credentials
+                  key: app-id
+            - name: GIT_REPO
+              value: "https://github.com/your-org/saas-idp.git"
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: aws-credentials
+                  key: access-key-id
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: aws-credentials
+                  key: secret-access-key
+            - name: SLACK_WEBHOOK
+              valueFrom:
+                secretKeyRef:
+                  name: notification-secrets
+                  key: slack-webhook-url
+            volumeMounts:
+            - name: workspace
+              mountPath: /workspace
+            - name: policy-volume
+              mountPath: /opt/veracode/policy.json
+              subPath: policy.json
+          volumes:
+          - name: workspace
+            emptyDir: {}
+          - name: policy-volume
+            configMap:
+              name: veracode-policy
+
+---
+# Veracode Policy Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: veracode-policy
+  namespace: saas-idp-production
+data:
+  policy.json: |
+    {
+      "version": "1.0",
+      "rules": [
+        {
+          "type": "SECURITY",
+          "name": "High Severity Vulnerabilities",
+          "description": "Fail scan if high severity vulnerabilities found",
+          "conditions": [
+            {
+              "category": "CWE",
+              "severity": "High",
+              "action": "FAIL"
+            }
+          ]
+        },
+        {
+          "type": "SECURITY",
+          "name": "Critical Severity Vulnerabilities",
+          "description": "Fail scan if critical severity vulnerabilities found",
+          "conditions": [
+            {
+              "category": "CWE",
+              "severity": "Critical",
+              "action": "FAIL"
+            }
+          ]
+        },
+        {
+          "type": "COMPLIANCE",
+          "name": "SOC2 Compliance",
+          "description": "Ensure SOC2 compliance requirements are met",
+          "conditions": [
+            {
+              "category": "DATA_PROTECTION",
+              "requirement": "ENCRYPTION_AT_REST",
+              "action": "WARN"
+            },
+            {
+              "category": "ACCESS_CONTROL",
+              "requirement": "LEAST_PRIVILEGE",
+              "action": "WARN"
+            }
+          ]
+        }
+      ]
+    }
+
+---
+# Security Dashboard Service
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: security-dashboard
+  namespace: security-monitoring
+  labels:
+    app: security-dashboard
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: security-dashboard
+  template:
+    metadata:
+      labels:
+        app: security-dashboard
+    spec:
+      containers:
+      - name: dashboard
+        image: security-dashboard:latest
+        ports:
+        - containerPort: 8080
+        env:
+        - name: FALCO_ENDPOINT
+          value: "http://falco.falco-system.svc.cluster.local:8765"
+        - name: SNYK_API_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: snyk-enterprise-credentials
+              key: token
+        - name: VERACODE_API_ID
+          valueFrom:
+            secretKeyRef:
+              name: veracode-credentials
+              key: api-id
+        - name: PROMETHEUS_URL
+          value: "http://prometheus.monitoring.svc.cluster.local:9090"
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8080
+          initialDelaySeconds: 15
+          periodSeconds: 5
+
+---
+# Security Metrics Exporter
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: security-metrics-exporter
+  namespace: security-monitoring
+  labels:
+    app: security-metrics-exporter
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: security-metrics-exporter
+  template:
+    metadata:
+      labels:
+        app: security-metrics-exporter
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+        prometheus.io/path: "/metrics"
+    spec:
+      containers:
+      - name: exporter
+        image: security-metrics-exporter:latest
+        ports:
+        - containerPort: 9090
+          name: metrics
+        env:
+        - name: SNYK_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: snyk-enterprise-credentials
+              key: token
+        - name: VERACODE_API_ID
+          valueFrom:
+            secretKeyRef:
+              name: veracode-credentials
+              key: api-id
+        - name: VERACODE_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: veracode-credentials
+              key: api-key
+        - name: EXPORT_INTERVAL
+          value: "300"  # 5 minutes
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "200m"
+
+---
+# Security Alerting Rules
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: security-alerting-rules
+  namespace: security-monitoring
+  labels:
+    app: security-monitoring
+spec:
+  groups:
+  - name: security.rules
+    rules:
+    - alert: HighSeverityVulnerability
+      expr: snyk_vulnerabilities{severity="high"} > 0
+      for: 0m
+      labels:
+        severity: critical
+        service: saas-idp
+        team: security
+      annotations:
+        summary: "High severity vulnerability detected"
+        description: "Snyk has detected {{ $value }} high severity vulnerabilities in SaaS IDP"
+        runbook_url: "https://runbooks.company.com/security/high-vulnerability"
+
+    - alert: CriticalSecurityFinding
+      expr: veracode_findings{severity="critical"} > 0
+      for: 0m
+      labels:
+        severity: critical
+        service: saas-idp
+        team: security
+      annotations:
+        summary: "Critical security finding detected"
+        description: "Veracode has detected {{ $value }} critical security findings in SaaS IDP"
+        runbook_url: "https://runbooks.company.com/security/critical-finding"
+
+    - alert: FalcoSecurityAlert
+      expr: increase(falco_events_total{priority="Critical"}[5m]) > 0
+      for: 0m
+      labels:
+        severity: warning
+        service: saas-idp
+        team: security
+      annotations:
+        summary: "Runtime security alert from Falco"
+        description: "Falco has detected {{ $value }} critical runtime security events in the last 5 minutes"
+        runbook_url: "https://runbooks.company.com/security/runtime-alert"
+
+    - alert: PolicyViolation
+      expr: gatekeeper_violations_total > 0
+      for: 1m
+      labels:
+        severity: warning
+        service: saas-idp
+        team: security
+      annotations:
+        summary: "OPA Gatekeeper policy violation"
+        description: "OPA Gatekeeper has detected {{ $value }} policy violations"
+        runbook_url: "https://runbooks.company.com/security/policy-violation"
+
+    - alert: SecurityDashboardDown
+      expr: up{job="security-dashboard"} == 0
+      for: 2m
+      labels:
+        severity: warning
+        service: security-dashboard
+        team: security
+      annotations:
+        summary: "Security dashboard is down"
+        description: "Security dashboard has been down for more than 2 minutes"
+        runbook_url: "https://runbooks.company.com/security/dashboard-down"

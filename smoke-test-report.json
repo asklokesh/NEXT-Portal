@@ -1,0 +1,495 @@
+{
+  "timestamp": "2025-08-13T00:08:19.533Z",
+  "config": {
+    "baseUrl": "http://localhost:4400",
+    "timeout": 10000,
+    "maxRetries": 3,
+    "reportPath": "./smoke-test-report.json"
+  },
+  "stats": {
+    "total": 11,
+    "passed": 10,
+    "failed": 0,
+    "warnings": 1,
+    "critical_failures": 0
+  },
+  "duration": 302,
+  "results": [
+    {
+      "name": "Homepage Load",
+      "type": "route",
+      "path": "/",
+      "critical": false,
+      "status": "passed",
+      "duration": 8,
+      "error": null,
+      "details": {
+        "statusCode": 307,
+        "responseTime": 8,
+        "contentLength": 10,
+        "headers": {
+          "location": "/dashboard",
+          "date": "Wed, 13 Aug 2025 00:08:19 GMT",
+          "connection": "keep-alive",
+          "keep-alive": "timeout=5",
+          "transfer-encoding": "chunked"
+        }
+      },
+      "retryCount": 0
+    },
+    {
+      "name": "Dashboard Access",
+      "type": "route",
+      "path": "/dashboard",
+      "critical": true,
+      "status": "passed",
+      "duration": 73,
+      "error": null,
+      "details": {
+        "statusCode": 200,
+        "responseTime": 71,
+        "contentLength": 48906,
+        "headers": {
+          "content-security-policy": "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net https://unpkg.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https: blob:; connect-src 'self' https://api.github.com https://registry.npmjs.org ws: wss: http://localhost:* https://localhost:*; media-src 'self'; object-src 'none'; frame-src 'none'; worker-src 'self' blob:; manifest-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'self'; upgrade-insecure-requests",
+          "permissions-policy": "accelerometer=(), autoplay=(), camera=(), cross-origin-isolated=(), display-capture=(), encrypted-media=(), fullscreen=(self), geolocation=(), gyroscope=(), keyboard-map=(), magnetometer=(), microphone=(), midi=(), payment=(), picture-in-picture=(), publickey-credentials-get=(), screen-wake-lock=(), sync-xhr=(), usb=(), web-share=(), xr-spatial-tracking=()",
+          "referrer-policy": "strict-origin-when-cross-origin",
+          "x-content-type-options": "nosniff",
+          "x-dns-prefetch-control": "off",
+          "x-download-options": "noopen",
+          "x-environment": "development",
+          "x-frame-options": "DENY",
+          "x-permitted-cross-domain-policies": "none",
+          "x-ratelimit-remaining": "97",
+          "x-ratelimit-reset": "2025-08-13T00:09:05.618Z",
+          "x-request-id": "me97pd7xbvgj1xx25zg",
+          "x-response-time": "0ms",
+          "x-xss-protection": "1; mode=block",
+          "vary": "RSC, Next-Router-State-Tree, Next-Router-Prefetch, Next-Router-Segment-Prefetch, Accept-Encoding",
+          "link": "</_next/static/media/e4af272ccee01ff0-s.p.woff2>; rel=preload; as=\"font\"; crossorigin=\"\"; type=\"font/woff2\"",
+          "cache-control": "no-store, must-revalidate",
+          "content-type": "text/html; charset=utf-8",
+          "date": "Wed, 13 Aug 2025 00:08:19 GMT",
+          "connection": "keep-alive",
+          "keep-alive": "timeout=5",
+          "transfer-encoding": "chunked"
+        }
+      },
+      "retryCount": 0
+    },
+    {
+      "name": "Plugin Management",
+      "type": "route",
+      "path": "/plugins",
+      "critical": true,
+      "status": "passed",
+      "duration": 73,
+      "error": null,
+      "details": {
+        "statusCode": 200,
+        "responseTime": 71,
+        "contentLength": 54810,
+        "headers": {
+          "content-security-policy": "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net https://unpkg.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https: blob:; connect-src 'self' https://api.github.com https://registry.npmjs.org ws: wss: http://localhost:* https://localhost:*; media-src 'self'; object-src 'none'; frame-src 'none'; worker-src 'self' blob:; manifest-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'self'; upgrade-insecure-requests",
+          "permissions-policy": "accelerometer=(), autoplay=(), camera=(), cross-origin-isolated=(), display-capture=(), encrypted-media=(), fullscreen=(self), geolocation=(), gyroscope=(), keyboard-map=(), magnetometer=(), microphone=(), midi=(), payment=(), picture-in-picture=(), publickey-credentials-get=(), screen-wake-lock=(), sync-xhr=(), usb=(), web-share=(), xr-spatial-tracking=()",
+          "referrer-policy": "strict-origin-when-cross-origin",
+          "x-content-type-options": "nosniff",
+          "x-dns-prefetch-control": "off",
+          "x-download-options": "noopen",
+          "x-environment": "development",
+          "x-frame-options": "DENY",
+          "x-permitted-cross-domain-policies": "none",
+          "x-ratelimit-remaining": "97",
+          "x-ratelimit-reset": "2025-08-13T00:08:47.553Z",
+          "x-request-id": "me97pd9yum5t51kq63i",
+          "x-response-time": "0ms",
+          "x-xss-protection": "1; mode=block",
+          "vary": "RSC, Next-Router-State-Tree, Next-Router-Prefetch, Next-Router-Segment-Prefetch, Accept-Encoding",
+          "link": "</_next/static/media/e4af272ccee01ff0-s.p.woff2>; rel=preload; as=\"font\"; crossorigin=\"\"; type=\"font/woff2\"",
+          "cache-control": "no-store, must-revalidate",
+          "content-type": "text/html; charset=utf-8",
+          "date": "Wed, 13 Aug 2025 00:08:19 GMT",
+          "connection": "keep-alive",
+          "keep-alive": "timeout=5",
+          "transfer-encoding": "chunked"
+        }
+      },
+      "retryCount": 0
+    },
+    {
+      "name": "Service Catalog",
+      "type": "route",
+      "path": "/catalog",
+      "critical": true,
+      "status": "passed",
+      "duration": 56,
+      "error": null,
+      "details": {
+        "statusCode": 200,
+        "responseTime": 55,
+        "contentLength": 36857,
+        "headers": {
+          "content-security-policy": "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net https://unpkg.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https: blob:; connect-src 'self' https://api.github.com https://registry.npmjs.org ws: wss: http://localhost:* https://localhost:*; media-src 'self'; object-src 'none'; frame-src 'none'; worker-src 'self' blob:; manifest-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'self'; upgrade-insecure-requests",
+          "permissions-policy": "accelerometer=(), autoplay=(), camera=(), cross-origin-isolated=(), display-capture=(), encrypted-media=(), fullscreen=(self), geolocation=(), gyroscope=(), keyboard-map=(), magnetometer=(), microphone=(), midi=(), payment=(), picture-in-picture=(), publickey-credentials-get=(), screen-wake-lock=(), sync-xhr=(), usb=(), web-share=(), xr-spatial-tracking=()",
+          "referrer-policy": "strict-origin-when-cross-origin",
+          "x-content-type-options": "nosniff",
+          "x-dns-prefetch-control": "off",
+          "x-download-options": "noopen",
+          "x-environment": "development",
+          "x-frame-options": "DENY",
+          "x-permitted-cross-domain-policies": "none",
+          "x-ratelimit-remaining": "97",
+          "x-ratelimit-reset": "2025-08-13T00:08:48.054Z",
+          "x-request-id": "me97pdbyevxzs6x2m7p",
+          "x-response-time": "0ms",
+          "x-xss-protection": "1; mode=block",
+          "vary": "RSC, Next-Router-State-Tree, Next-Router-Prefetch, Next-Router-Segment-Prefetch, Accept-Encoding",
+          "link": "</_next/static/media/e4af272ccee01ff0-s.p.woff2>; rel=preload; as=\"font\"; crossorigin=\"\"; type=\"font/woff2\"",
+          "cache-control": "no-store, must-revalidate",
+          "content-type": "text/html; charset=utf-8",
+          "date": "Wed, 13 Aug 2025 00:08:19 GMT",
+          "connection": "keep-alive",
+          "keep-alive": "timeout=5",
+          "transfer-encoding": "chunked"
+        }
+      },
+      "retryCount": 0
+    },
+    {
+      "name": "Templates Marketplace",
+      "type": "route",
+      "path": "/templates/marketplace",
+      "critical": false,
+      "status": "passed",
+      "duration": 61,
+      "error": null,
+      "details": {
+        "statusCode": 200,
+        "responseTime": 60,
+        "contentLength": 38365,
+        "headers": {
+          "content-security-policy": "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net https://unpkg.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https: blob:; connect-src 'self' https://api.github.com https://registry.npmjs.org ws: wss: http://localhost:* https://localhost:*; media-src 'self'; object-src 'none'; frame-src 'none'; worker-src 'self' blob:; manifest-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'self'; upgrade-insecure-requests",
+          "permissions-policy": "accelerometer=(), autoplay=(), camera=(), cross-origin-isolated=(), display-capture=(), encrypted-media=(), fullscreen=(self), geolocation=(), gyroscope=(), keyboard-map=(), magnetometer=(), microphone=(), midi=(), payment=(), picture-in-picture=(), publickey-credentials-get=(), screen-wake-lock=(), sync-xhr=(), usb=(), web-share=(), xr-spatial-tracking=()",
+          "referrer-policy": "strict-origin-when-cross-origin",
+          "x-content-type-options": "nosniff",
+          "x-dns-prefetch-control": "off",
+          "x-download-options": "noopen",
+          "x-environment": "development",
+          "x-frame-options": "DENY",
+          "x-permitted-cross-domain-policies": "none",
+          "x-ratelimit-remaining": "97",
+          "x-ratelimit-reset": "2025-08-13T00:08:48.453Z",
+          "x-request-id": "me97pddj7jyz946cfq",
+          "x-response-time": "0ms",
+          "x-xss-protection": "1; mode=block",
+          "vary": "RSC, Next-Router-State-Tree, Next-Router-Prefetch, Next-Router-Segment-Prefetch, Accept-Encoding",
+          "link": "</_next/static/media/e4af272ccee01ff0-s.p.woff2>; rel=preload; as=\"font\"; crossorigin=\"\"; type=\"font/woff2\"",
+          "cache-control": "no-store, must-revalidate",
+          "content-type": "text/html; charset=utf-8",
+          "date": "Wed, 13 Aug 2025 00:08:19 GMT",
+          "connection": "keep-alive",
+          "keep-alive": "timeout=5",
+          "transfer-encoding": "chunked"
+        }
+      },
+      "retryCount": 0
+    },
+    {
+      "name": "Backstage Entities API",
+      "type": "api",
+      "path": "/api/backstage/entities",
+      "critical": true,
+      "status": "passed",
+      "duration": 20,
+      "error": null,
+      "details": {
+        "statusCode": 200,
+        "responseTime": 19,
+        "contentLength": 812,
+        "headers": {
+          "cache-control": "no-store, max-age=0",
+          "access-control-allow-credentials": "true",
+          "access-control-allow-origin": "*",
+          "content-security-policy": "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net https://unpkg.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https: blob:; connect-src 'self' https://api.github.com https://registry.npmjs.org ws: wss: http://localhost:* https://localhost:*; media-src 'self'; object-src 'none'; frame-src 'none'; worker-src 'self' blob:; manifest-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'self'; upgrade-insecure-requests",
+          "permissions-policy": "accelerometer=(), autoplay=(), camera=(), cross-origin-isolated=(), display-capture=(), encrypted-media=(), fullscreen=(self), geolocation=(), gyroscope=(), keyboard-map=(), magnetometer=(), microphone=(), midi=(), payment=(), picture-in-picture=(), publickey-credentials-get=(), screen-wake-lock=(), sync-xhr=(), usb=(), web-share=(), xr-spatial-tracking=()",
+          "referrer-policy": "strict-origin-when-cross-origin",
+          "x-content-type-options": "nosniff",
+          "x-dns-prefetch-control": "off",
+          "x-download-options": "noopen",
+          "x-environment": "development",
+          "x-frame-options": "DENY",
+          "x-permitted-cross-domain-policies": "none",
+          "x-ratelimit-remaining": "47",
+          "x-ratelimit-reset": "2025-08-13T00:08:49.054Z",
+          "x-request-id": "me97pdf7r6u6bgphwbp",
+          "x-response-time": "0ms",
+          "x-xss-protection": "1; mode=block",
+          "vary": "RSC, Next-Router-State-Tree, Next-Router-Prefetch, Next-Router-Segment-Prefetch",
+          "content-type": "application/json",
+          "date": "Wed, 13 Aug 2025 00:08:19 GMT",
+          "connection": "keep-alive",
+          "keep-alive": "timeout=5",
+          "transfer-encoding": "chunked"
+        }
+      },
+      "retryCount": 0
+    },
+    {
+      "name": "Plugin Health API",
+      "type": "api",
+      "path": "/api/plugin-health",
+      "critical": true,
+      "status": "passed",
+      "duration": 2,
+      "error": null,
+      "details": {
+        "statusCode": 401,
+        "responseTime": 2,
+        "contentLength": 24,
+        "headers": {
+          "cache-control": "no-store, max-age=0",
+          "content-security-policy": "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net https://unpkg.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https: blob:; connect-src 'self' https://api.github.com https://registry.npmjs.org ws: wss: http://localhost:* https://localhost:*; media-src 'self'; object-src 'none'; frame-src 'none'; worker-src 'self' blob:; manifest-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'self'; upgrade-insecure-requests",
+          "content-type": "application/json",
+          "permissions-policy": "accelerometer=(), autoplay=(), camera=(), cross-origin-isolated=(), display-capture=(), encrypted-media=(), fullscreen=(self), geolocation=(), gyroscope=(), keyboard-map=(), magnetometer=(), microphone=(), midi=(), payment=(), picture-in-picture=(), publickey-credentials-get=(), screen-wake-lock=(), sync-xhr=(), usb=(), web-share=(), xr-spatial-tracking=()",
+          "referrer-policy": "strict-origin-when-cross-origin",
+          "x-content-type-options": "nosniff",
+          "x-dns-prefetch-control": "off",
+          "x-download-options": "noopen",
+          "x-frame-options": "DENY",
+          "x-permitted-cross-domain-policies": "none",
+          "x-xss-protection": "1; mode=block",
+          "vary": "Accept-Encoding",
+          "date": "Wed, 13 Aug 2025 00:08:19 GMT",
+          "connection": "keep-alive",
+          "keep-alive": "timeout=5",
+          "transfer-encoding": "chunked"
+        }
+      },
+      "retryCount": 0
+    },
+    {
+      "name": "Plugins API",
+      "type": "api",
+      "path": "/api/plugins",
+      "critical": true,
+      "status": "passed",
+      "duration": 2,
+      "error": null,
+      "details": {
+        "statusCode": 401,
+        "responseTime": 2,
+        "contentLength": 24,
+        "headers": {
+          "cache-control": "no-store, max-age=0",
+          "content-security-policy": "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net https://unpkg.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https: blob:; connect-src 'self' https://api.github.com https://registry.npmjs.org ws: wss: http://localhost:* https://localhost:*; media-src 'self'; object-src 'none'; frame-src 'none'; worker-src 'self' blob:; manifest-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'self'; upgrade-insecure-requests",
+          "content-type": "application/json",
+          "permissions-policy": "accelerometer=(), autoplay=(), camera=(), cross-origin-isolated=(), display-capture=(), encrypted-media=(), fullscreen=(self), geolocation=(), gyroscope=(), keyboard-map=(), magnetometer=(), microphone=(), midi=(), payment=(), picture-in-picture=(), publickey-credentials-get=(), screen-wake-lock=(), sync-xhr=(), usb=(), web-share=(), xr-spatial-tracking=()",
+          "referrer-policy": "strict-origin-when-cross-origin",
+          "x-content-type-options": "nosniff",
+          "x-dns-prefetch-control": "off",
+          "x-download-options": "noopen",
+          "x-frame-options": "DENY",
+          "x-permitted-cross-domain-policies": "none",
+          "x-xss-protection": "1; mode=block",
+          "vary": "Accept-Encoding",
+          "date": "Wed, 13 Aug 2025 00:08:19 GMT",
+          "connection": "keep-alive",
+          "keep-alive": "timeout=5",
+          "transfer-encoding": "chunked"
+        }
+      },
+      "retryCount": 0
+    },
+    {
+      "name": "Metrics API",
+      "type": "api",
+      "path": "/api/metrics",
+      "critical": false,
+      "status": "passed",
+      "duration": 2,
+      "error": null,
+      "details": {
+        "statusCode": 401,
+        "responseTime": 2,
+        "contentLength": 24,
+        "headers": {
+          "cache-control": "no-store, max-age=0",
+          "content-security-policy": "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net https://unpkg.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https: blob:; connect-src 'self' https://api.github.com https://registry.npmjs.org ws: wss: http://localhost:* https://localhost:*; media-src 'self'; object-src 'none'; frame-src 'none'; worker-src 'self' blob:; manifest-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'self'; upgrade-insecure-requests",
+          "content-type": "application/json",
+          "permissions-policy": "accelerometer=(), autoplay=(), camera=(), cross-origin-isolated=(), display-capture=(), encrypted-media=(), fullscreen=(self), geolocation=(), gyroscope=(), keyboard-map=(), magnetometer=(), microphone=(), midi=(), payment=(), picture-in-picture=(), publickey-credentials-get=(), screen-wake-lock=(), sync-xhr=(), usb=(), web-share=(), xr-spatial-tracking=()",
+          "referrer-policy": "strict-origin-when-cross-origin",
+          "x-content-type-options": "nosniff",
+          "x-dns-prefetch-control": "off",
+          "x-download-options": "noopen",
+          "x-frame-options": "DENY",
+          "x-permitted-cross-domain-policies": "none",
+          "x-xss-protection": "1; mode=block",
+          "vary": "Accept-Encoding",
+          "date": "Wed, 13 Aug 2025 00:08:19 GMT",
+          "connection": "keep-alive",
+          "keep-alive": "timeout=5",
+          "transfer-encoding": "chunked"
+        }
+      },
+      "retryCount": 0
+    },
+    {
+      "name": "Error Tracking API",
+      "type": "api",
+      "path": "/api/monitoring/errors",
+      "critical": false,
+      "status": "passed",
+      "duration": 2,
+      "error": null,
+      "details": {
+        "statusCode": 401,
+        "responseTime": 2,
+        "contentLength": 24,
+        "headers": {
+          "cache-control": "no-store, max-age=0",
+          "content-security-policy": "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net https://unpkg.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https: blob:; connect-src 'self' https://api.github.com https://registry.npmjs.org ws: wss: http://localhost:* https://localhost:*; media-src 'self'; object-src 'none'; frame-src 'none'; worker-src 'self' blob:; manifest-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'self'; upgrade-insecure-requests",
+          "content-type": "application/json",
+          "permissions-policy": "accelerometer=(), autoplay=(), camera=(), cross-origin-isolated=(), display-capture=(), encrypted-media=(), fullscreen=(self), geolocation=(), gyroscope=(), keyboard-map=(), magnetometer=(), microphone=(), midi=(), payment=(), picture-in-picture=(), publickey-credentials-get=(), screen-wake-lock=(), sync-xhr=(), usb=(), web-share=(), xr-spatial-tracking=()",
+          "referrer-policy": "strict-origin-when-cross-origin",
+          "x-content-type-options": "nosniff",
+          "x-dns-prefetch-control": "off",
+          "x-download-options": "noopen",
+          "x-frame-options": "DENY",
+          "x-permitted-cross-domain-policies": "none",
+          "x-xss-protection": "1; mode=block",
+          "vary": "Accept-Encoding",
+          "date": "Wed, 13 Aug 2025 00:08:19 GMT",
+          "connection": "keep-alive",
+          "keep-alive": "timeout=5",
+          "transfer-encoding": "chunked"
+        }
+      },
+      "retryCount": 0
+    },
+    {
+      "name": "Security Headers Check",
+      "type": "security",
+      "path": "/",
+      "critical": false,
+      "status": "warning",
+      "duration": 0,
+      "error": "Missing security headers: x-frame-options, x-content-type-options",
+      "details": {
+        "statusCode": 307,
+        "responseTime": 0,
+        "contentLength": 10,
+        "headers": {
+          "location": "/dashboard",
+          "date": "Wed, 13 Aug 2025 00:08:19 GMT",
+          "connection": "keep-alive",
+          "keep-alive": "timeout=5",
+          "transfer-encoding": "chunked"
+        }
+      },
+      "retryCount": 0
+    }
+  ],
+  "performance": {
+    "routes": {
+      "avg_response_time": 53,
+      "max_response_time": 71,
+      "slowest_route": {
+        "name": "Dashboard Access",
+        "type": "route",
+        "path": "/dashboard",
+        "critical": true,
+        "status": "passed",
+        "duration": 73,
+        "error": null,
+        "details": {
+          "statusCode": 200,
+          "responseTime": 71,
+          "contentLength": 48906,
+          "headers": {
+            "content-security-policy": "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net https://unpkg.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https: blob:; connect-src 'self' https://api.github.com https://registry.npmjs.org ws: wss: http://localhost:* https://localhost:*; media-src 'self'; object-src 'none'; frame-src 'none'; worker-src 'self' blob:; manifest-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'self'; upgrade-insecure-requests",
+            "permissions-policy": "accelerometer=(), autoplay=(), camera=(), cross-origin-isolated=(), display-capture=(), encrypted-media=(), fullscreen=(self), geolocation=(), gyroscope=(), keyboard-map=(), magnetometer=(), microphone=(), midi=(), payment=(), picture-in-picture=(), publickey-credentials-get=(), screen-wake-lock=(), sync-xhr=(), usb=(), web-share=(), xr-spatial-tracking=()",
+            "referrer-policy": "strict-origin-when-cross-origin",
+            "x-content-type-options": "nosniff",
+            "x-dns-prefetch-control": "off",
+            "x-download-options": "noopen",
+            "x-environment": "development",
+            "x-frame-options": "DENY",
+            "x-permitted-cross-domain-policies": "none",
+            "x-ratelimit-remaining": "97",
+            "x-ratelimit-reset": "2025-08-13T00:09:05.618Z",
+            "x-request-id": "me97pd7xbvgj1xx25zg",
+            "x-response-time": "0ms",
+            "x-xss-protection": "1; mode=block",
+            "vary": "RSC, Next-Router-State-Tree, Next-Router-Prefetch, Next-Router-Segment-Prefetch, Accept-Encoding",
+            "link": "</_next/static/media/e4af272ccee01ff0-s.p.woff2>; rel=preload; as=\"font\"; crossorigin=\"\"; type=\"font/woff2\"",
+            "cache-control": "no-store, must-revalidate",
+            "content-type": "text/html; charset=utf-8",
+            "date": "Wed, 13 Aug 2025 00:08:19 GMT",
+            "connection": "keep-alive",
+            "keep-alive": "timeout=5",
+            "transfer-encoding": "chunked"
+          }
+        },
+        "retryCount": 0
+      }
+    },
+    "apis": {
+      "avg_response_time": 5,
+      "max_response_time": 19,
+      "slowest_api": {
+        "name": "Backstage Entities API",
+        "type": "api",
+        "path": "/api/backstage/entities",
+        "critical": true,
+        "status": "passed",
+        "duration": 20,
+        "error": null,
+        "details": {
+          "statusCode": 200,
+          "responseTime": 19,
+          "contentLength": 812,
+          "headers": {
+            "cache-control": "no-store, max-age=0",
+            "access-control-allow-credentials": "true",
+            "access-control-allow-origin": "*",
+            "content-security-policy": "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net https://unpkg.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https: blob:; connect-src 'self' https://api.github.com https://registry.npmjs.org ws: wss: http://localhost:* https://localhost:*; media-src 'self'; object-src 'none'; frame-src 'none'; worker-src 'self' blob:; manifest-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'self'; upgrade-insecure-requests",
+            "permissions-policy": "accelerometer=(), autoplay=(), camera=(), cross-origin-isolated=(), display-capture=(), encrypted-media=(), fullscreen=(self), geolocation=(), gyroscope=(), keyboard-map=(), magnetometer=(), microphone=(), midi=(), payment=(), picture-in-picture=(), publickey-credentials-get=(), screen-wake-lock=(), sync-xhr=(), usb=(), web-share=(), xr-spatial-tracking=()",
+            "referrer-policy": "strict-origin-when-cross-origin",
+            "x-content-type-options": "nosniff",
+            "x-dns-prefetch-control": "off",
+            "x-download-options": "noopen",
+            "x-environment": "development",
+            "x-frame-options": "DENY",
+            "x-permitted-cross-domain-policies": "none",
+            "x-ratelimit-remaining": "47",
+            "x-ratelimit-reset": "2025-08-13T00:08:49.054Z",
+            "x-request-id": "me97pdf7r6u6bgphwbp",
+            "x-response-time": "0ms",
+            "x-xss-protection": "1; mode=block",
+            "vary": "RSC, Next-Router-State-Tree, Next-Router-Prefetch, Next-Router-Segment-Prefetch",
+            "content-type": "application/json",
+            "date": "Wed, 13 Aug 2025 00:08:19 GMT",
+            "connection": "keep-alive",
+            "keep-alive": "timeout=5",
+            "transfer-encoding": "chunked"
+          }
+        },
+        "retryCount": 0
+      }
+    }
+  },
+  "summary": {
+    "overall_status": "WARNING",
+    "critical_failures": 0,
+    "recommendations": [
+      {
+        "type": "security",
+        "severity": "medium",
+        "message": "Missing security headers detected",
+        "actions": [
+          "Implement security headers middleware",
+          "Review security configuration"
+        ]
+      }
+    ]
+  }
+}

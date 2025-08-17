@@ -1,6 +1,3 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -10,55 +7,49 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// User Management
 model User {
-  id          String   @id @default(cuid())
-  email       String   @unique
-  name        String
-  username    String?  @unique
-  avatar      String?
-  provider    String   // github, google, saml, local, etc.
-  providerId  String
-  password    String?  // Only for local provider
-  role        UserRole @default(DEVELOPER)
-  isActive    Boolean  @default(true)
-  lastLogin   DateTime?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  // Relationships
-  teamMemberships TeamMember[]
-  ownedServices   Service[]    @relation("ServiceOwner")
+  id              String          @id @default(cuid())
+  email           String          @unique
+  name            String
+  username        String?         @unique
+  avatar          String?
+  provider        String
+  providerId      String
+  password        String?
+  role            UserRole        @default(DEVELOPER)
+  isActive        Boolean         @default(true)
+  lastLogin       DateTime?
+  mfaEnabled      Boolean         @default(false)
+  mfaSecret       String?
+  mfaMethod       String?
+  mfaBackupCodes  String[]
+  phoneNumber     String?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
   apiKeys         ApiKey[]
-  sessions        Session[]
   auditLogs       AuditLog[]
+  mfaChallenges   MfaChallenge[]
+  ownedServices   Service[]       @relation("ServiceOwner")
+  sessions        Session[]
+  teamMemberships TeamMember[]
+  trustedDevices  TrustedDevice[]
 
   @@map("users")
 }
 
-enum UserRole {
-  ADMIN
-  PLATFORM_ENGINEER
-  DEVELOPER
-  VIEWER
-}
-
-// Team Management
 model Team {
-  id          String   @id @default(cuid())
-  name        String   @unique
-  displayName String
-  description String?
-  avatar      String?
-  isActive    Boolean  @default(true)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  // Relationships
-  members     TeamMember[]
-  services    Service[]
-  permissions Permission[]
+  id              String           @id @default(cuid())
+  name            String           @unique
+  displayName     String
+  description     String?
+  avatar          String?
+  isActive        Boolean          @default(true)
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
   costAllocations CostAllocation[]
+  permissions     Permission[]
+  services        Service[]
+  members         TeamMember[]
 
   @@map("teams")
 }
@@ -68,56 +59,2087 @@ model TeamMember {
   userId String
   teamId String
   role   TeamRole @default(MEMBER)
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-  team Team @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  team   Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  user   User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([userId, teamId])
   @@map("team_members")
+}
+
+model Service {
+  id                 String               @id @default(cuid())
+  name               String               @unique
+  displayName        String
+  description        String?
+  type               ServiceType
+  lifecycle          Lifecycle
+  namespace          String               @default("default")
+  system             String?
+  domain             String?
+  ownerId            String
+  teamId             String
+  gitRepo            String?
+  gitBranch          String?              @default("main")
+  apiVersion         String?
+  tags               String[]
+  labels             Json?
+  annotations        Json?
+  isActive           Boolean              @default(true)
+  createdAt          DateTime             @default(now())
+  updatedAt          DateTime             @updatedAt
+  deployments        Deployment[]
+  costs              ServiceCost[]
+  dependents         ServiceDependency[]  @relation("DependentServices")
+  dependencies       ServiceDependency[]  @relation("ServiceDependencies")
+  documents          ServiceDocument[]
+  healthChecks       ServiceHealthCheck[]
+  metrics            ServiceMetric[]
+  owner              User                 @relation("ServiceOwner", fields: [ownerId], references: [id])
+  team               Team                 @relation(fields: [teamId], references: [id])
+  templateExecutions TemplateExecution[]
+
+  @@map("services")
+}
+
+model ServiceDependency {
+  id             String         @id @default(cuid())
+  serviceId      String
+  dependsOnId    String
+  dependencyType DependencyType
+  description    String?
+  dependsOn      Service        @relation("DependentServices", fields: [dependsOnId], references: [id], onDelete: Cascade)
+  service        Service        @relation("ServiceDependencies", fields: [serviceId], references: [id], onDelete: Cascade)
+
+  @@unique([serviceId, dependsOnId])
+  @@map("service_dependencies")
+}
+
+model ServiceHealthCheck {
+  id        String              @id @default(cuid())
+  serviceId String
+  name      String
+  type      HealthCheckType
+  endpoint  String?
+  method    String?             @default("GET")
+  interval  Int                 @default(60)
+  timeout   Int                 @default(30)
+  retries   Int                 @default(3)
+  isEnabled Boolean             @default(true)
+  createdAt DateTime            @default(now())
+  updatedAt DateTime            @updatedAt
+  results   HealthCheckResult[]
+  service   Service             @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+
+  @@map("service_health_checks")
+}
+
+model HealthCheckResult {
+  id            String             @id @default(cuid())
+  healthCheckId String
+  status        HealthStatus
+  responseTime  Int?
+  message       String?
+  checkedAt     DateTime           @default(now())
+  healthCheck   ServiceHealthCheck @relation(fields: [healthCheckId], references: [id], onDelete: Cascade)
+
+  @@map("health_check_results")
+}
+
+model SystemHealth {
+  id        String       @id @default(cuid())
+  service   String       @unique
+  status    HealthStatus
+  metadata  Json?
+  checkedAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  @@map("system_health")
+}
+
+model ServiceMetric {
+  id        String     @id @default(cuid())
+  serviceId String
+  name      String
+  type      MetricType
+  value     Float
+  unit      String?
+  labels    Json?
+  timestamp DateTime   @default(now())
+  service   Service    @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+
+  @@map("service_metrics")
+}
+
+model Template {
+  id          String              @id @default(cuid())
+  name        String              @unique
+  displayName String
+  description String
+  type        ServiceType
+  ownerId     String
+  teamId      String?
+  content     Json
+  schema      Json?
+  tags        String[]
+  isPublic    Boolean             @default(false)
+  isActive    Boolean             @default(true)
+  version     String              @default("1.0.0")
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+  executions  TemplateExecution[]
+
+  @@map("templates")
+}
+
+model TemplateExecution {
+  id          String          @id @default(cuid())
+  templateId  String
+  serviceId   String?
+  userId      String
+  parameters  Json
+  status      ExecutionStatus
+  result      Json?
+  error       String?
+  startedAt   DateTime        @default(now())
+  completedAt DateTime?
+  service     Service?        @relation(fields: [serviceId], references: [id])
+  template    Template        @relation(fields: [templateId], references: [id])
+
+  @@map("template_executions")
+}
+
+model Deployment {
+  id          String           @id @default(cuid())
+  serviceId   String
+  version     String
+  environment String
+  status      DeploymentStatus
+  deployedBy  String
+  gitCommit   String?
+  gitBranch   String?
+  startedAt   DateTime         @default(now())
+  completedAt DateTime?
+  rollbackOf  String?
+  service     Service          @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+
+  @@map("deployments")
+}
+
+model ServiceCost {
+  id            String   @id @default(cuid())
+  serviceId     String
+  provider      String
+  region        String?
+  account       String?
+  service       String
+  resource      String?
+  cost          Decimal  @db.Decimal(10, 2)
+  currency      String   @default("USD")
+  period        String
+  date          DateTime
+  tags          Json?
+  serviceEntity Service  @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+
+  @@map("service_costs")
+}
+
+model Budget {
+  id        String        @id @default(cuid())
+  name      String
+  amount    Decimal       @db.Decimal(10, 2)
+  currency  String        @default("USD")
+  period    BudgetPeriod
+  scope     Json
+  threshold Float         @default(0.8)
+  isActive  Boolean       @default(true)
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+  alerts    BudgetAlert[]
+
+  @@map("budgets")
+}
+
+model BudgetAlert {
+  id        String    @id @default(cuid())
+  budgetId  String
+  amount    Decimal   @db.Decimal(10, 2)
+  threshold Float
+  triggered Boolean   @default(false)
+  sentAt    DateTime?
+  createdAt DateTime  @default(now())
+  budget    Budget    @relation(fields: [budgetId], references: [id], onDelete: Cascade)
+
+  @@map("budget_alerts")
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  userId    String
+  token     String   @unique
+  expiresAt DateTime
+  isActive  Boolean  @default(true)
+  ipAddress String?
+  userAgent String?
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+model ApiKey {
+  id          String    @id @default(cuid())
+  userId      String
+  name        String
+  keyHash     String    @unique
+  permissions Json?
+  expiresAt   DateTime?
+  lastUsedAt  DateTime?
+  isActive    Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("api_keys")
+}
+
+model Permission {
+  id       String @id @default(cuid())
+  teamId   String
+  resource String
+  action   String
+  scope    Json?
+  team     Team   @relation(fields: [teamId], references: [id], onDelete: Cascade)
+
+  @@unique([teamId, resource, action])
+  @@map("permissions")
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  userId     String?
+  action     String
+  resource   String
+  resourceId String?
+  metadata   Json?
+  ipAddress  String?
+  userAgent  String?
+  timestamp  DateTime @default(now())
+  user       User?    @relation(fields: [userId], references: [id])
+
+  @@map("audit_logs")
+}
+
+model MfaChallenge {
+  id        String   @id @default(cuid())
+  userId    String
+  method    String
+  metadata  Json?
+  completed Boolean  @default(false)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("mfa_challenges")
+}
+
+model TrustedDevice {
+  id        String    @id @default(cuid())
+  userId    String
+  token     String    @unique
+  name      String?
+  isActive  Boolean   @default(true)
+  lastUsed  DateTime?
+  expiresAt DateTime
+  createdAt DateTime  @default(now())
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("trusted_devices")
+}
+
+model Notification {
+  id         String   @id @default(cuid())
+  userId     String
+  type       String
+  title      String
+  message    String
+  priority   String
+  sourceName String
+  sourceType String
+  actions    String?
+  metadata   String?
+  read       Boolean  @default(false)
+  pinned     Boolean  @default(false)
+  archived   Boolean  @default(false)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@map("notifications")
+}
+
+model NotificationSettings {
+  id          String   @id @default(cuid())
+  userId      String   @unique
+  preferences String
+  filters     String
+  quietHours  String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("notification_settings")
+}
+
+model ServiceDocument {
+  id        String       @id @default(cuid())
+  serviceId String
+  title     String
+  content   String
+  type      DocumentType
+  path      String?
+  isActive  Boolean      @default(true)
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+  service   Service      @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+
+  @@map("service_documents")
+}
+
+model SearchIndex {
+  id         String   @id @default(cuid())
+  entityType String
+  entityId   String
+  title      String
+  content    String
+  tags       String[]
+  metadata   Json?
+  updatedAt  DateTime @updatedAt
+
+  @@unique([entityType, entityId])
+  @@map("search_index")
+}
+
+model Plugin {
+  id                     String                     @id @default(cuid())
+  name                   String
+  displayName            String
+  description            String?
+  category               PluginCategory             @default(OTHER)
+  subcategory            String?
+  author                 String?
+  maintainer             String?
+  repository             String?
+  homepage               String?
+  documentation          String?
+  npm                    String?
+  license                String?
+  keywords               String[]                   @default([])
+  tags                   String[]                   @default([])
+  tenantId               String?
+  tenantScope            TenantScope                @default(PRIVATE)
+  isInstalled            Boolean                    @default(false)
+  isEnabled              Boolean                    @default(false)
+  isFeatured             Boolean                    @default(false)
+  isPremium              Boolean                    @default(false)
+  compatibility          Json?
+  requirements           Json?
+  permissions            Json?
+  apiVersion             String                     @default("v1")
+  schemaVersion          String                     @default("1.0.0")
+  healthScore            Float?
+  lastHealthCheck        DateTime?
+  cpuUsage               Float?
+  memoryUsage            Float?
+  installedFrom          PluginSource?
+  installedBy            String?
+  installedAt            DateTime?
+  configSchema           Json?
+  dependencies           String[]                   @default([])
+  downloadCount          BigInt                     @default(0)
+  starCount              Int                        @default(0)
+  issueCount             Int                        @default(0)
+  lastCommit             DateTime?
+  securityScore          Float?
+  maintenanceScore       Float?
+  status                 PluginStatus               @default(ACTIVE)
+  lifecycle              PluginLifecycle            @default(STABLE)
+  deprecatedAt           DateTime?
+  archivedAt             DateTime?
+  createdAt              DateTime                   @default(now())
+  updatedAt              DateTime                   @updatedAt
+  hasSecurityIssues      Boolean                    @default(false)
+  lastSecurityScan       DateTime?
+  securityApprovalStatus SecurityApprovalStatus?    @default(PENDING)
+  securityRiskLevel      SecurityRiskLevel?         @default(UNKNOWN)
+  trustScore             Float?                     @default(0)
+  marketplacePlugin      MarketplacePlugin?
+  alerts                 PluginAlert[]
+  analytics              PluginAnalytics[]
+  approvals              PluginApproval[]           @relation("PluginApprovals")
+  backups                PluginBackup[]
+  configs                PluginConfig[]
+  configurations         PluginConfiguration[]
+  dependents             PluginDependency[]         @relation("DependentPlugins")
+  pluginDependencies     PluginDependency[]         @relation("PluginDependencies")
+  environments           PluginEnvironment[]
+  governance             PluginGovernance[]
+  metrics                PluginMetrics[]
+  operations             PluginOperation[]
+  performance            PluginPerformance[]
+  qualityChecks          PluginQualityCheck[]
+  qualityHistory         PluginQualityHistory[]
+  qualityIssues          PluginQualityIssue[]
+  qualityScore           PluginQualityScore?
+  securityMetadata       PluginSecurityMetadata[]
+  testResults            PluginTestResult[]
+  versions               PluginVersion[]
+  vulnerabilities        PluginVulnerability[]
+  workflows              PluginWorkflow[]
+  evaluationJobs         QualityEvaluationJob[]
+  resourceUsage          ResourceUsage[]
+  complianceReports      SecurityComplianceReport[]
+  securityScanResults    SecurityScanResult[]
+
+  @@unique([name, tenantId])
+  @@index([tenantId, category, status])
+  @@index([name])
+  @@index([category, isPremium])
+  @@index([healthScore])
+  @@index([downloadCount])
+  @@index([lastHealthCheck])
+  @@index([cpuUsage])
+  @@index([memoryUsage])
+  @@index([installedBy])
+  @@index([installedAt])
+  @@map("plugins")
+}
+
+model PluginVersion {
+  id                   String                     @id @default(cuid())
+  pluginId             String
+  version              String
+  semverMajor          Int
+  semverMinor          Int
+  semverPatch          Int
+  prereleaseTag        String?
+  isCurrent            Boolean                    @default(false)
+  isDeployed           Boolean                    @default(false)
+  status               VersionStatus              @default(PENDING)
+  changelog            String?
+  dependencies         Json?
+  configuration        Json?
+  migrationScript      String?
+  installSource        VersionSource              @default(NPM)
+  gitCommit            String?
+  gitBranch            String?
+  deployedBy           String?
+  deployedAt           DateTime?
+  rollbackOf           String?
+  notes                String?
+  createdAt            DateTime                   @default(now())
+  updatedAt            DateTime                   @updatedAt
+  digitalSignature     String?
+  integrityHash        String?
+  publicKeyFingerprint String?
+  securityScanPassed   Boolean                    @default(false)
+  approvals            PluginApproval[]
+  backupsAfter         PluginBackup[]             @relation("BackupAfterVersion")
+  backupsBefore        PluginBackup[]             @relation("BackupBeforeVersion")
+  deployments          PluginDeployment[]
+  migrationExecution   PluginMigrationExecution[]
+  securityMetadata     PluginSecurityMetadata[]
+  testResults          PluginTestResult[]
+  plugin               Plugin                     @relation(fields: [pluginId], references: [id], onDelete: Cascade)
+  rollbackTo           PluginVersion?             @relation("VersionRollbacks", fields: [rollbackOf], references: [id])
+  rollbacksFrom        PluginVersion[]            @relation("VersionRollbacks")
+  complianceReports    SecurityComplianceReport[]
+  securityScanResults  SecurityScanResult[]
+
+  @@unique([pluginId, version])
+  @@index([pluginId, isCurrent])
+  @@index([status, deployedAt])
+  @@map("plugin_versions")
+}
+
+model PluginDeployment {
+  id               String             @id @default(cuid())
+  pluginVersionId  String
+  environment      String             @default("production")
+  status           DeploymentStatus   @default(PENDING)
+  strategy         DeploymentStrategy @default(ROLLING)
+  progress         Int                @default(0)
+  logs             String?
+  error            String?
+  healthCheck      Json?
+  rollbackPlan     Json?
+  startedAt        DateTime           @default(now())
+  completedAt      DateTime?
+  deployedBy       String
+  rollbackDeadline DateTime?
+  pluginVersion    PluginVersion      @relation(fields: [pluginVersionId], references: [id], onDelete: Cascade)
+
+  @@index([status, startedAt])
+  @@map("plugin_deployments")
+}
+
+model PluginConfiguration {
+  id          String   @id @default(cuid())
+  pluginId    String
+  environment String   @default("production")
+  config      Json
+  isActive    Boolean  @default(true)
+  createdBy   String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  plugin      Plugin   @relation(fields: [pluginId], references: [id], onDelete: Cascade)
+
+  @@unique([pluginId, environment])
+  @@map("plugin_configurations")
+}
+
+model PluginBackup {
+  id                String         @id @default(cuid())
+  pluginId          String
+  beforeVersionId   String?
+  afterVersionId    String?
+  backupType        BackupType
+  source            BackupSource   @default(AUTOMATIC)
+  status            BackupStatus   @default(PENDING)
+  size              BigInt?
+  compression       String?
+  encryption        Boolean        @default(true)
+  storageProvider   String         @default("s3")
+  storagePath       String
+  storageRegion     String?
+  metadata          Json?
+  checksumAlgorithm String         @default("sha256")
+  checksum          String?
+  retentionDays     Int            @default(90)
+  expiresAt         DateTime?
+  error             String?
+  notes             String?
+  createdBy         String?
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+  afterVersion      PluginVersion? @relation("BackupAfterVersion", fields: [afterVersionId], references: [id])
+  beforeVersion     PluginVersion? @relation("BackupBeforeVersion", fields: [beforeVersionId], references: [id])
+  plugin            Plugin         @relation(fields: [pluginId], references: [id], onDelete: Cascade)
+  restorePoints     RestorePoint[]
+
+  @@index([pluginId, createdAt])
+  @@index([status, expiresAt])
+  @@map("plugin_backups")
+}
+
+model PluginOperation {
+  id            String              @id @default(cuid())
+  pluginId      String
+  operationType PluginOperationType
+  status        OperationStatus     @default(PENDING)
+  version       String?
+  performedBy   String
+  environment   String              @default("production")
+  parameters    Json?
+  result        Json?
+  logs          String?
+  error         String?
+  duration      Int?
+  retries       Int                 @default(0)
+  maxRetries    Int                 @default(3)
+  scheduledAt   DateTime?
+  startedAt     DateTime            @default(now())
+  completedAt   DateTime?
+  metadata      Json?
+  plugin        Plugin              @relation(fields: [pluginId], references: [id], onDelete: Cascade)
+
+  @@index([pluginId, operationType, status])
+  @@index([performedBy, startedAt])
+  @@index([status, scheduledAt])
+  @@index([environment, operationType])
+  @@map("plugin_operations")
+}
+
+model PluginMetrics {
+  id                String     @id @default(cuid())
+  pluginId          String
+  metricName        String
+  metricType        MetricType
+  value             Float
+  unit              String?
+  tags              Json?
+  environment       String     @default("production")
+  timestamp         DateTime   @default(now())
+  aggregationPeriod Int?
+  plugin            Plugin     @relation(fields: [pluginId], references: [id], onDelete: Cascade)
+
+  @@index([pluginId, metricName, timestamp])
+  @@index([metricName, environment, timestamp])
+  @@index([timestamp])
+  @@map("plugin_metrics")
+}
+
+model PluginConfig {
+  id           String          @id @default(cuid())
+  pluginId     String
+  environment  String          @default("production")
+  key          String
+  value        Json
+  valueType    ConfigValueType @default(JSON)
+  isSecret     Boolean         @default(false)
+  isRequired   Boolean         @default(false)
+  description  String?
+  validation   Json?
+  defaultValue Json?
+  version      String          @default("1.0.0")
+  createdBy    String
+  updatedBy    String?
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+  plugin       Plugin          @relation(fields: [pluginId], references: [id], onDelete: Cascade)
+
+  @@unique([pluginId, environment, key])
+  @@index([pluginId, environment])
+  @@index([isSecret])
+  @@index([environment, key])
+  @@map("plugin_configs")
+}
+
+model PluginDependency {
+  id             String           @id @default(cuid())
+  pluginId       String
+  dependsOnId    String
+  dependencyType DependencyType   @default(SOFT)
+  versionRange   String?
+  isOptional     Boolean          @default(false)
+  isDevOnly      Boolean          @default(false)
+  isRuntime      Boolean          @default(true)
+  conflictsWith  String[]         @default([])
+  reason         String?
+  minVersion     String?
+  maxVersion     String?
+  status         DependencyStatus @default(SATISFIED)
+  lastChecked    DateTime?
+  metadata       Json?
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+  dependsOn      Plugin           @relation("DependentPlugins", fields: [dependsOnId], references: [id], onDelete: Cascade)
+  plugin         Plugin           @relation("PluginDependencies", fields: [pluginId], references: [id], onDelete: Cascade)
+
+  @@unique([pluginId, dependsOnId])
+  @@index([pluginId])
+  @@index([dependsOnId])
+  @@index([status, lastChecked])
+  @@index([isOptional, isRuntime])
+  @@map("plugin_dependencies")
+}
+
+model RestorePoint {
+  id          String       @id @default(cuid())
+  backupId    String
+  name        String
+  description String?
+  restoreType RestoreType
+  metadata    Json?
+  isVerified  Boolean      @default(false)
+  verifiedAt  DateTime?
+  createdAt   DateTime     @default(now())
+  backup      PluginBackup @relation(fields: [backupId], references: [id], onDelete: Cascade)
+
+  @@map("restore_points")
+}
+
+model PluginMigrationExecution {
+  id              String          @id @default(cuid())
+  pluginVersionId String
+  type            MigrationType
+  script          String
+  status          MigrationStatus @default(PENDING)
+  output          String?
+  error           String?
+  executionTime   Int?
+  rollbackScript  String?
+  executedBy      String?
+  executedAt      DateTime?
+  createdAt       DateTime        @default(now())
+  pluginVersion   PluginVersion   @relation(fields: [pluginVersionId], references: [id], onDelete: Cascade)
+
+  @@index([pluginVersionId, type])
+  @@map("plugin_migration_executions")
+}
+
+model PluginEnvironment {
+  id            String             @id @default(cuid())
+  pluginId      String
+  environment   String             @default("production")
+  isActive      Boolean            @default(true)
+  configuration Json
+  secrets       Json?
+  variables     Json?
+  resources     Json?
+  scaling       Json?
+  health        Json?
+  deployment    DeploymentStrategy @default(ROLLING)
+  createdBy     String
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+  plugin        Plugin             @relation(fields: [pluginId], references: [id], onDelete: Cascade)
+
+  @@unique([pluginId, environment])
+  @@index([pluginId])
+  @@index([environment])
+  @@map("plugin_environments")
+}
+
+model PluginGovernance {
+  id                String           @id @default(cuid())
+  pluginId          String
+  tenantId          String
+  policyVersion     String           @default("1.0")
+  requiredApprovals Int              @default(1)
+  approvers         String[]
+  reviewers         String[]
+  securityReview    Boolean          @default(true)
+  complianceReview  Boolean          @default(false)
+  autoApproval      Boolean          @default(false)
+  exemptions        Json?
+  metadata          Json?
+  isActive          Boolean          @default(true)
+  createdBy         String
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+  approvals         PluginApproval[]
+  plugin            Plugin           @relation(fields: [pluginId], references: [id], onDelete: Cascade)
+
+  @@unique([pluginId, tenantId])
+  @@index([tenantId])
+  @@map("plugin_governance")
+}
+
+model PluginApproval {
+  id              String           @id @default(cuid())
+  governanceId    String
+  pluginId        String?
+  pluginVersionId String?
+  requestType     ApprovalType
+  status          ApprovalStatus   @default(PENDING)
+  requestedBy     String
+  approvedBy      String?
+  reviewedBy      String?
+  priority        ApprovalPriority @default(MEDIUM)
+  reason          String?
+  comments        Json?
+  requirements    Json?
+  evidence        Json?
+  expiresAt       DateTime?
+  approvedAt      DateTime?
+  rejectedAt      DateTime?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  governance      PluginGovernance @relation(fields: [governanceId], references: [id], onDelete: Cascade)
+  plugin          Plugin?          @relation("PluginApprovals", fields: [pluginId], references: [id])
+  pluginVersion   PluginVersion?   @relation(fields: [pluginVersionId], references: [id])
+
+  @@index([status, priority])
+  @@index([requestedBy])
+  @@index([approvedBy])
+  @@map("plugin_approvals")
+}
+
+model PluginAnalytics {
+  id           String         @id @default(cuid())
+  pluginId     String
+  tenantId     String?
+  userId       String?
+  event        AnalyticsEvent
+  environment  String         @default("production")
+  version      String?
+  sessionId    String?
+  userAgent    String?
+  ipAddress    String?
+  country      String?
+  region       String?
+  metadata     Json?
+  duration     Int?
+  errorCode    String?
+  errorMessage String?
+  timestamp    DateTime       @default(now())
+  plugin       Plugin         @relation(fields: [pluginId], references: [id], onDelete: Cascade)
+
+  @@index([pluginId, timestamp])
+  @@index([event, timestamp])
+  @@index([tenantId, timestamp])
+  @@index([userId, timestamp])
+  @@map("plugin_analytics")
+}
+
+model PluginPerformance {
+  id          String            @id @default(cuid())
+  pluginId    String
+  environment String            @default("production")
+  version     String?
+  metricType  PerformanceMetric
+  value       Float
+  unit        String
+  percentile  Float?
+  threshold   Float?
+  isAlert     Boolean           @default(false)
+  tags        Json?
+  timestamp   DateTime          @default(now())
+  sampledAt   DateTime          @default(now())
+  plugin      Plugin            @relation(fields: [pluginId], references: [id], onDelete: Cascade)
+
+  @@index([pluginId, metricType, timestamp])
+  @@index([environment, timestamp])
+  @@index([metricType, isAlert])
+  @@map("plugin_performance")
+}
+
+model PluginVulnerability {
+  id               String                @id @default(cuid())
+  pluginId         String
+  cveId            String?
+  severity         VulnerabilitySeverity
+  score            Float?
+  title            String
+  description      String
+  affectedVersions String[]
+  patchedVersions  String[]              @default([])
+  workaround       String?
+  exploitability   String?
+  impact           Json?
+  references       String[]              @default([])
+  status           VulnerabilityStatus   @default(OPEN)
+  discoveredBy     String?
+  reportedAt       DateTime?
+  patchedAt        DateTime?
+  acknowledgedAt   DateTime?
+  resolvedAt       DateTime?
+  createdAt        DateTime              @default(now())
+  updatedAt        DateTime              @updatedAt
+  plugin           Plugin                @relation(fields: [pluginId], references: [id], onDelete: Cascade)
+
+  @@index([pluginId, severity])
+  @@index([status, severity])
+  @@index([cveId])
+  @@map("plugin_vulnerabilities")
+}
+
+model PluginTestResult {
+  id              String         @id @default(cuid())
+  pluginId        String
+  pluginVersionId String?
+  testSuite       String
+  testType        TestType
+  environment     String         @default("test")
+  status          TestStatus
+  passed          Int            @default(0)
+  failed          Int            @default(0)
+  skipped         Int            @default(0)
+  coverage        Float?
+  duration        Int?
+  artifacts       Json?
+  results         Json?
+  logs            String?
+  executedBy      String?
+  executedAt      DateTime       @default(now())
+  createdAt       DateTime       @default(now())
+  plugin          Plugin         @relation(fields: [pluginId], references: [id], onDelete: Cascade)
+  pluginVersion   PluginVersion? @relation(fields: [pluginVersionId], references: [id])
+
+  @@index([pluginId, testType, status])
+  @@index([status, executedAt])
+  @@map("plugin_test_results")
+}
+
+model PluginAlert {
+  id                   String        @id @default(cuid())
+  pluginId             String
+  alertType            AlertType
+  severity             AlertSeverity
+  title                String
+  message              String
+  details              Json?
+  threshold            Float?
+  currentValue         Float?
+  environment          String        @default("production")
+  isActive             Boolean       @default(true)
+  isMuted              Boolean       @default(false)
+  acknowledgedBy       String?
+  acknowledgedAt       DateTime?
+  resolvedBy           String?
+  resolvedAt           DateTime?
+  mutedUntil           DateTime?
+  escalatedAt          DateTime?
+  escalationLevel      Int           @default(0)
+  notificationChannels Json?
+  createdAt            DateTime      @default(now())
+  updatedAt            DateTime      @updatedAt
+  plugin               Plugin        @relation(fields: [pluginId], references: [id], onDelete: Cascade)
+
+  @@index([pluginId, severity, isActive])
+  @@index([alertType, isActive])
+  @@index([environment, severity])
+  @@map("plugin_alerts")
+}
+
+model PluginWorkflow {
+  id              String                    @id @default(cuid())
+  pluginId        String
+  name            String
+  description     String?
+  trigger         WorkflowTrigger
+  conditions      Json?
+  actions         Json
+  schedule        String?
+  isActive        Boolean                   @default(true)
+  lastRunAt       DateTime?
+  lastRunStatus   WorkflowStatus?
+  lastRunDuration Int?
+  successCount    Int                       @default(0)
+  failureCount    Int                       @default(0)
+  createdBy       String
+  createdAt       DateTime                  @default(now())
+  updatedAt       DateTime                  @updatedAt
+  executions      PluginWorkflowExecution[]
+  plugin          Plugin                    @relation(fields: [pluginId], references: [id], onDelete: Cascade)
+
+  @@index([pluginId, isActive])
+  @@index([trigger])
+  @@map("plugin_workflows")
+}
+
+model PluginWorkflowExecution {
+  id          String          @id @default(cuid())
+  workflowId  String
+  trigger     WorkflowTrigger
+  status      WorkflowStatus  @default(PENDING)
+  input       Json?
+  output      Json?
+  error       String?
+  duration    Int?
+  startedAt   DateTime        @default(now())
+  completedAt DateTime?
+  workflow    PluginWorkflow  @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+
+  @@index([workflowId, startedAt])
+  @@index([status])
+  @@map("plugin_workflow_executions")
+}
+
+model DisasterRecoveryPlan {
+  id               String                      @id @default(cuid())
+  name             String                      @unique
+  description      String?
+  scope            Json
+  backupSchedule   String
+  retentionPolicy  Json
+  storageProviders Json
+  alertChannels    Json
+  testSchedule     String?
+  lastTestAt       DateTime?
+  nextTestAt       DateTime?
+  isActive         Boolean                     @default(true)
+  createdBy        String
+  createdAt        DateTime                    @default(now())
+  updatedAt        DateTime                    @updatedAt
+  executions       DisasterRecoveryExecution[]
+
+  @@map("disaster_recovery_plans")
+}
+
+model DisasterRecoveryExecution {
+  id                  String                 @id @default(cuid())
+  planId              String
+  type                DisasterRecoveryType
+  status              DisasterRecoveryStatus @default(PENDING)
+  triggerReason       String?
+  scope               Json?
+  metrics             Json?
+  verificationResults Json?
+  error               String?
+  startedAt           DateTime               @default(now())
+  completedAt         DateTime?
+  executedBy          String?
+  plan                DisasterRecoveryPlan   @relation(fields: [planId], references: [id], onDelete: Cascade)
+
+  @@index([planId, startedAt])
+  @@map("disaster_recovery_executions")
+}
+
+model Organization {
+  id                   String               @id @default(cuid())
+  name                 String               @unique
+  displayName          String
+  taxId                String?
+  billingEmail         String
+  billingAddress       Json?
+  country              String
+  currency             String               @default("USD")
+  stripeCustomerId     String?              @unique
+  paymentMethodId      String?
+  defaultPaymentMethod String?
+  creditBalance        Decimal              @default(0) @db.Decimal(10, 2)
+  creditLimit          Decimal              @default(0) @db.Decimal(10, 2)
+  billingCycle         BillingCycle         @default(MONTHLY)
+  status               OrganizationStatus   @default(ACTIVE)
+  createdAt            DateTime             @default(now())
+  updatedAt            DateTime             @updatedAt
+  billingAlerts        BillingAlert[]
+  costAllocations      CostAllocation[]
+  payouts              DeveloperPayout[]
+  invoices             Invoice[]
+  marketplacePlugins   MarketplacePlugin[]
+  budgets              OrganizationBudget[]
+  payments             Payment[]
+  usageRecords         ResourceUsage[]
+  subscriptions        Subscription[]
+
+  @@map("organizations")
+}
+
+model Subscription {
+  id                   String                 @id @default(cuid())
+  organizationId       String
+  planId               String
+  stripeSubscriptionId String?                @unique
+  status               SubscriptionStatus     @default(TRIALING)
+  currentPeriodStart   DateTime
+  currentPeriodEnd     DateTime
+  cancelAtPeriodEnd    Boolean                @default(false)
+  cancelledAt          DateTime?
+  trialStart           DateTime?
+  trialEnd             DateTime?
+  quantity             Int                    @default(1)
+  metadata             Json?
+  createdAt            DateTime               @default(now())
+  updatedAt            DateTime               @updatedAt
+  usageRecords         ResourceUsage[]
+  discounts            SubscriptionDiscount[]
+  subscriptionItems    SubscriptionItem[]
+  organization         Organization           @relation(fields: [organizationId], references: [id])
+  plan                 BillingPlan            @relation(fields: [planId], references: [id])
+
+  @@map("subscriptions")
+}
+
+model SubscriptionItem {
+  id             String       @id @default(cuid())
+  subscriptionId String
+  productId      String
+  stripeItemId   String?
+  quantity       Int          @default(1)
+  unitPrice      Decimal      @db.Decimal(10, 2)
+  createdAt      DateTime     @default(now())
+  subscription   Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+
+  @@map("subscription_items")
+}
+
+model BillingPlan {
+  id              String         @id @default(cuid())
+  name            String         @unique
+  displayName     String
+  description     String?
+  tier            PlanTier
+  monthlyPrice    Decimal        @db.Decimal(10, 2)
+  annualPrice     Decimal        @db.Decimal(10, 2)
+  setupFee        Decimal        @default(0) @db.Decimal(10, 2)
+  currency        String         @default("USD")
+  trialDays       Int            @default(0)
+  features        Json
+  limits          Json
+  overage         Json
+  stripePriceId   String?
+  stripeProductId String?
+  isActive        Boolean        @default(true)
+  isPublic        Boolean        @default(true)
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+  subscriptions   Subscription[]
+  usageTiers      UsageTier[]
+
+  @@map("billing_plans")
+}
+
+model UsageTier {
+  id           String       @id @default(cuid())
+  planId       String
+  resourceType ResourceType
+  minUnits     Int
+  maxUnits     Int?
+  pricePerUnit Decimal      @db.Decimal(10, 4)
+  flatFee      Decimal      @default(0) @db.Decimal(10, 2)
+  plan         BillingPlan  @relation(fields: [planId], references: [id], onDelete: Cascade)
+
+  @@map("usage_tiers")
+}
+
+model ResourceUsage {
+  id             String        @id @default(cuid())
+  organizationId String
+  subscriptionId String?
+  pluginId       String?
+  resourceType   ResourceType
+  quantity       Decimal       @db.Decimal(12, 4)
+  unit           String
+  cost           Decimal       @db.Decimal(10, 2)
+  period         DateTime
+  metadata       Json?
+  createdAt      DateTime      @default(now())
+  organization   Organization  @relation(fields: [organizationId], references: [id])
+  plugin         Plugin?       @relation(fields: [pluginId], references: [id])
+  subscription   Subscription? @relation(fields: [subscriptionId], references: [id])
+
+  @@index([organizationId, period])
+  @@index([resourceType, period])
+  @@map("resource_usage")
+}
+
+model Invoice {
+  id              String            @id @default(cuid())
+  organizationId  String
+  invoiceNumber   String            @unique
+  stripeInvoiceId String?           @unique
+  status          InvoiceStatus     @default(DRAFT)
+  dueDate         DateTime
+  periodStart     DateTime
+  periodEnd       DateTime
+  subtotal        Decimal           @db.Decimal(10, 2)
+  tax             Decimal           @default(0) @db.Decimal(10, 2)
+  discount        Decimal           @default(0) @db.Decimal(10, 2)
+  total           Decimal           @db.Decimal(10, 2)
+  currency        String            @default("USD")
+  paidAt          DateTime?
+  voidedAt        DateTime?
+  notes           String?
+  metadata        Json?
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  creditNotes     CreditNote[]
+  lineItems       InvoiceLineItem[]
+  organization    Organization      @relation(fields: [organizationId], references: [id])
+  payments        Payment[]
+
+  @@map("invoices")
+}
+
+model InvoiceLineItem {
+  id          String  @id @default(cuid())
+  invoiceId   String
+  description String
+  quantity    Decimal @db.Decimal(12, 4)
+  unitPrice   Decimal @db.Decimal(10, 4)
+  amount      Decimal @db.Decimal(10, 2)
+  taxRate     Decimal @default(0) @db.Decimal(5, 2)
+  metadata    Json?
+  invoice     Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  @@map("invoice_line_items")
+}
+
+model Payment {
+  id              String        @id @default(cuid())
+  organizationId  String
+  invoiceId       String?
+  stripePaymentId String?       @unique
+  amount          Decimal       @db.Decimal(10, 2)
+  currency        String        @default("USD")
+  status          PaymentStatus @default(PENDING)
+  method          PaymentMethod
+  failureReason   String?
+  refundedAmount  Decimal       @default(0) @db.Decimal(10, 2)
+  metadata        Json?
+  processedAt     DateTime?
+  createdAt       DateTime      @default(now())
+  invoice         Invoice?      @relation(fields: [invoiceId], references: [id])
+  organization    Organization  @relation(fields: [organizationId], references: [id])
+  refunds         Refund[]
+
+  @@map("payments")
+}
+
+model Refund {
+  id             String       @id @default(cuid())
+  paymentId      String
+  stripeRefundId String?      @unique
+  amount         Decimal      @db.Decimal(10, 2)
+  reason         RefundReason
+  status         RefundStatus @default(PENDING)
+  notes          String?
+  processedAt    DateTime?
+  createdAt      DateTime     @default(now())
+  payment        Payment      @relation(fields: [paymentId], references: [id])
+
+  @@map("refunds")
+}
+
+model CreditNote {
+  id               String           @id @default(cuid())
+  invoiceId        String
+  creditNoteNumber String           @unique
+  amount           Decimal          @db.Decimal(10, 2)
+  reason           String
+  status           CreditNoteStatus @default(ISSUED)
+  appliedAt        DateTime?
+  voidedAt         DateTime?
+  createdAt        DateTime         @default(now())
+  invoice          Invoice          @relation(fields: [invoiceId], references: [id])
+
+  @@map("credit_notes")
+}
+
+model Coupon {
+  id              String                 @id @default(cuid())
+  code            String                 @unique
+  name            String
+  description     String?
+  discountType    DiscountType
+  discountValue   Decimal                @db.Decimal(10, 2)
+  maxRedemptions  Int?
+  redemptionCount Int                    @default(0)
+  validFrom       DateTime
+  validUntil      DateTime
+  restrictions    Json?
+  isActive        Boolean                @default(true)
+  createdAt       DateTime               @default(now())
+  discounts       SubscriptionDiscount[]
+
+  @@map("coupons")
+}
+
+model SubscriptionDiscount {
+  id             String       @id @default(cuid())
+  subscriptionId String
+  couponId       String
+  appliedAt      DateTime     @default(now())
+  expiresAt      DateTime?
+  coupon         Coupon       @relation(fields: [couponId], references: [id])
+  subscription   Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+
+  @@unique([subscriptionId, couponId])
+  @@map("subscription_discounts")
+}
+
+model CostAllocation {
+  id             String           @id @default(cuid())
+  organizationId String
+  teamId         String
+  costCenterId   String?
+  period         DateTime
+  allocatedCost  Decimal          @db.Decimal(10, 2)
+  actualCost     Decimal          @db.Decimal(10, 2)
+  currency       String           @default("USD")
+  breakdown      Json
+  approvedBy     String?
+  approvedAt     DateTime?
+  status         AllocationStatus @default(PENDING)
+  createdAt      DateTime         @default(now())
+  costCenter     CostCenter?      @relation(fields: [costCenterId], references: [id])
+  organization   Organization     @relation(fields: [organizationId], references: [id])
+  team           Team             @relation(fields: [teamId], references: [id])
+
+  @@index([organizationId, period])
+  @@index([teamId, period])
+  @@map("cost_allocations")
+}
+
+model CostCenter {
+  id          String           @id @default(cuid())
+  name        String           @unique
+  code        String           @unique
+  description String?
+  budget      Decimal          @db.Decimal(10, 2)
+  currency    String           @default("USD")
+  managerId   String
+  isActive    Boolean          @default(true)
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+  allocations CostAllocation[]
+
+  @@map("cost_centers")
+}
+
+model MarketplacePlugin {
+  id              String          @id @default(cuid())
+  pluginId        String          @unique
+  developerId     String
+  organizationId  String
+  pricingModel    PricingModel
+  basePrice       Decimal         @db.Decimal(10, 2)
+  currency        String          @default("USD")
+  revenueShare    Decimal         @db.Decimal(5, 2)
+  tier            MarketplaceTier
+  stripeProductId String?
+  stripePriceId   String?
+  isActive        Boolean         @default(true)
+  isApproved      Boolean         @default(false)
+  publishedAt     DateTime?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  organization    Organization    @relation(fields: [organizationId], references: [id])
+  plugin          Plugin          @relation(fields: [pluginId], references: [id])
+  reviews         PluginReview[]
+  sales           PluginSale[]
+
+  @@index([pluginId])
+  @@index([organizationId, isActive])
+  @@index([pricingModel, isApproved])
+  @@index([tier, publishedAt])
+  @@map("marketplace_plugins")
+}
+
+model PluginSale {
+  id                  String            @id @default(cuid())
+  marketplacePluginId String
+  buyerOrgId          String
+  amount              Decimal           @db.Decimal(10, 2)
+  commission          Decimal           @db.Decimal(10, 2)
+  netAmount           Decimal           @db.Decimal(10, 2)
+  currency            String            @default("USD")
+  status              SaleStatus        @default(PENDING)
+  paymentId           String?
+  createdAt           DateTime          @default(now())
+  marketplacePlugin   MarketplacePlugin @relation(fields: [marketplacePluginId], references: [id])
+
+  @@index([marketplacePluginId, status])
+  @@index([buyerOrgId, createdAt])
+  @@index([status, createdAt])
+  @@map("plugin_sales")
+}
+
+model DeveloperPayout {
+  id               String       @id @default(cuid())
+  organizationId   String
+  period           DateTime
+  amount           Decimal      @db.Decimal(10, 2)
+  currency         String       @default("USD")
+  status           PayoutStatus @default(PENDING)
+  stripeTransferId String?
+  processedAt      DateTime?
+  notes            String?
+  createdAt        DateTime     @default(now())
+  organization     Organization @relation(fields: [organizationId], references: [id])
+
+  @@map("developer_payouts")
+}
+
+model PluginReview {
+  id                  String            @id @default(cuid())
+  marketplacePluginId String
+  userId              String
+  rating              Int
+  title               String?
+  comment             String?
+  isVerifiedPurchase  Boolean           @default(false)
+  createdAt           DateTime          @default(now())
+  updatedAt           DateTime          @updatedAt
+  marketplacePlugin   MarketplacePlugin @relation(fields: [marketplacePluginId], references: [id])
+
+  @@index([marketplacePluginId, rating])
+  @@index([userId, createdAt])
+  @@index([rating, isVerifiedPurchase])
+  @@map("plugin_reviews")
+}
+
+model OrganizationBudget {
+  id             String         @id @default(cuid())
+  organizationId String
+  name           String
+  amount         Decimal        @db.Decimal(10, 2)
+  spent          Decimal        @default(0) @db.Decimal(10, 2)
+  period         BudgetPeriod
+  resourceType   ResourceType?
+  alertThreshold Decimal        @db.Decimal(5, 2)
+  isActive       Boolean        @default(true)
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+  alerts         BillingAlert[]
+  organization   Organization   @relation(fields: [organizationId], references: [id])
+
+  @@index([organizationId, period])
+  @@index([resourceType, isActive])
+  @@map("organization_budgets")
+}
+
+model BillingAlert {
+  id             String              @id @default(cuid())
+  organizationId String
+  budgetId       String?
+  type           AlertType
+  threshold      Decimal             @db.Decimal(10, 2)
+  currentValue   Decimal             @db.Decimal(10, 2)
+  message        String
+  severity       AlertSeverity
+  acknowledged   Boolean             @default(false)
+  acknowledgedBy String?
+  acknowledgedAt DateTime?
+  createdAt      DateTime            @default(now())
+  budget         OrganizationBudget? @relation(fields: [budgetId], references: [id])
+  organization   Organization        @relation(fields: [organizationId], references: [id])
+
+  @@index([organizationId, severity, acknowledged])
+  @@index([budgetId, acknowledged])
+  @@index([type, severity, createdAt])
+  @@map("billing_alerts")
+}
+
+model TaxRate {
+  id          String   @id @default(cuid())
+  country     String
+  state       String?
+  rate        Decimal  @db.Decimal(5, 2)
+  name        String
+  description String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([country, state])
+  @@map("tax_rates")
+}
+
+model BillingEvent {
+  id             String    @id @default(cuid())
+  organizationId String?
+  eventType      String
+  eventData      Json
+  stripeEventId  String?   @unique
+  processed      Boolean   @default(false)
+  processedAt    DateTime?
+  error          String?
+  createdAt      DateTime  @default(now())
+
+  @@index([eventType, processed])
+  @@index([organizationId, createdAt])
+  @@index([processed, processedAt])
+  @@map("billing_events")
+}
+
+model ProductivityMetrics {
+  id            String   @id @default(cuid())
+  developerId   String
+  teamId        String
+  period        DateTime
+  dora          Json
+  space         Json
+  codeQuality   Json
+  collaboration Json
+  flowState     Json
+  score         Float
+  percentile    Float
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([developerId, period], map: "productivity_metrics_dev_period")
+  @@map("productivity_metrics")
+}
+
+model DxAnalysis {
+  id              String   @id @default(cuid())
+  developerId     String
+  score           Float
+  metrics         Json
+  insights        Json
+  recommendations Json
+  timestamp       DateTime
+  createdAt       DateTime @default(now())
+
+  @@map("dx_analysis")
+}
+
+model BurnoutIndicator {
+  id              String   @id @default(cuid())
+  developerId     String
+  riskLevel       String
+  indicators      Json
+  trend           String
+  recommendations String[]
+  createdAt       DateTime @default(now())
+
+  @@map("burnout_indicators")
+}
+
+model CostHistory {
+  id         String   @id @default(cuid())
+  resourceId String
+  date       DateTime
+  amount     Float
+  createdAt  DateTime @default(now())
+
+  @@index([resourceId, date], map: "cost_history_resource_date")
+  @@map("cost_history")
+}
+
+model BudgetStatus {
+  id           String   @id @default(cuid())
+  budgetId     String   @unique
+  currentSpend Float
+  forecast     Float
+  status       String
+  updatedAt    DateTime @updatedAt
+
+  @@map("budget_status")
+}
+
+model Pipeline {
+  id          String   @id
+  name        String
+  description String
+  nodes       Json
+  edges       Json
+  status      String
+  schedule    Json
+  version     Int
+  tags        String[]
+  createdAt   DateTime
+  updatedAt   DateTime
+
+  @@map("pipelines")
+}
+
+model PipelineExecution {
+  id         String    @id
+  pipelineId String
+  version    Int
+  status     String
+  startTime  DateTime
+  endTime    DateTime?
+  metrics    Json
+  errors     Json
+
+  @@map("pipeline_executions")
+}
+
+model EtlJob {
+  id          String   @id
+  name        String
+  description String
+  pipelineId  String
+  schedule    Json
+  priority    String
+  retryPolicy Json
+  resources   Json
+  tags        String[]
+  isActive    Boolean
+  createdAt   DateTime
+  updatedAt   DateTime
+
+  @@map("etl_jobs")
+}
+
+model EtlExecution {
+  id                  String    @id
+  jobId               String
+  pipelineExecutionId String
+  status              String
+  priority            Int
+  startTime           DateTime?
+  endTime             DateTime?
+  resources           Json
+  attempts            Int
+  errors              Json
+  metrics             Json
+
+  @@map("etl_executions")
+}
+
+model DataAsset {
+  id          String   @id
+  name        String
+  type        String
+  description String
+  location    Json
+  schema      Json
+  metadata    Json
+  quality     Json
+  lineage     Json
+  governance  Json
+  usage       Json
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("data_assets")
+}
+
+model MetricDataPoint {
+  id        String   @id @default(cuid())
+  source    String
+  timestamp DateTime
+  value     Float
+  labels    Json
+  createdAt DateTime @default(now())
+
+  @@map("metric_data_points")
+}
+
+model Alert {
+  id          String    @id @default(cuid())
+  name        String
+  severity    String
+  source      String
+  message     String
+  fingerprint String
+  status      String
+  assignedTo  String?
+  metadata    Json
+  createdAt   DateTime  @default(now())
+  resolvedAt  DateTime?
+
+  @@index([fingerprint], map: "alert_fingerprint")
+  @@map("alerts")
+}
+
+model PluginSecurityMetadata {
+  id                     String                @id @default(cuid())
+  pluginId               String
+  pluginVersionId        String?
+  hasValidSignature      Boolean               @default(false)
+  signatureAlgorithm     String?
+  signaturePublicKey     String?
+  signatureTimestamp     DateTime?
+  signatureValidatedBy   String?
+  signatureValidatedAt   DateTime?
+  sha256Checksum         String?
+  sha512Checksum         String?
+  blake2bChecksum        String?
+  integrityVerified      Boolean               @default(false)
+  checksumSource         String?
+  trustScore             Float                 @default(0)
+  trustScoreCalculatedAt DateTime?
+  trustMetrics           Json?
+  riskLevel              SecurityRiskLevel     @default(UNKNOWN)
+  riskFactors            String[]              @default([])
+  lastSecurityScan       DateTime?
+  securityScanStatus     SecurityScanStatus    @default(PENDING)
+  vulnerabilityScanId    String?
+  malwareScanResult      String?
+  complianceStatus       ComplianceStatus      @default(UNKNOWN)
+  packageSize            BigInt?
+  packageArchitecture    String?
+  packageFormat          String?
+  downloadSource         String?
+  exemptions             Json?
+  approvalRequired       Boolean               @default(false)
+  approvedBy             String?
+  approvedAt             DateTime?
+  approvalReason         String?
+  createdAt              DateTime              @default(now())
+  updatedAt              DateTime              @updatedAt
+  securityEvents         PluginSecurityEvent[]
+  plugin                 Plugin                @relation(fields: [pluginId], references: [id], onDelete: Cascade)
+  pluginVersion          PluginVersion?        @relation(fields: [pluginVersionId], references: [id], onDelete: Cascade)
+
+  @@unique([pluginId, pluginVersionId])
+  @@index([pluginId, trustScore])
+  @@index([riskLevel, securityScanStatus])
+  @@index([lastSecurityScan])
+  @@index([trustScore])
+  @@index([hasValidSignature, integrityVerified])
+  @@map("plugin_security_metadata")
+}
+
+model PluginSecurityEvent {
+  id                 String                 @id @default(cuid())
+  securityMetadataId String
+  eventType          SecurityEventType
+  severity           SecurityEventSeverity
+  title              String
+  description        String
+  details            Json?
+  source             String
+  pluginName         String
+  pluginVersion      String?
+  userId             String?
+  ipAddress          String?
+  userAgent          String?
+  status             SecurityEventStatus    @default(OPEN)
+  resolvedBy         String?
+  resolvedAt         DateTime?
+  resolutionNotes    String?
+  metadata           Json?
+  timestamp          DateTime               @default(now())
+  createdAt          DateTime               @default(now())
+  securityMetadata   PluginSecurityMetadata @relation(fields: [securityMetadataId], references: [id], onDelete: Cascade)
+
+  @@index([eventType, severity, timestamp])
+  @@index([pluginName, eventType])
+  @@index([status, severity])
+  @@index([timestamp])
+  @@map("plugin_security_events")
+}
+
+model TrustedPublisher {
+  id                     String              @id @default(cuid())
+  name                   String              @unique
+  displayName            String
+  email                  String?
+  website                String?
+  description            String?
+  trustLevel             PublisherTrustLevel @default(VERIFIED)
+  verifiedAt             DateTime?
+  verifiedBy             String?
+  publicKeys             Json
+  keyRotationSchedule    String?
+  lastKeyRotation        DateTime?
+  allowedPackagePatterns String[]            @default([])
+  securityPolicies       Json?
+  autoApproval           Boolean             @default(false)
+  isActive               Boolean             @default(true)
+  isSuspended            Boolean             @default(false)
+  suspensionReason       String?
+  suspendedAt            DateTime?
+  suspendedBy            String?
+  createdAt              DateTime            @default(now())
+  updatedAt              DateTime            @updatedAt
+
+  @@index([name, isActive])
+  @@index([trustLevel, isActive])
+  @@map("trusted_publishers")
+}
+
+model SecurityPolicy {
+  id                  String             @id @default(cuid())
+  name                String             @unique
+  displayName         String
+  description         String?
+  policyType          SecurityPolicyType
+  rules               Json
+  enforcement         PolicyEnforcement  @default(WARN)
+  priority            Int                @default(100)
+  appliesToPlugins    String[]           @default([])
+  appliesToCategories String[]           @default([])
+  exemptions          String[]           @default([])
+  isActive            Boolean            @default(true)
+  effectiveFrom       DateTime           @default(now())
+  effectiveUntil      DateTime?
+  ownedBy             String
+  approvers           String[]           @default([])
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+
+  @@index([policyType, isActive])
+  @@index([enforcement, priority])
+  @@map("security_policies")
+}
+
+model SecurityScanResult {
+  id                 String             @id @default(cuid())
+  pluginId           String
+  pluginVersionId    String?
+  scanType           SecurityScanType
+  scanId             String             @unique
+  scanEngine         String
+  scanVersion        String?
+  status             SecurityScanStatus
+  startedAt          DateTime
+  completedAt        DateTime?
+  duration           Int?
+  vulnerabilityCount Int                @default(0)
+  criticalCount      Int                @default(0)
+  highCount          Int                @default(0)
+  mediumCount        Int                @default(0)
+  lowCount           Int                @default(0)
+  infoCount          Int                @default(0)
+  findings           Json?
+  rawResults         Json?
+  recommendations    Json?
+  metadata           Json?
+  createdAt          DateTime           @default(now())
+  plugin             Plugin             @relation(fields: [pluginId], references: [id], onDelete: Cascade)
+  pluginVersion      PluginVersion?     @relation(fields: [pluginVersionId], references: [id], onDelete: Cascade)
+
+  @@index([pluginId, scanType, completedAt])
+  @@index([status, scanType])
+  @@index([criticalCount, highCount])
+  @@index([completedAt])
+  @@map("security_scan_results")
+}
+
+model SecurityComplianceReport {
+  id               String               @id @default(cuid())
+  pluginId         String
+  pluginVersionId  String?
+  reportType       ComplianceReportType
+  generatedAt      DateTime             @default(now())
+  generatedBy      String
+  reportPeriod     String
+  overallScore     Float                @default(0)
+  passedChecks     Int                  @default(0)
+  failedChecks     Int                  @default(0)
+  exemptedChecks   Int                  @default(0)
+  checkResults     Json
+  policyViolations Json?
+  recommendations  Json?
+  actionItems      Json?
+  status           ComplianceStatus     @default(PENDING)
+  approvedBy       String?
+  approvedAt       DateTime?
+  metadata         Json?
+  createdAt        DateTime             @default(now())
+  plugin           Plugin               @relation(fields: [pluginId], references: [id], onDelete: Cascade)
+  pluginVersion    PluginVersion?       @relation(fields: [pluginVersionId], references: [id], onDelete: Cascade)
+
+  @@index([pluginId, reportType, generatedAt])
+  @@index([overallScore, status])
+  @@index([generatedAt])
+  @@map("security_compliance_reports")
+}
+
+model PluginQualityScore {
+  id                     String                 @id @default(cuid())
+  pluginId               String                 @unique
+  tenantId               String?
+  overallScore           Float                  @default(0)
+  overallGrade           QualityGrade           @default(F)
+  securityScore          Float                  @default(0)
+  performanceScore       Float                  @default(0)
+  maintainabilityScore   Float                  @default(0)
+  reliabilityScore       Float                  @default(0)
+  documentationScore     Float                  @default(0)
+  securityGrade          QualityGrade           @default(F)
+  performanceGrade       QualityGrade           @default(F)
+  maintainabilityGrade   QualityGrade           @default(F)
+  reliabilityGrade       QualityGrade           @default(F)
+  documentationGrade     QualityGrade           @default(F)
+  evaluatedAt            DateTime               @default(now())
+  evaluationEngine       String                 @default("v1.0")
+  confidenceLevel        Float                  @default(0)
+  dataQualityScore       Float                  @default(0)
+  securityWeight         Float                  @default(0.25)
+  performanceWeight      Float                  @default(0.20)
+  maintainabilityWeight  Float                  @default(0.20)
+  reliabilityWeight      Float                  @default(0.20)
+  documentationWeight    Float                  @default(0.15)
+  scoreImprovement       Float?
+  trendDirection         TrendDirection         @default(STABLE)
+  passesMinimumStandards Boolean                @default(false)
+  complianceFlags        String[]               @default([])
+  governanceExceptions   Json?
+  createdAt              DateTime               @default(now())
+  updatedAt              DateTime               @updatedAt
+  checks                 PluginQualityCheck[]
+  history                PluginQualityHistory[]
+  issues                 PluginQualityIssue[]
+  plugin                 Plugin                 @relation(fields: [pluginId], references: [id], onDelete: Cascade)
+
+  @@index([pluginId, overallScore])
+  @@index([tenantId, overallGrade])
+  @@index([overallScore, evaluatedAt])
+  @@index([passesMinimumStandards, overallGrade])
+  @@map("plugin_quality_scores")
+}
+
+model PluginQualityCheck {
+  id              String             @id @default(cuid())
+  qualityScoreId  String
+  pluginId        String
+  tenantId        String?
+  checkType       QualityCheckType
+  checkName       String
+  checkId         String
+  category        QualityCategory
+  status          QualityCheckStatus @default(PENDING)
+  passed          Boolean            @default(false)
+  score           Float              @default(0)
+  weight          Float              @default(1.0)
+  description     String?
+  rationale       String?
+  recommendation  String?
+  documentation   String?
+  executedAt      DateTime           @default(now())
+  duration        Int?
+  executionEngine String             @default("v1.0")
+  evidence        Json?
+  metrics         Json?
+  errorDetails    String?
+  severity        CheckSeverity      @default(MEDIUM)
+  impact          String?
+  metadata        Json?
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+  plugin          Plugin             @relation(fields: [pluginId], references: [id], onDelete: Cascade)
+  qualityScore    PluginQualityScore @relation(fields: [qualityScoreId], references: [id], onDelete: Cascade)
+
+  @@index([pluginId, category, status])
+  @@index([tenantId, checkType])
+  @@index([status, severity])
+  @@index([category, passed])
+  @@index([executedAt, checkType])
+  @@map("plugin_quality_checks")
+}
+
+model PluginQualityHistory {
+  id                   String             @id @default(cuid())
+  qualityScoreId       String
+  pluginId             String
+  tenantId             String?
+  overallScore         Float
+  overallGrade         QualityGrade
+  securityScore        Float
+  performanceScore     Float
+  maintainabilityScore Float
+  reliabilityScore     Float
+  documentationScore   Float
+  scoreChange          Float
+  changeReason         String?
+  triggerEvent         HistoryTrigger
+  pluginVersion        String?
+  evaluationEngine     String             @default("v1.0")
+  snapshot             Json?
+  metadata             Json?
+  recordedAt           DateTime           @default(now())
+  plugin               Plugin             @relation(fields: [pluginId], references: [id], onDelete: Cascade)
+  qualityScore         PluginQualityScore @relation(fields: [qualityScoreId], references: [id], onDelete: Cascade)
+
+  @@index([pluginId, recordedAt])
+  @@index([tenantId, overallGrade, recordedAt])
+  @@index([triggerEvent, recordedAt])
+  @@index([overallScore, recordedAt])
+  @@map("plugin_quality_history")
+}
+
+model PluginQualityIssue {
+  id                String                      @id @default(cuid())
+  qualityScoreId    String
+  pluginId          String
+  tenantId          String?
+  issueType         IssueType
+  category          QualityCategory
+  severity          IssueSeverity
+  title             String
+  description       String
+  affectedChecks    String[]                    @default([])
+  impact            String?
+  resolution        String?
+  workaround        String?
+  status            IssueStatus                 @default(OPEN)
+  priority          IssuePriority               @default(MEDIUM)
+  assignedTo        String?
+  resolvedAt        DateTime?
+  resolvedBy        String?
+  resolutionNotes   String?
+  resolutionMethod  ResolutionMethod?
+  createdAt         DateTime                    @default(now())
+  updatedAt         DateTime                    @updatedAt
+  slaDeadline       DateTime?
+  escalatedAt       DateTime?
+  escalationLevel   Int                         @default(0)
+  evidence          Json?
+  reproductionSteps String?
+  affectedVersions  String[]                    @default([])
+  environment       String?
+  ticketId          String?
+  references        String[]                    @default([])
+  metadata          Json?
+  comments          PluginQualityIssueComment[]
+  plugin            Plugin                      @relation(fields: [pluginId], references: [id], onDelete: Cascade)
+  qualityScore      PluginQualityScore          @relation(fields: [qualityScoreId], references: [id], onDelete: Cascade)
+
+  @@index([pluginId, status, severity])
+  @@index([tenantId, category, status])
+  @@index([assignedTo, status])
+  @@index([severity, createdAt])
+  @@index([slaDeadline, status])
+  @@index([status, priority])
+  @@map("plugin_quality_issues")
+}
+
+model PluginQualityIssueComment {
+  id         String             @id @default(cuid())
+  issueId    String
+  userId     String
+  comment    String
+  isInternal Boolean            @default(false)
+  createdAt  DateTime           @default(now())
+  updatedAt  DateTime           @updatedAt
+  issue      PluginQualityIssue @relation(fields: [issueId], references: [id], onDelete: Cascade)
+
+  @@index([issueId, createdAt])
+  @@map("plugin_quality_issue_comments")
+}
+
+model QualityGateConfig {
+  id                    String    @id @default(cuid())
+  name                  String    @unique
+  displayName           String
+  description           String?
+  tenantId              String?
+  gradeAThreshold       Float     @default(90)
+  gradeBThreshold       Float     @default(80)
+  gradeCThreshold       Float     @default(70)
+  gradeDThreshold       Float     @default(60)
+  securityWeight        Float     @default(0.25)
+  performanceWeight     Float     @default(0.20)
+  maintainabilityWeight Float     @default(0.20)
+  reliabilityWeight     Float     @default(0.20)
+  documentationWeight   Float     @default(0.15)
+  minimumOverallScore   Float     @default(70)
+  minimumSecurityScore  Float     @default(80)
+  blockingIssues        String[]  @default([])
+  enabledChecks         Json
+  checkWeights          Json
+  customChecks          Json?
+  allowExceptions       Boolean   @default(true)
+  requireApproval       Boolean   @default(false)
+  autoRemediation       Boolean   @default(false)
+  isActive              Boolean   @default(true)
+  isDefault             Boolean   @default(false)
+  version               String    @default("1.0")
+  effectiveFrom         DateTime  @default(now())
+  effectiveUntil        DateTime?
+  ownedBy               String
+  approvers             String[]  @default([])
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@index([tenantId, isActive])
+  @@index([isDefault, isActive])
+  @@map("quality_gate_configs")
+}
+
+model QualityEvaluationJob {
+  id             String              @id @default(cuid())
+  pluginId       String
+  tenantId       String?
+  jobType        EvaluationJobType
+  status         EvaluationJobStatus @default(PENDING)
+  priority       Int                 @default(5)
+  startedAt      DateTime?
+  completedAt    DateTime?
+  duration       Int?
+  attempts       Int                 @default(0)
+  maxAttempts    Int                 @default(3)
+  config         Json?
+  checksToRun    String[]            @default([])
+  triggerReason  String?
+  result         Json?
+  error          String?
+  warnings       String[]            @default([])
+  progress       Int                 @default(0)
+  currentStep    String?
+  totalSteps     Int                 @default(1)
+  scheduledAt    DateTime?
+  cronExpression String?
+  metadata       Json?
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+  plugin         Plugin              @relation(fields: [pluginId], references: [id], onDelete: Cascade)
+
+  @@index([pluginId, status])
+  @@index([tenantId, jobType, status])
+  @@index([priority, createdAt])
+  @@index([scheduledAt, status])
+  @@map("quality_evaluation_jobs")
+}
+
+enum UserRole {
+  ADMIN
+  PLATFORM_ENGINEER
+  DEVELOPER
+  VIEWER
 }
 
 enum TeamRole {
   OWNER
   MAINTAINER
   MEMBER
-}
-
-// Service Catalog
-model Service {
-  id            String        @id @default(cuid())
-  name          String        @unique
-  displayName   String
-  description   String?
-  type          ServiceType
-  lifecycle     Lifecycle
-  namespace     String        @default("default")
-  system        String?
-  domain        String?
-  ownerId       String
-  teamId        String
-  gitRepo       String?
-  gitBranch     String?       @default("main")
-  apiVersion    String?
-  tags          String[]
-  labels        Json?
-  annotations   Json?
-  isActive      Boolean       @default(true)
-  createdAt     DateTime      @default(now())
-  updatedAt     DateTime      @updatedAt
-
-  // Relationships
-  owner              User                     @relation("ServiceOwner", fields: [ownerId], references: [id])
-  team               Team                     @relation(fields: [teamId], references: [id])
-  dependencies       ServiceDependency[]      @relation("ServiceDependencies")
-  dependents         ServiceDependency[]      @relation("DependentServices")
-  healthChecks       ServiceHealthCheck[]
-  metrics            ServiceMetric[]
-  deployments        Deployment[]
-  costs              ServiceCost[]
-  templateExecutions TemplateExecution[]
-  documents          ServiceDocument[]
-
-  @@map("services")
 }
 
 enum ServiceType {
@@ -136,48 +2158,12 @@ enum Lifecycle {
   DEPRECATED
 }
 
-// Service Dependencies
-model ServiceDependency {
-  id            String @id @default(cuid())
-  serviceId     String
-  dependsOnId   String
-  dependencyType DependencyType
-  description   String?
-
-  service   Service @relation("ServiceDependencies", fields: [serviceId], references: [id], onDelete: Cascade)
-  dependsOn Service @relation("DependentServices", fields: [dependsOnId], references: [id], onDelete: Cascade)
-
-  @@unique([serviceId, dependsOnId])
-  @@map("service_dependencies")
-}
-
 enum DependencyType {
   HARD
   SOFT
   API
   DATABASE
   MESSAGING
-}
-
-// Health Monitoring
-model ServiceHealthCheck {
-  id          String            @id @default(cuid())
-  serviceId   String
-  name        String
-  type        HealthCheckType
-  endpoint    String?
-  method      String?           @default("GET")
-  interval    Int               @default(60) // seconds
-  timeout     Int               @default(30) // seconds
-  retries     Int               @default(3)
-  isEnabled   Boolean           @default(true)
-  createdAt   DateTime          @default(now())
-  updatedAt   DateTime          @updatedAt
-
-  service Service             @relation(fields: [serviceId], references: [id], onDelete: Cascade)
-  results HealthCheckResult[]
-
-  @@map("service_health_checks")
 }
 
 enum HealthCheckType {
@@ -187,19 +2173,6 @@ enum HealthCheckType {
   CUSTOM
 }
 
-model HealthCheckResult {
-  id            String            @id @default(cuid())
-  healthCheckId String
-  status        HealthStatus
-  responseTime  Int? // milliseconds
-  message       String?
-  checkedAt     DateTime          @default(now())
-
-  healthCheck ServiceHealthCheck @relation(fields: [healthCheckId], references: [id], onDelete: Cascade)
-
-  @@map("health_check_results")
-}
-
 enum HealthStatus {
   HEALTHY
   DEGRADED
@@ -207,68 +2180,11 @@ enum HealthStatus {
   UNKNOWN
 }
 
-// Metrics and Analytics
-model ServiceMetric {
-  id        String     @id @default(cuid())
-  serviceId String
-  name      String
-  type      MetricType
-  value     Float
-  unit      String?
-  labels    Json?
-  timestamp DateTime   @default(now())
-
-  service Service @relation(fields: [serviceId], references: [id], onDelete: Cascade)
-
-  @@map("service_metrics")
-}
-
 enum MetricType {
   COUNTER
   GAUGE
   HISTOGRAM
   SUMMARY
-}
-
-// Template System
-model Template {
-  id          String   @id @default(cuid())
-  name        String   @unique
-  displayName String
-  description String
-  type        ServiceType
-  ownerId     String
-  teamId      String?
-  content     Json     // YAML content as JSON
-  schema      Json?    // Parameter schema
-  tags        String[]
-  isPublic    Boolean  @default(false)
-  isActive    Boolean  @default(true)
-  version     String   @default("1.0.0")
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  executions TemplateExecution[]
-
-  @@map("templates")
-}
-
-model TemplateExecution {
-  id         String            @id @default(cuid())
-  templateId String
-  serviceId  String?
-  userId     String
-  parameters Json
-  status     ExecutionStatus
-  result     Json?
-  error      String?
-  startedAt  DateTime          @default(now())
-  completedAt DateTime?
-
-  template Template @relation(fields: [templateId], references: [id])
-  service  Service? @relation(fields: [serviceId], references: [id])
-
-  @@map("template_executions")
 }
 
 enum ExecutionStatus {
@@ -279,69 +2195,12 @@ enum ExecutionStatus {
   CANCELLED
 }
 
-// Deployment Tracking
-model Deployment {
-  id          String           @id @default(cuid())
-  serviceId   String
-  version     String
-  environment String
-  status      DeploymentStatus
-  deployedBy  String
-  gitCommit   String?
-  gitBranch   String?
-  startedAt   DateTime         @default(now())
-  completedAt DateTime?
-  rollbackOf  String?
-
-  service Service @relation(fields: [serviceId], references: [id], onDelete: Cascade)
-
-  @@map("deployments")
-}
-
 enum DeploymentStatus {
   PENDING
   DEPLOYING
   DEPLOYED
   FAILED
   ROLLED_BACK
-}
-
-// Cost Management
-model ServiceCost {
-  id        String   @id @default(cuid())
-  serviceId String
-  provider  String   // aws, azure, gcp
-  region    String?
-  account   String?
-  service   String   // EC2, S3, etc.
-  resource  String?
-  cost      Decimal  @db.Decimal(10, 2)
-  currency  String   @default("USD")
-  period    String   // daily, monthly
-  date      DateTime
-  tags      Json?
-
-  serviceEntity Service @relation(fields: [serviceId], references: [id], onDelete: Cascade)
-
-  @@map("service_costs")
-}
-
-// Cost Budgets
-model Budget {
-  id        String      @id @default(cuid())
-  name      String
-  amount    Decimal     @db.Decimal(10, 2)
-  currency  String      @default("USD")
-  period    BudgetPeriod
-  scope     Json        // Service IDs, teams, tags
-  threshold Float       @default(0.8) // Alert threshold
-  isActive  Boolean     @default(true)
-  createdAt DateTime    @default(now())
-  updatedAt DateTime    @updatedAt
-
-  alerts BudgetAlert[]
-
-  @@map("budgets")
 }
 
 enum BudgetPeriod {
@@ -352,279 +2211,12 @@ enum BudgetPeriod {
   YEARLY
 }
 
-model BudgetAlert {
-  id        String   @id @default(cuid())
-  budgetId  String
-  amount    Decimal  @db.Decimal(10, 2)
-  threshold Float
-  triggered Boolean  @default(false)
-  sentAt    DateTime?
-  createdAt DateTime @default(now())
-
-  budget Budget @relation(fields: [budgetId], references: [id], onDelete: Cascade)
-
-  @@map("budget_alerts")
-}
-
-// Authentication and Sessions
-model Session {
-  id        String   @id @default(cuid())
-  userId    String
-  token     String   @unique
-  expiresAt DateTime
-  isActive  Boolean  @default(true)
-  ipAddress String?
-  userAgent String?
-  createdAt DateTime @default(now())
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@map("sessions")
-}
-
-model ApiKey {
-  id          String   @id @default(cuid())
-  userId      String
-  name        String
-  keyHash     String   @unique
-  permissions Json?
-  expiresAt   DateTime?
-  lastUsedAt  DateTime?
-  isActive    Boolean  @default(true)
-  createdAt   DateTime @default(now())
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@map("api_keys")
-}
-
-// Permissions and RBAC
-model Permission {
-  id       String @id @default(cuid())
-  teamId   String
-  resource String // service, template, etc.
-  action   String // read, write, delete, etc.
-  scope    Json?  // Additional constraints
-
-  team Team @relation(fields: [teamId], references: [id], onDelete: Cascade)
-
-  @@unique([teamId, resource, action])
-  @@map("permissions")
-}
-
-// Audit Logging
-model AuditLog {
-  id        String   @id @default(cuid())
-  userId    String?
-  action    String
-  resource  String
-  resourceId String?
-  metadata  Json?
-  ipAddress String?
-  userAgent String?
-  timestamp DateTime @default(now())
-
-  user User? @relation(fields: [userId], references: [id])
-
-  @@map("audit_logs")
-}
-
-// Enhanced Notifications System
-model Notification {
-  id          String   @id @default(cuid())
-  userId      String
-  type        String   // error, warning, success, info, mention, system, alert
-  title       String
-  message     String
-  priority    String   // urgent, high, medium, low
-  sourceName  String
-  sourceType  String   // user, system, automation
-  actions     String?  // JSON string of action buttons
-  metadata    String?  // JSON string of additional data
-  read        Boolean  @default(false)
-  pinned      Boolean  @default(false)
-  archived    Boolean  @default(false)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  @@map("notifications")
-}
-
-model NotificationSettings {
-  id          String   @id @default(cuid())
-  userId      String   @unique
-  preferences String   // JSON string of notification preferences
-  filters     String   // JSON string of filter settings
-  quietHours  String   // JSON string of quiet hours config
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  @@map("notification_settings")
-}
-
-// Documentation
-model ServiceDocument {
-  id        String      @id @default(cuid())
-  serviceId String
-  title     String
-  content   String
-  type      DocumentType
-  path      String?
-  isActive  Boolean     @default(true)
-  createdAt DateTime    @default(now())
-  updatedAt DateTime    @updatedAt
-
-  service Service @relation(fields: [serviceId], references: [id], onDelete: Cascade)
-
-  @@map("service_documents")
-}
-
 enum DocumentType {
   README
   API_DOCS
   RUNBOOK
   ARCHITECTURE
   OTHER
-}
-
-// Search and Discovery
-model SearchIndex {
-  id         String   @id @default(cuid())
-  entityType String   // service, template, document
-  entityId   String
-  title      String
-  content    String
-  tags       String[]
-  metadata   Json?
-  updatedAt  DateTime @updatedAt
-
-  @@unique([entityType, entityId])
-  @@map("search_index")
-}
-
-// ============================================
-// ENHANCED PLUGIN MANAGEMENT SYSTEM
-// ============================================
-
-// Plugin Registry with Tenant Isolation
-model Plugin {
-  id          String   @id @default(cuid())
-  name        String   // package name like @backstage/plugin-kubernetes
-  displayName String
-  description String?
-  category    PluginCategory @default(OTHER)
-  subcategory String?
-  author      String?
-  maintainer  String?
-  repository  String?
-  homepage    String?
-  documentation String?
-  npm         String?
-  license     String?
-  keywords    String[] @default([])
-  tags        String[] @default([])
-  
-  // Tenant Management
-  tenantId    String?
-  tenantScope TenantScope @default(PRIVATE)
-  
-  // Installation State
-  isInstalled Boolean  @default(false)
-  isEnabled   Boolean  @default(false)
-  isFeatured  Boolean  @default(false)
-  isPremium   Boolean  @default(false)
-  
-  // Plugin Metadata
-  compatibility Json?   // backstage version compatibility
-  requirements  Json?   // system requirements
-  permissions   Json?   // required permissions
-  apiVersion    String  @default("v1")
-  schemaVersion String  @default("1.0.0")
-  
-  // Quality Metrics
-  downloadCount   BigInt @default(0)
-  starCount       Int    @default(0)
-  issueCount      Int    @default(0)
-  lastCommit      DateTime?
-  healthScore     Float? // 0-100 plugin health score
-  securityScore   Float? // 0-100 security score
-  maintenanceScore Float? // 0-100 maintenance score
-  
-  // Lifecycle
-  status      PluginStatus @default(ACTIVE)
-  lifecycle   PluginLifecycle @default(STABLE)
-  deprecatedAt DateTime?
-  archivedAt   DateTime?
-  
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  // Relationships
-  versions           PluginVersion[]
-  configurations     PluginConfiguration[]
-  backups            PluginBackup[]
-  marketplacePlugin  MarketplacePlugin?
-  resourceUsage      ResourceUsage[]
-  dependencies       PluginDependency[] @relation("PluginDependencies")
-  dependents         PluginDependency[] @relation("DependentPlugins")
-  environments       PluginEnvironment[]
-  governance         PluginGovernance[]
-  analytics          PluginAnalytics[]
-  alerts             PluginAlert[]
-  workflows          PluginWorkflow[]
-  approvals          PluginApproval[]
-  testResults        PluginTestResult[]
-  vulnerabilities    PluginVulnerability[]
-  performance        PluginPerformance[]
-
-  @@unique([name, tenantId])
-  @@index([tenantId, category, status])
-  @@index([name])
-  @@index([category, isPremium])
-  @@index([healthScore])
-  @@index([downloadCount])
-  @@map("plugins")
-}
-
-model PluginVersion {
-  id            String            @id @default(cuid())
-  pluginId      String
-  version       String
-  semverMajor   Int
-  semverMinor   Int
-  semverPatch   Int
-  prereleaseTag String?
-  isCurrent     Boolean           @default(false)
-  isDeployed    Boolean           @default(false)
-  status        VersionStatus     @default(PENDING)
-  changelog     String?           // markdown changelog
-  dependencies  Json?             // package.json dependencies
-  configuration Json?             // plugin configuration
-  migrationScript String?         // SQL or JS migration script
-  installSource VersionSource     @default(NPM)
-  gitCommit     String?
-  gitBranch     String?
-  deployedBy    String?
-  deployedAt    DateTime?
-  rollbackOf    String?           // ID of version this is rolling back from
-  notes         String?
-  createdAt     DateTime          @default(now())
-  updatedAt     DateTime          @updatedAt
-
-  plugin             Plugin                @relation(fields: [pluginId], references: [id], onDelete: Cascade)
-  deployments        PluginDeployment[]
-  backupsBefore      PluginBackup[]        @relation("BackupBeforeVersion")
-  backupsAfter       PluginBackup[]        @relation("BackupAfterVersion")
-  rollbacksFrom      PluginVersion[]       @relation("VersionRollbacks")
-  rollbackTo         PluginVersion?        @relation("VersionRollbacks", fields: [rollbackOf], references: [id])
-  migrationExecution PluginMigrationExecution[]
-  approvals          PluginApproval[]
-  testResults        PluginTestResult[]
-
-  @@unique([pluginId, version])
-  @@index([pluginId, isCurrent])
-  @@index([status, deployedAt])
-  @@map("plugin_versions")
 }
 
 enum VersionStatus {
@@ -645,84 +2237,11 @@ enum VersionSource {
   CUSTOM
 }
 
-model PluginDeployment {
-  id              String             @id @default(cuid())
-  pluginVersionId String
-  environment     String             @default("production")
-  status          DeploymentStatus   @default(PENDING)
-  strategy        DeploymentStrategy @default(ROLLING)
-  progress        Int                @default(0) // percentage
-  logs            String?            // deployment logs
-  error           String?
-  healthCheck     Json?              // health check results
-  rollbackPlan    Json?              // automated rollback configuration
-  startedAt       DateTime           @default(now())
-  completedAt     DateTime?
-  deployedBy      String
-  rollbackDeadline DateTime?         // automatic rollback if not confirmed
-
-  pluginVersion PluginVersion @relation(fields: [pluginVersionId], references: [id], onDelete: Cascade)
-
-  @@index([status, startedAt])
-  @@map("plugin_deployments")
-}
-
 enum DeploymentStrategy {
   ROLLING
   BLUE_GREEN
   CANARY
   IMMEDIATE
-}
-
-model PluginConfiguration {
-  id          String   @id @default(cuid())
-  pluginId    String
-  environment String   @default("production")
-  config      Json     // plugin configuration
-  isActive    Boolean  @default(true)
-  createdBy   String
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  plugin Plugin @relation(fields: [pluginId], references: [id], onDelete: Cascade)
-
-  @@unique([pluginId, environment])
-  @@map("plugin_configurations")
-}
-
-model PluginBackup {
-  id                String        @id @default(cuid())
-  pluginId          String
-  beforeVersionId   String?
-  afterVersionId    String?
-  backupType        BackupType
-  source            BackupSource  @default(AUTOMATIC)
-  status            BackupStatus  @default(PENDING)
-  size              BigInt?       // backup size in bytes
-  compression       String?       // compression algorithm used
-  encryption        Boolean       @default(true)
-  storageProvider   String        @default("s3") // s3, azure, gcs, local
-  storagePath       String        // path/key in storage
-  storageRegion     String?
-  metadata          Json?         // backup metadata
-  checksumAlgorithm String        @default("sha256")
-  checksum          String?
-  retentionDays     Int           @default(90)
-  expiresAt         DateTime?
-  error             String?
-  notes             String?
-  createdBy         String?
-  createdAt         DateTime      @default(now())
-  updatedAt         DateTime      @updatedAt
-
-  plugin        Plugin         @relation(fields: [pluginId], references: [id], onDelete: Cascade)
-  beforeVersion PluginVersion? @relation("BackupBeforeVersion", fields: [beforeVersionId], references: [id])
-  afterVersion  PluginVersion? @relation("BackupAfterVersion", fields: [afterVersionId], references: [id])
-  restorePoints RestorePoint[]
-
-  @@index([pluginId, createdAt])
-  @@index([status, expiresAt])
-  @@map("plugin_backups")
 }
 
 enum BackupType {
@@ -753,7 +2272,6 @@ enum BackupStatus {
   DELETED
 }
 
-// Enhanced Plugin Enums
 enum PluginCategory {
   AUTHENTICATION
   AUTHORIZATION
@@ -782,10 +2300,10 @@ enum PluginCategory {
 }
 
 enum TenantScope {
-  PUBLIC     // Available to all tenants
-  PRIVATE    // Private to specific tenant
-  RESTRICTED // Requires approval
-  INTERNAL   // Internal/system plugins only
+  PUBLIC
+  PRIVATE
+  RESTRICTED
+  INTERNAL
 }
 
 enum PluginStatus {
@@ -805,20 +2323,64 @@ enum PluginLifecycle {
   END_OF_LIFE
 }
 
-model RestorePoint {
-  id           String        @id @default(cuid())
-  backupId     String
-  name         String
-  description  String?
-  restoreType  RestoreType
-  metadata     Json?         // restore-specific metadata
-  isVerified   Boolean       @default(false)
-  verifiedAt   DateTime?
-  createdAt    DateTime      @default(now())
+enum PluginSource {
+  MARKETPLACE
+  GIT_REPOSITORY
+  NPM_REGISTRY
+  LOCAL_FILE
+  DOCKER_REGISTRY
+  INTERNAL
+  CUSTOM
+}
 
-  backup PluginBackup @relation(fields: [backupId], references: [id], onDelete: Cascade)
+enum PluginOperationType {
+  INSTALL
+  UNINSTALL
+  ENABLE
+  DISABLE
+  UPDATE
+  CONFIGURE
+  BACKUP
+  RESTORE
+  HEALTH_CHECK
+  RESTART
+  ROLLBACK
+  MIGRATE
+  SCAN_VULNERABILITIES
+  PERFORMANCE_TEST
+  VALIDATE
+  SYNC_DEPENDENCIES
+  CLEANUP
+}
 
-  @@map("restore_points")
+enum OperationStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+  CANCELLED
+  TIMEOUT
+  RETRYING
+  SCHEDULED
+}
+
+enum ConfigValueType {
+  STRING
+  NUMBER
+  BOOLEAN
+  JSON
+  ARRAY
+  ENCRYPTED
+}
+
+enum DependencyStatus {
+  SATISFIED
+  UNSATISFIED
+  CONFLICT
+  VERSION_MISMATCH
+  MISSING
+  DEPRECATED
+  UNKNOWN
 }
 
 enum RestoreType {
@@ -827,26 +2389,6 @@ enum RestoreType {
   CONFIGURATION_ONLY
   DATABASE_ONLY
   FULL_RESTORE
-}
-
-model PluginMigrationExecution {
-  id              String           @id @default(cuid())
-  pluginVersionId String
-  type            MigrationType
-  script          String           // migration script content
-  status          MigrationStatus  @default(PENDING)
-  output          String?          // execution output/logs
-  error           String?
-  executionTime   Int?             // milliseconds
-  rollbackScript  String?          // rollback script if available
-  executedBy      String?
-  executedAt      DateTime?
-  createdAt       DateTime         @default(now())
-
-  pluginVersion PluginVersion @relation(fields: [pluginVersionId], references: [id], onDelete: Cascade)
-
-  @@index([pluginVersionId, type])
-  @@map("plugin_migration_executions")
 }
 
 enum MigrationType {
@@ -865,110 +2407,6 @@ enum MigrationStatus {
   FAILED
   ROLLED_BACK
   SKIPPED
-}
-
-// Plugin Dependencies and Relationships
-model PluginDependency {
-  id              String         @id @default(cuid())
-  pluginId        String
-  dependsOnId     String
-  dependencyType  DependencyType @default(SOFT)
-  versionRange    String?        // semver range
-  isOptional      Boolean        @default(false)
-  isDevOnly       Boolean        @default(false)
-  conflictsWith   String[]       @default([])
-  metadata        Json?
-  createdAt       DateTime       @default(now())
-  updatedAt       DateTime       @updatedAt
-
-  plugin      Plugin @relation("PluginDependencies", fields: [pluginId], references: [id], onDelete: Cascade)
-  dependsOn   Plugin @relation("DependentPlugins", fields: [dependsOnId], references: [id], onDelete: Cascade)
-
-  @@unique([pluginId, dependsOnId])
-  @@index([pluginId])
-  @@index([dependsOnId])
-  @@map("plugin_dependencies")
-}
-
-// Plugin Environment Configuration
-model PluginEnvironment {
-  id            String              @id @default(cuid())
-  pluginId      String
-  environment   String              @default("production")
-  isActive      Boolean             @default(true)
-  configuration Json
-  secrets       Json?               // encrypted secrets
-  variables     Json?               // environment variables
-  resources     Json?               // resource limits/requests
-  scaling       Json?               // scaling configuration
-  health        Json?               // health check configuration
-  deployment    DeploymentStrategy  @default(ROLLING)
-  createdBy     String
-  createdAt     DateTime            @default(now())
-  updatedAt     DateTime            @updatedAt
-
-  plugin Plugin @relation(fields: [pluginId], references: [id], onDelete: Cascade)
-
-  @@unique([pluginId, environment])
-  @@index([pluginId])
-  @@index([environment])
-  @@map("plugin_environments")
-}
-
-// Plugin Governance and Approval Workflows
-model PluginGovernance {
-  id              String            @id @default(cuid())
-  pluginId        String
-  tenantId        String
-  policyVersion   String            @default("1.0")
-  requiredApprovals Int             @default(1)
-  approvers       String[]          // List of approver user IDs
-  reviewers       String[]          // List of reviewer user IDs
-  securityReview  Boolean           @default(true)
-  complianceReview Boolean          @default(false)
-  autoApproval    Boolean           @default(false)
-  exemptions      Json?             // Policy exemptions
-  metadata        Json?
-  isActive        Boolean           @default(true)
-  createdBy       String
-  createdAt       DateTime          @default(now())
-  updatedAt       DateTime          @updatedAt
-
-  plugin    Plugin             @relation(fields: [pluginId], references: [id], onDelete: Cascade)
-  approvals PluginApproval[]
-
-  @@unique([pluginId, tenantId])
-  @@index([tenantId])
-  @@map("plugin_governance")
-}
-
-model PluginApproval {
-  id              String           @id @default(cuid())
-  governanceId    String
-  pluginVersionId String?
-  requestType     ApprovalType
-  status          ApprovalStatus   @default(PENDING)
-  requestedBy     String
-  approvedBy      String?
-  reviewedBy      String?
-  priority        ApprovalPriority @default(MEDIUM)
-  reason          String?
-  comments        Json?            // Array of review comments
-  requirements    Json?            // Approval requirements checklist
-  evidence        Json?            // Supporting evidence/documents
-  expiresAt       DateTime?
-  approvedAt      DateTime?
-  rejectedAt      DateTime?
-  createdAt       DateTime         @default(now())
-  updatedAt       DateTime         @updatedAt
-
-  governance    PluginGovernance @relation(fields: [governanceId], references: [id], onDelete: Cascade)
-  pluginVersion PluginVersion?   @relation(fields: [pluginVersionId], references: [id])
-
-  @@index([status, priority])
-  @@index([requestedBy])
-  @@index([approvedBy])
-  @@map("plugin_approvals")
 }
 
 enum ApprovalType {
@@ -998,35 +2436,6 @@ enum ApprovalPriority {
   EMERGENCY
 }
 
-// Plugin Analytics and Usage Tracking
-model PluginAnalytics {
-  id              String   @id @default(cuid())
-  pluginId        String
-  tenantId        String?
-  userId          String?
-  event           AnalyticsEvent
-  environment     String   @default("production")
-  version         String?
-  sessionId       String?
-  userAgent       String?
-  ipAddress       String?
-  country         String?
-  region          String?
-  metadata        Json?    // Additional event metadata
-  duration        Int?     // Event duration in milliseconds
-  errorCode       String?  // Error code if applicable
-  errorMessage    String?  // Error message if applicable
-  timestamp       DateTime @default(now())
-
-  plugin Plugin @relation(fields: [pluginId], references: [id], onDelete: Cascade)
-
-  @@index([pluginId, timestamp])
-  @@index([event, timestamp])
-  @@index([tenantId, timestamp])
-  @@index([userId, timestamp])
-  @@map("plugin_analytics")
-}
-
 enum AnalyticsEvent {
   VIEW
   INSTALL
@@ -1045,30 +2454,6 @@ enum AnalyticsEvent {
   CRASH
 }
 
-// Plugin Performance Monitoring
-model PluginPerformance {
-  id              String        @id @default(cuid())
-  pluginId        String
-  environment     String        @default("production")
-  version         String?
-  metricType      PerformanceMetric
-  value           Float
-  unit            String
-  percentile      Float?        // P50, P95, P99 values
-  threshold       Float?        // Performance threshold
-  isAlert         Boolean       @default(false)
-  tags            Json?         // Additional tags
-  timestamp       DateTime      @default(now())
-  sampledAt       DateTime      @default(now())
-
-  plugin Plugin @relation(fields: [pluginId], references: [id], onDelete: Cascade)
-
-  @@index([pluginId, metricType, timestamp])
-  @@index([environment, timestamp])
-  @@index([metricType, isAlert])
-  @@map("plugin_performance")
-}
-
 enum PerformanceMetric {
   LOAD_TIME
   RENDER_TIME
@@ -1082,38 +2467,6 @@ enum PerformanceMetric {
   CACHE_HIT_RATE
   GARBAGE_COLLECTION
   DATABASE_QUERY_TIME
-}
-
-// Plugin Security and Vulnerabilities
-model PluginVulnerability {
-  id              String            @id @default(cuid())
-  pluginId        String
-  cveId           String?           // CVE identifier
-  severity        VulnerabilitySeverity
-  score           Float?            // CVSS score
-  title           String
-  description     String
-  affectedVersions String[]
-  patchedVersions String[]         @default([])
-  workaround      String?
-  exploitability  String?
-  impact          Json?             // Impact assessment
-  references      String[]          @default([])
-  status          VulnerabilityStatus @default(OPEN)
-  discoveredBy    String?
-  reportedAt      DateTime?
-  patchedAt       DateTime?
-  acknowledgedAt  DateTime?
-  resolvedAt      DateTime?
-  createdAt       DateTime          @default(now())
-  updatedAt       DateTime          @updatedAt
-
-  plugin Plugin @relation(fields: [pluginId], references: [id], onDelete: Cascade)
-
-  @@index([pluginId, severity])
-  @@index([status, severity])
-  @@index([cveId])
-  @@map("plugin_vulnerabilities")
 }
 
 enum VulnerabilitySeverity {
@@ -1132,35 +2485,6 @@ enum VulnerabilityStatus {
   RESOLVED
   DISMISSED
   FALSE_POSITIVE
-}
-
-// Plugin Testing and Quality Assurance
-model PluginTestResult {
-  id              String     @id @default(cuid())
-  pluginId        String
-  pluginVersionId String?
-  testSuite       String
-  testType        TestType
-  environment     String     @default("test")
-  status          TestStatus
-  passed          Int        @default(0)
-  failed          Int        @default(0)
-  skipped         Int        @default(0)
-  coverage        Float?     // Code coverage percentage
-  duration        Int?       // Test duration in milliseconds
-  artifacts       Json?      // Test artifacts (screenshots, logs, etc.)
-  results         Json?      // Detailed test results
-  logs            String?    // Test execution logs
-  executedBy      String?
-  executedAt      DateTime   @default(now())
-  createdAt       DateTime   @default(now())
-
-  plugin        Plugin         @relation(fields: [pluginId], references: [id], onDelete: Cascade)
-  pluginVersion PluginVersion? @relation(fields: [pluginVersionId], references: [id])
-
-  @@index([pluginId, testType, status])
-  @@index([status, executedAt])
-  @@map("plugin_test_results")
 }
 
 enum TestType {
@@ -1186,86 +2510,6 @@ enum TestStatus {
   SKIPPED
 }
 
-// Plugin Alerts and Notifications
-model PluginAlert {
-  id              String        @id @default(cuid())
-  pluginId        String
-  alertType       AlertType
-  severity        AlertSeverity
-  title           String
-  message         String
-  details         Json?         // Additional alert details
-  threshold       Float?        // Alert threshold value
-  currentValue    Float?        // Current metric value
-  environment     String        @default("production")
-  isActive        Boolean       @default(true)
-  isMuted         Boolean       @default(false)
-  acknowledgedBy  String?
-  acknowledgedAt  DateTime?
-  resolvedBy      String?
-  resolvedAt      DateTime?
-  mutedUntil      DateTime?
-  escalatedAt     DateTime?
-  escalationLevel Int           @default(0)
-  notificationChannels Json?    // Channels to notify
-  createdAt       DateTime      @default(now())
-  updatedAt       DateTime      @updatedAt
-
-  plugin Plugin @relation(fields: [pluginId], references: [id], onDelete: Cascade)
-
-  @@index([pluginId, severity, isActive])
-  @@index([alertType, isActive])
-  @@index([environment, severity])
-  @@map("plugin_alerts")
-}
-
-// Plugin Workflow Automation
-model PluginWorkflow {
-  id              String         @id @default(cuid())
-  pluginId        String
-  name            String
-  description     String?
-  trigger         WorkflowTrigger
-  conditions      Json?          // Workflow conditions
-  actions         Json           // Workflow actions
-  schedule        String?        // Cron schedule for scheduled workflows
-  isActive        Boolean        @default(true)
-  lastRunAt       DateTime?
-  lastRunStatus   WorkflowStatus?
-  lastRunDuration Int?           // Last run duration in milliseconds
-  successCount    Int            @default(0)
-  failureCount    Int            @default(0)
-  createdBy       String
-  createdAt       DateTime       @default(now())
-  updatedAt       DateTime       @updatedAt
-
-  plugin Plugin               @relation(fields: [pluginId], references: [id], onDelete: Cascade)
-  executions PluginWorkflowExecution[]
-
-  @@index([pluginId, isActive])
-  @@index([trigger])
-  @@map("plugin_workflows")
-}
-
-model PluginWorkflowExecution {
-  id              String         @id @default(cuid())
-  workflowId      String
-  trigger         WorkflowTrigger
-  status          WorkflowStatus @default(PENDING)
-  input           Json?          // Workflow input data
-  output          Json?          // Workflow output data
-  error           String?        // Error message if failed
-  duration        Int?           // Execution duration in milliseconds
-  startedAt       DateTime       @default(now())
-  completedAt     DateTime?
-
-  workflow PluginWorkflow @relation(fields: [workflowId], references: [id], onDelete: Cascade)
-
-  @@index([workflowId, startedAt])
-  @@index([status])
-  @@map("plugin_workflow_executions")
-}
-
 enum WorkflowTrigger {
   MANUAL
   SCHEDULED
@@ -1288,49 +2532,6 @@ enum WorkflowStatus {
   SKIPPED
 }
 
-// Disaster Recovery Configuration
-model DisasterRecoveryPlan {
-  id                String   @id @default(cuid())
-  name              String   @unique
-  description       String?
-  scope             Json     // which plugins/services included
-  backupSchedule    String   // cron expression
-  retentionPolicy   Json     // retention configuration
-  storageProviders  Json     // primary and backup storage configs
-  alertChannels     Json     // notification configurations
-  testSchedule      String?  // DR test schedule
-  lastTestAt        DateTime?
-  nextTestAt        DateTime?
-  isActive          Boolean  @default(true)
-  createdBy         String
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
-
-  executions DisasterRecoveryExecution[]
-
-  @@map("disaster_recovery_plans")
-}
-
-model DisasterRecoveryExecution {
-  id              String                    @id @default(cuid())
-  planId          String
-  type            DisasterRecoveryType
-  status          DisasterRecoveryStatus    @default(PENDING)
-  triggerReason   String?                   // what triggered this execution
-  scope           Json?                     // what was recovered
-  metrics         Json?                     // recovery metrics
-  verificationResults Json?                 // verification results
-  error           String?
-  startedAt       DateTime                  @default(now())
-  completedAt     DateTime?
-  executedBy      String?
-
-  plan DisasterRecoveryPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
-
-  @@index([planId, startedAt])
-  @@map("disaster_recovery_executions")
-}
-
 enum DisasterRecoveryType {
   FULL_BACKUP
   INCREMENTAL_BACKUP
@@ -1348,44 +2549,6 @@ enum DisasterRecoveryStatus {
   VERIFIED
 }
 
-// ============================================
-// BILLING AND MONETIZATION MODELS
-// ============================================
-
-// Organization Billing Account
-model Organization {
-  id                String   @id @default(cuid())
-  name              String   @unique
-  displayName       String
-  taxId             String?
-  billingEmail      String
-  billingAddress    Json?    // Address details
-  country           String
-  currency          String   @default("USD")
-  stripeCustomerId  String?  @unique
-  paymentMethodId   String?
-  defaultPaymentMethod String?
-  creditBalance     Decimal  @default(0) @db.Decimal(10, 2)
-  creditLimit       Decimal  @default(0) @db.Decimal(10, 2)
-  billingCycle      BillingCycle @default(MONTHLY)
-  status            OrganizationStatus @default(ACTIVE)
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
-
-  // Relationships
-  subscriptions     Subscription[]
-  invoices          Invoice[]
-  payments          Payment[]
-  usageRecords      ResourceUsage[]
-  costAllocations   CostAllocation[]
-  budgets           OrganizationBudget[]
-  billingAlerts     BillingAlert[]
-  marketplacePlugins MarketplacePlugin[]
-  payouts           DeveloperPayout[]
-
-  @@map("organizations")
-}
-
 enum OrganizationStatus {
   ACTIVE
   SUSPENDED
@@ -1399,34 +2562,6 @@ enum BillingCycle {
   ANNUAL
 }
 
-// Subscription Management
-model Subscription {
-  id               String   @id @default(cuid())
-  organizationId   String
-  planId           String
-  stripeSubscriptionId String? @unique
-  status           SubscriptionStatus @default(TRIALING)
-  currentPeriodStart DateTime
-  currentPeriodEnd DateTime
-  cancelAtPeriodEnd Boolean @default(false)
-  cancelledAt      DateTime?
-  trialStart       DateTime?
-  trialEnd         DateTime?
-  quantity         Int      @default(1)
-  metadata         Json?
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
-
-  // Relationships
-  organization     Organization @relation(fields: [organizationId], references: [id])
-  plan             BillingPlan  @relation(fields: [planId], references: [id])
-  usageRecords     ResourceUsage[]
-  subscriptionItems SubscriptionItem[]
-  discounts        SubscriptionDiscount[]
-
-  @@map("subscriptions")
-}
-
 enum SubscriptionStatus {
   TRIALING
   ACTIVE
@@ -1436,94 +2571,12 @@ enum SubscriptionStatus {
   INCOMPLETE
 }
 
-model SubscriptionItem {
-  id               String   @id @default(cuid())
-  subscriptionId   String
-  productId        String
-  stripeItemId     String?
-  quantity         Int      @default(1)
-  unitPrice        Decimal  @db.Decimal(10, 2)
-  createdAt        DateTime @default(now())
-
-  subscription     Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
-
-  @@map("subscription_items")
-}
-
-// Billing Plans
-model BillingPlan {
-  id               String   @id @default(cuid())
-  name             String   @unique
-  displayName      String
-  description      String?
-  tier             PlanTier
-  monthlyPrice     Decimal  @db.Decimal(10, 2)
-  annualPrice      Decimal  @db.Decimal(10, 2)
-  setupFee         Decimal  @default(0) @db.Decimal(10, 2)
-  currency         String   @default("USD")
-  trialDays        Int      @default(0)
-  features         Json     // List of features
-  limits           Json     // Resource limits
-  overage          Json     // Overage pricing
-  stripePriceId    String?
-  stripeProductId  String?
-  isActive         Boolean  @default(true)
-  isPublic         Boolean  @default(true)
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
-
-  // Relationships
-  subscriptions    Subscription[]
-  usageTiers       UsageTier[]
-
-  @@map("billing_plans")
-}
-
 enum PlanTier {
   FREE
   STARTER
   PROFESSIONAL
   ENTERPRISE
   CUSTOM
-}
-
-// Usage-Based Pricing Tiers
-model UsageTier {
-  id               String   @id @default(cuid())
-  planId           String
-  resourceType     ResourceType
-  minUnits         Int
-  maxUnits         Int?
-  pricePerUnit     Decimal  @db.Decimal(10, 4)
-  flatFee          Decimal  @default(0) @db.Decimal(10, 2)
-
-  plan             BillingPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
-
-  @@map("usage_tiers")
-}
-
-// Resource Usage Tracking
-model ResourceUsage {
-  id               String   @id @default(cuid())
-  organizationId   String
-  subscriptionId   String?
-  pluginId         String?
-  resourceType     ResourceType
-  quantity         Decimal  @db.Decimal(12, 4)
-  unit             String
-  cost             Decimal  @db.Decimal(10, 2)
-  period           DateTime
-  metadata         Json?
-  createdAt        DateTime @default(now())
-
-  // Relationships
-  organization     Organization @relation(fields: [organizationId], references: [id])
-  subscription     Subscription? @relation(fields: [subscriptionId], references: [id])
-  plugin           Plugin? @relation(fields: [pluginId], references: [id])
-
-  @@index([organizationId, period])
-  @@index([resourceType, period])
-  @@map("resource_usage")
 }
 
 enum ResourceType {
@@ -1539,82 +2592,12 @@ enum ResourceType {
   CUSTOM
 }
 
-// Invoices
-model Invoice {
-  id               String   @id @default(cuid())
-  organizationId   String
-  invoiceNumber    String   @unique
-  stripeInvoiceId  String?  @unique
-  status           InvoiceStatus @default(DRAFT)
-  dueDate          DateTime
-  periodStart      DateTime
-  periodEnd        DateTime
-  subtotal         Decimal  @db.Decimal(10, 2)
-  tax              Decimal  @default(0) @db.Decimal(10, 2)
-  discount         Decimal  @default(0) @db.Decimal(10, 2)
-  total            Decimal  @db.Decimal(10, 2)
-  currency         String   @default("USD")
-  paidAt           DateTime?
-  voidedAt         DateTime?
-  notes            String?
-  metadata         Json?
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
-
-  // Relationships
-  organization     Organization @relation(fields: [organizationId], references: [id])
-  lineItems        InvoiceLineItem[]
-  payments         Payment[]
-  creditNotes      CreditNote[]
-
-  @@map("invoices")
-}
-
 enum InvoiceStatus {
   DRAFT
   OPEN
   PAID
   VOID
   UNCOLLECTIBLE
-}
-
-model InvoiceLineItem {
-  id               String   @id @default(cuid())
-  invoiceId        String
-  description      String
-  quantity         Decimal  @db.Decimal(12, 4)
-  unitPrice        Decimal  @db.Decimal(10, 4)
-  amount           Decimal  @db.Decimal(10, 2)
-  taxRate          Decimal  @default(0) @db.Decimal(5, 2)
-  metadata         Json?
-
-  invoice          Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
-
-  @@map("invoice_line_items")
-}
-
-// Payments
-model Payment {
-  id               String   @id @default(cuid())
-  organizationId   String
-  invoiceId        String?
-  stripePaymentId  String?  @unique
-  amount           Decimal  @db.Decimal(10, 2)
-  currency         String   @default("USD")
-  status           PaymentStatus @default(PENDING)
-  method           PaymentMethod
-  failureReason    String?
-  refundedAmount   Decimal  @default(0) @db.Decimal(10, 2)
-  metadata         Json?
-  processedAt      DateTime?
-  createdAt        DateTime @default(now())
-
-  // Relationships
-  organization     Organization @relation(fields: [organizationId], references: [id])
-  invoice          Invoice? @relation(fields: [invoiceId], references: [id])
-  refunds          Refund[]
-
-  @@map("payments")
 }
 
 enum PaymentStatus {
@@ -1636,23 +2619,6 @@ enum PaymentMethod {
   OTHER
 }
 
-// Refunds
-model Refund {
-  id               String   @id @default(cuid())
-  paymentId        String
-  stripeRefundId   String?  @unique
-  amount           Decimal  @db.Decimal(10, 2)
-  reason           RefundReason
-  status           RefundStatus @default(PENDING)
-  notes            String?
-  processedAt      DateTime?
-  createdAt        DateTime @default(now())
-
-  payment          Payment @relation(fields: [paymentId], references: [id])
-
-  @@map("refunds")
-}
-
 enum RefundReason {
   DUPLICATE
   FRAUDULENT
@@ -1669,48 +2635,10 @@ enum RefundStatus {
   CANCELLED
 }
 
-// Credit Notes
-model CreditNote {
-  id               String   @id @default(cuid())
-  invoiceId        String
-  creditNoteNumber String   @unique
-  amount           Decimal  @db.Decimal(10, 2)
-  reason           String
-  status           CreditNoteStatus @default(ISSUED)
-  appliedAt        DateTime?
-  voidedAt         DateTime?
-  createdAt        DateTime @default(now())
-
-  invoice          Invoice @relation(fields: [invoiceId], references: [id])
-
-  @@map("credit_notes")
-}
-
 enum CreditNoteStatus {
   ISSUED
   APPLIED
   VOIDED
-}
-
-// Discounts and Coupons
-model Coupon {
-  id               String   @id @default(cuid())
-  code             String   @unique
-  name             String
-  description      String?
-  discountType     DiscountType
-  discountValue    Decimal  @db.Decimal(10, 2)
-  maxRedemptions   Int?
-  redemptionCount  Int      @default(0)
-  validFrom        DateTime
-  validUntil       DateTime
-  restrictions     Json?    // Plan restrictions, minimum amount, etc.
-  isActive         Boolean  @default(true)
-  createdAt        DateTime @default(now())
-
-  discounts        SubscriptionDiscount[]
-
-  @@map("coupons")
 }
 
 enum DiscountType {
@@ -1719,95 +2647,11 @@ enum DiscountType {
   FREE_TRIAL_EXTENSION
 }
 
-model SubscriptionDiscount {
-  id               String   @id @default(cuid())
-  subscriptionId   String
-  couponId         String
-  appliedAt        DateTime @default(now())
-  expiresAt        DateTime?
-
-  subscription     Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
-  coupon           Coupon @relation(fields: [couponId], references: [id])
-
-  @@unique([subscriptionId, couponId])
-  @@map("subscription_discounts")
-}
-
-// Cost Allocation and Chargeback
-model CostAllocation {
-  id               String   @id @default(cuid())
-  organizationId   String
-  teamId           String
-  costCenterId     String?
-  period           DateTime
-  allocatedCost    Decimal  @db.Decimal(10, 2)
-  actualCost       Decimal  @db.Decimal(10, 2)
-  currency         String   @default("USD")
-  breakdown        Json     // Detailed cost breakdown
-  approvedBy       String?
-  approvedAt       DateTime?
-  status           AllocationStatus @default(PENDING)
-  createdAt        DateTime @default(now())
-
-  organization     Organization @relation(fields: [organizationId], references: [id])
-  team             Team @relation(fields: [teamId], references: [id])
-  costCenter       CostCenter? @relation(fields: [costCenterId], references: [id])
-
-  @@index([organizationId, period])
-  @@index([teamId, period])
-  @@map("cost_allocations")
-}
-
 enum AllocationStatus {
   PENDING
   APPROVED
   REJECTED
   PROCESSED
-}
-
-model CostCenter {
-  id               String   @id @default(cuid())
-  name             String   @unique
-  code             String   @unique
-  description      String?
-  budget           Decimal  @db.Decimal(10, 2)
-  currency         String   @default("USD")
-  managerId        String
-  isActive         Boolean  @default(true)
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
-
-  allocations      CostAllocation[]
-
-  @@map("cost_centers")
-}
-
-// Marketplace and Revenue Sharing
-model MarketplacePlugin {
-  id               String   @id @default(cuid())
-  pluginId         String   @unique
-  developerId      String
-  organizationId   String
-  pricingModel     PricingModel
-  basePrice        Decimal  @db.Decimal(10, 2)
-  currency         String   @default("USD")
-  revenueShare     Decimal  @db.Decimal(5, 2) // Percentage
-  tier             MarketplaceTier
-  stripeProductId  String?
-  stripePriceId    String?
-  isActive         Boolean  @default(true)
-  isApproved       Boolean  @default(false)
-  publishedAt      DateTime?
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
-
-  // Relationships
-  plugin           Plugin @relation(fields: [pluginId], references: [id])
-  organization     Organization @relation(fields: [organizationId], references: [id])
-  sales            PluginSale[]
-  reviews          PluginReview[]
-
-  @@map("marketplace_plugins")
 }
 
 enum PricingModel {
@@ -1825,45 +2669,11 @@ enum MarketplaceTier {
   PLATINUM
 }
 
-model PluginSale {
-  id               String   @id @default(cuid())
-  marketplacePluginId String
-  buyerOrgId       String
-  amount           Decimal  @db.Decimal(10, 2)
-  commission       Decimal  @db.Decimal(10, 2)
-  netAmount        Decimal  @db.Decimal(10, 2)
-  currency         String   @default("USD")
-  status           SaleStatus @default(PENDING)
-  paymentId        String?
-  createdAt        DateTime @default(now())
-
-  marketplacePlugin MarketplacePlugin @relation(fields: [marketplacePluginId], references: [id])
-
-  @@map("plugin_sales")
-}
-
 enum SaleStatus {
   PENDING
   COMPLETED
   REFUNDED
   CANCELLED
-}
-
-model DeveloperPayout {
-  id               String   @id @default(cuid())
-  organizationId   String
-  period           DateTime
-  amount           Decimal  @db.Decimal(10, 2)
-  currency         String   @default("USD")
-  status           PayoutStatus @default(PENDING)
-  stripeTransferId String?
-  processedAt      DateTime?
-  notes            String?
-  createdAt        DateTime @default(now())
-
-  organization     Organization @relation(fields: [organizationId], references: [id])
-
-  @@map("developer_payouts")
 }
 
 enum PayoutStatus {
@@ -1872,64 +2682,6 @@ enum PayoutStatus {
   COMPLETED
   FAILED
   CANCELLED
-}
-
-// Plugin Reviews (for marketplace)
-model PluginReview {
-  id               String   @id @default(cuid())
-  marketplacePluginId String
-  userId           String
-  rating           Int      // 1-5
-  title            String?
-  comment          String?
-  isVerifiedPurchase Boolean @default(false)
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
-
-  marketplacePlugin MarketplacePlugin @relation(fields: [marketplacePluginId], references: [id])
-
-  @@map("plugin_reviews")
-}
-
-// Budget Management
-model OrganizationBudget {
-  id               String   @id @default(cuid())
-  organizationId   String
-  name             String
-  amount           Decimal  @db.Decimal(10, 2)
-  spent            Decimal  @default(0) @db.Decimal(10, 2)
-  period           BudgetPeriod
-  resourceType     ResourceType?
-  alertThreshold   Decimal  @db.Decimal(5, 2) // Percentage
-  isActive         Boolean  @default(true)
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
-
-  organization     Organization @relation(fields: [organizationId], references: [id])
-  alerts           BillingAlert[]
-
-  @@map("organization_budgets")
-}
-
-// Billing Alerts
-model BillingAlert {
-  id               String   @id @default(cuid())
-  organizationId   String
-  budgetId         String?
-  type             AlertType
-  threshold        Decimal  @db.Decimal(10, 2)
-  currentValue     Decimal  @db.Decimal(10, 2)
-  message          String
-  severity         AlertSeverity
-  acknowledged     Boolean  @default(false)
-  acknowledgedBy   String?
-  acknowledgedAt   DateTime?
-  createdAt        DateTime @default(now())
-
-  organization     Organization @relation(fields: [organizationId], references: [id])
-  budget           OrganizationBudget? @relation(fields: [budgetId], references: [id])
-
-  @@map("billing_alerts")
 }
 
 enum AlertType {
@@ -1947,34 +2699,273 @@ enum AlertSeverity {
   CRITICAL
 }
 
-// Tax Configuration
-model TaxRate {
-  id               String   @id @default(cuid())
-  country          String
-  state            String?
-  rate             Decimal  @db.Decimal(5, 2)
-  name             String
-  description      String?
-  isActive         Boolean  @default(true)
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
-
-  @@unique([country, state])
-  @@map("tax_rates")
+enum SecurityRiskLevel {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+  UNKNOWN
 }
 
-// Billing Events (for audit and webhooks)
-model BillingEvent {
-  id               String   @id @default(cuid())
-  organizationId   String?
-  eventType        String
-  eventData        Json
-  stripeEventId    String?  @unique
-  processed        Boolean  @default(false)
-  processedAt      DateTime?
-  error            String?
-  createdAt        DateTime @default(now())
+enum SecurityScanStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+  CANCELLED
+  EXPIRED
+}
 
-  @@index([eventType, processed])
-  @@map("billing_events")
+enum SecurityEventType {
+  SIGNATURE_VERIFICATION
+  CHECKSUM_VALIDATION
+  VULNERABILITY_DETECTED
+  TRUST_SCORE_CHANGED
+  POLICY_VIOLATION
+  MALWARE_DETECTED
+  COMPLIANCE_FAILURE
+  APPROVAL_REQUEST
+  EXEMPTION_GRANTED
+  SCAN_COMPLETED
+}
+
+enum SecurityEventSeverity {
+  INFO
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum SecurityEventStatus {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+  DISMISSED
+  ESCALATED
+}
+
+enum PublisherTrustLevel {
+  UNKNOWN
+  UNVERIFIED
+  BASIC
+  VERIFIED
+  TRUSTED
+  CERTIFIED
+}
+
+enum SecurityPolicyType {
+  SIGNATURE_REQUIRED
+  CHECKSUM_REQUIRED
+  TRUST_THRESHOLD
+  VULNERABILITY_LIMITS
+  PUBLISHER_ALLOWLIST
+  PACKAGE_SIZE_LIMIT
+  COMPLIANCE_REQUIRED
+  CUSTOM
+}
+
+enum PolicyEnforcement {
+  DISABLED
+  WARN
+  BLOCK
+  REQUIRE_APPROVAL
+}
+
+enum SecurityScanType {
+  VULNERABILITY
+  MALWARE
+  DEPENDENCY
+  LICENSE
+  COMPLIANCE
+  STATIC_ANALYSIS
+  DYNAMIC_ANALYSIS
+  COMPOSITE
+}
+
+enum ComplianceStatus {
+  UNKNOWN
+  PENDING
+  COMPLIANT
+  NON_COMPLIANT
+  CONDITIONALLY_COMPLIANT
+  EXEMPTED
+}
+
+enum ComplianceReportType {
+  PLUGIN_SECURITY
+  VULNERABILITY_ASSESSMENT
+  POLICY_COMPLIANCE
+  TRUST_EVALUATION
+  COMPREHENSIVE
+}
+
+enum SecurityApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CONDITIONALLY_APPROVED
+  EXPIRED
+}
+
+enum QualityGrade {
+  A
+  B
+  C
+  D
+  F
+}
+
+enum QualityCategory {
+  SECURITY
+  PERFORMANCE
+  MAINTAINABILITY
+  RELIABILITY
+  DOCUMENTATION
+  COMPLIANCE
+  USABILITY
+  TESTABILITY
+}
+
+enum QualityCheckType {
+  VULNERABILITY_SCAN
+  DEPENDENCY_AUDIT
+  SECRETS_DETECTION
+  PERMISSION_ANALYSIS
+  SECURITY_POLICY_COMPLIANCE
+  BUNDLE_SIZE_ANALYSIS
+  LOAD_TIME_ANALYSIS
+  MEMORY_USAGE_CHECK
+  CPU_USAGE_CHECK
+  DATABASE_QUERY_ANALYSIS
+  CODE_COMPLEXITY
+  CODE_COVERAGE
+  TECHNICAL_DEBT
+  CODE_DUPLICATION
+  CODING_STANDARDS
+  ERROR_RATE_ANALYSIS
+  UPTIME_MONITORING
+  DEPENDENCY_HEALTH
+  API_RELIABILITY
+  FAILURE_RECOVERY
+  README_QUALITY
+  API_DOCUMENTATION
+  CODE_COMMENTS
+  CHANGELOG_QUALITY
+  SETUP_INSTRUCTIONS
+  LICENSE_COMPLIANCE
+  POLICY_COMPLIANCE
+  REGULATORY_COMPLIANCE
+  ACCESSIBILITY_COMPLIANCE
+  CUSTOM_RULE
+  COMPOSITE_CHECK
+}
+
+enum QualityCheckStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+  SKIPPED
+  TIMEOUT
+  ERROR
+}
+
+enum CheckSeverity {
+  CRITICAL
+  HIGH
+  MEDIUM
+  LOW
+  INFO
+}
+
+enum TrendDirection {
+  IMPROVING
+  STABLE
+  DECLINING
+  UNKNOWN
+}
+
+enum HistoryTrigger {
+  SCHEDULED_EVALUATION
+  MANUAL_EVALUATION
+  PLUGIN_UPDATE
+  CONFIG_CHANGE
+  DEPENDENCY_CHANGE
+  SECURITY_SCAN
+  PERFORMANCE_CHANGE
+  ISSUE_RESOLUTION
+}
+
+enum IssueType {
+  SECURITY_VULNERABILITY
+  PERFORMANCE_ISSUE
+  MAINTAINABILITY_DEBT
+  RELIABILITY_CONCERN
+  DOCUMENTATION_GAP
+  COMPLIANCE_VIOLATION
+  POLICY_VIOLATION
+  DEPENDENCY_ISSUE
+  CONFIGURATION_ERROR
+  OTHER
+}
+
+enum IssueSeverity {
+  CRITICAL
+  HIGH
+  MEDIUM
+  LOW
+  INFO
+}
+
+enum IssueStatus {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+  DEFERRED
+  WONT_FIX
+  DUPLICATE
+  FALSE_POSITIVE
+}
+
+enum IssuePriority {
+  URGENT
+  HIGH
+  MEDIUM
+  LOW
+  BACKLOG
+}
+
+enum ResolutionMethod {
+  FIXED
+  CONFIGURATION_CHANGE
+  DEPENDENCY_UPDATE
+  DOCUMENTATION_UPDATE
+  POLICY_EXCEPTION
+  WORKAROUND_APPLIED
+  NOT_REPRODUCIBLE
+  BY_DESIGN
+}
+
+enum EvaluationJobType {
+  FULL_EVALUATION
+  INCREMENTAL_EVALUATION
+  SECURITY_SCAN_ONLY
+  PERFORMANCE_CHECK_ONLY
+  COMPLIANCE_CHECK
+  SCHEDULED_EVALUATION
+  TRIGGERED_EVALUATION
+  CUSTOM_EVALUATION
+}
+
+enum EvaluationJobStatus {
+  PENDING
+  QUEUED
+  RUNNING
+  COMPLETED
+  FAILED
+  CANCELLED
+  TIMEOUT
+  RETRY
 }

@@ -1,0 +1,1178 @@
+# Performance Optimization Configuration
+# Response caching, database optimization, asset optimization, and service workers
+
+---
+# Redis Cluster for High-Performance Caching
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redis-cluster
+  namespace: saas-idp-production
+  labels:
+    app: saas-idp
+    component: redis-cluster
+spec:
+  serviceName: redis-cluster-service
+  replicas: 6
+  selector:
+    matchLabels:
+      app: saas-idp
+      component: redis-cluster
+  template:
+    metadata:
+      labels:
+        app: saas-idp
+        component: redis-cluster
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9121"
+    spec:
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchLabels:
+                app: saas-idp
+                component: redis-cluster
+            topologyKey: kubernetes.io/hostname
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        fsGroup: 999
+      containers:
+      - name: redis
+        image: redis:7.2-alpine
+        ports:
+        - name: redis
+          containerPort: 6379
+        - name: cluster
+          containerPort: 16379
+        command:
+          - redis-server
+        args:
+          - /etc/redis/redis.conf
+          - --cluster-enabled
+          - --cluster-config-file
+          - /data/nodes.conf
+          - --cluster-node-timeout
+          - "5000"
+          - --appendonly
+          - "yes"
+          - --protected-mode
+          - "no"
+          - --port
+          - "6379"
+          - --bind
+          - "0.0.0.0"
+        volumeMounts:
+        - name: redis-data
+          mountPath: /data
+        - name: redis-config
+          mountPath: /etc/redis
+        resources:
+          requests:
+            memory: "2Gi"
+            cpu: "500m"
+          limits:
+            memory: "8Gi"
+            cpu: "2000m"
+        livenessProbe:
+          exec:
+            command:
+            - redis-cli
+            - ping
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          exec:
+            command:
+            - redis-cli
+            - ping
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+      
+      # Redis Exporter for monitoring
+      - name: redis-exporter
+        image: oliver006/redis_exporter:latest
+        ports:
+        - name: metrics
+          containerPort: 9121
+        env:
+        - name: REDIS_ADDR
+          value: "localhost:6379"
+        - name: REDIS_EXPORTER_INCL_SYSTEM_METRICS
+          value: "true"
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "100m"
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 65534
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+      
+      volumes:
+      - name: redis-config
+        configMap:
+          name: redis-cluster-config
+  
+  volumeClaimTemplates:
+  - metadata:
+      name: redis-data
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      storageClassName: gp3-encrypted
+      resources:
+        requests:
+          storage: 100Gi
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: redis-cluster-config
+  namespace: saas-idp-production
+  labels:
+    app: saas-idp
+    component: redis-cluster
+data:
+  redis.conf: |
+    # Redis Configuration for High Performance Caching
+    
+    # Network and Connection Settings
+    port 6379
+    bind 0.0.0.0
+    tcp-backlog 511
+    timeout 300
+    tcp-keepalive 60
+    
+    # General Settings
+    daemonize no
+    pidfile /data/redis.pid
+    loglevel notice
+    logfile ""
+    databases 16
+    
+    # Memory Management
+    maxmemory 6gb
+    maxmemory-policy allkeys-lru
+    maxmemory-samples 10
+    
+    # Persistence Settings
+    save 900 1
+    save 300 10
+    save 60 10000
+    stop-writes-on-bgsave-error yes
+    rdbcompression yes
+    rdbchecksum yes
+    dbfilename dump.rdb
+    dir /data
+    
+    # AOF Settings
+    appendonly yes
+    appendfilename "appendonly.aof"
+    appendfsync everysec
+    no-appendfsync-on-rewrite no
+    auto-aof-rewrite-percentage 100
+    auto-aof-rewrite-min-size 64mb
+    
+    # Lua Scripting
+    lua-time-limit 5000
+    
+    # Cluster Settings
+    cluster-enabled yes
+    cluster-config-file nodes.conf
+    cluster-node-timeout 15000
+    cluster-announce-ip ""
+    cluster-announce-port 6379
+    cluster-announce-bus-port 16379
+    
+    # Performance Tuning
+    hash-max-ziplist-entries 512
+    hash-max-ziplist-value 64
+    list-max-ziplist-size -2
+    list-compress-depth 0
+    set-max-intset-entries 512
+    zset-max-ziplist-entries 128
+    zset-max-ziplist-value 64
+    hll-sparse-max-bytes 3000
+    
+    # Client Settings
+    timeout 0
+    tcp-keepalive 300
+    
+    # Advanced Settings
+    hz 10
+    dynamic-hz yes
+    aof-rewrite-incremental-fsync yes
+    rdb-save-incremental-fsync yes
+
+---
+# Application-Level Caching Service
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cache-service
+  namespace: saas-idp-production
+  labels:
+    app: saas-idp
+    component: cache-service
+spec:
+  replicas: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 2
+  selector:
+    matchLabels:
+      app: saas-idp
+      component: cache-service
+  template:
+    metadata:
+      labels:
+        app: saas-idp
+        component: cache-service
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: cache-service-sa
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        fsGroup: 1001
+      containers:
+      - name: cache-service
+        image: saas-idp/cache-service:latest
+        ports:
+        - name: http
+          containerPort: 8080
+        - name: metrics
+          containerPort: 9090
+        env:
+        - name: REDIS_CLUSTER_NODES
+          value: "redis-cluster-0.redis-cluster-service:6379,redis-cluster-1.redis-cluster-service:6379,redis-cluster-2.redis-cluster-service:6379"
+        - name: CACHE_DEFAULT_TTL
+          value: "300"
+        - name: CACHE_MAX_MEMORY_USAGE
+          value: "80"
+        - name: COMPRESSION_ENABLED
+          value: "true"
+        - name: COMPRESSION_THRESHOLD
+          value: "1024"
+        - name: METRICS_ENABLED
+          value: "true"
+        envFrom:
+        - configMapRef:
+            name: cache-service-config
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "200m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: http
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cache-service-config
+  namespace: saas-idp-production
+  labels:
+    app: saas-idp
+    component: cache-service
+data:
+  config.yaml: |
+    cache:
+      layers:
+        l1_memory:
+          enabled: true
+          size_mb: 256
+          ttl_seconds: 60
+          max_entries: 10000
+        l2_redis:
+          enabled: true
+          cluster_mode: true
+          compression: true
+          serialization: "msgpack"
+          connection_pool:
+            min_connections: 5
+            max_connections: 100
+            max_idle_time: 300
+        l3_persistent:
+          enabled: true
+          backend: "postgresql"
+          compression: true
+          ttl_seconds: 86400
+      
+      strategies:
+        api_responses:
+          ttl: 300
+          layers: ["l1_memory", "l2_redis"]
+          invalidation: "time_based"
+          compression_threshold: 1024
+        static_data:
+          ttl: 3600
+          layers: ["l1_memory", "l2_redis", "l3_persistent"]
+          invalidation: "manual"
+        user_sessions:
+          ttl: 1800
+          layers: ["l2_redis"]
+          invalidation: "activity_based"
+        plugin_metadata:
+          ttl: 600
+          layers: ["l1_memory", "l2_redis"]
+          invalidation: "event_based"
+        database_queries:
+          ttl: 180
+          layers: ["l1_memory", "l2_redis"]
+          invalidation: "smart"
+          cache_miss_penalty: 1.5
+      
+      patterns:
+        read_through:
+          enabled: true
+          timeout_ms: 5000
+          fallback_enabled: true
+        write_through:
+          enabled: true
+          async_write: true
+          batch_size: 100
+        write_behind:
+          enabled: true
+          flush_interval: 30
+          max_batch_size: 1000
+      
+      eviction:
+        policy: "lru"
+        memory_threshold: 85
+        check_interval: 30
+        emergency_cleanup: true
+      
+      monitoring:
+        hit_rate_threshold: 0.85
+        response_time_threshold: 50
+        error_rate_threshold: 0.01
+        alerts_enabled: true
+
+---
+# Database Query Optimization Service
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: query-optimizer
+  namespace: saas-idp-production
+  labels:
+    app: saas-idp
+    component: query-optimizer
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: saas-idp
+      component: query-optimizer
+  template:
+    metadata:
+      labels:
+        app: saas-idp
+        component: query-optimizer
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+    spec:
+      serviceAccountName: query-optimizer-sa
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        fsGroup: 1001
+      containers:
+      - name: query-optimizer
+        image: saas-idp/query-optimizer:latest
+        ports:
+        - name: http
+          containerPort: 8080
+        - name: metrics
+          containerPort: 9090
+        env:
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: postgres-credentials
+              key: url
+        - name: QUERY_CACHE_SIZE
+          value: "1000"
+        - name: OPTIMIZATION_THRESHOLD_MS
+          value: "100"
+        - name: INDEX_SUGGESTION_ENABLED
+          value: "true"
+        - name: SLOW_QUERY_LOG_ENABLED
+          value: "true"
+        envFrom:
+        - configMapRef:
+            name: query-optimizer-config
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: http
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: query-optimizer-config
+  namespace: saas-idp-production
+  labels:
+    app: saas-idp
+    component: query-optimizer
+data:
+  config.yaml: |
+    query_optimization:
+      analysis:
+        enabled: true
+        threshold_ms: 100
+        sample_rate: 0.1
+        max_query_length: 10000
+        exclude_patterns:
+          - "SELECT 1"
+          - "SHOW TABLES"
+          - "BEGIN"
+          - "COMMIT"
+          - "ROLLBACK"
+      
+      caching:
+        query_plan_cache:
+          enabled: true
+          max_size: 10000
+          ttl_minutes: 60
+        result_cache:
+          enabled: true
+          max_size: 1000
+          ttl_minutes: 5
+          max_result_size_mb: 10
+      
+      optimization_rules:
+        index_suggestions:
+          enabled: true
+          min_table_size: 1000
+          analysis_window_hours: 24
+        query_rewriting:
+          enabled: true
+          rules:
+            - name: "limit_pushdown"
+              pattern: "SELECT .* ORDER BY .* LIMIT"
+              enabled: true
+            - name: "join_optimization"
+              pattern: "SELECT .* FROM .* JOIN"
+              enabled: true
+            - name: "subquery_to_join"
+              pattern: "WHERE .* IN \\(SELECT"
+              enabled: true
+        partition_pruning:
+          enabled: true
+          partition_key_hints: true
+      
+      monitoring:
+        slow_query_log:
+          enabled: true
+          threshold_ms: 1000
+          log_query_params: false
+          max_log_size_mb: 100
+        performance_metrics:
+          enabled: true
+          collect_execution_plans: true
+          histogram_buckets: [1, 5, 10, 50, 100, 500, 1000, 5000]
+        alerts:
+          slow_query_threshold_ms: 5000
+          high_cpu_threshold: 80
+          index_suggestion_threshold: 10
+
+---
+# Asset Optimization Service
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: asset-optimizer
+  namespace: saas-idp-production
+  labels:
+    app: saas-idp
+    component: asset-optimizer
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: saas-idp
+      component: asset-optimizer
+  template:
+    metadata:
+      labels:
+        app: saas-idp
+        component: asset-optimizer
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+    spec:
+      serviceAccountName: asset-optimizer-sa
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        fsGroup: 1001
+      containers:
+      - name: asset-optimizer
+        image: saas-idp/asset-optimizer:latest
+        ports:
+        - name: http
+          containerPort: 8080
+        - name: metrics
+          containerPort: 9090
+        env:
+        - name: S3_BUCKET_ASSETS
+          value: "saas-idp-assets"
+        - name: S3_BUCKET_OPTIMIZED
+          value: "saas-idp-assets-optimized"
+        - name: CLOUDFRONT_DISTRIBUTION_ID
+          value: "E1234567890ABC"
+        - name: OPTIMIZATION_QUEUE
+          value: "asset-optimization"
+        - name: WORKER_CONCURRENCY
+          value: "10"
+        envFrom:
+        - configMapRef:
+            name: asset-optimizer-config
+        - secretRef:
+            name: aws-credentials
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "4Gi"
+            cpu: "2000m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 60
+          periodSeconds: 15
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: http
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: asset-optimizer-config
+  namespace: saas-idp-production
+  labels:
+    app: saas-idp
+    component: asset-optimizer
+data:
+  config.yaml: |
+    asset_optimization:
+      processors:
+        images:
+          enabled: true
+          formats:
+            jpeg:
+              quality: 85
+              progressive: true
+              strip_metadata: true
+            png:
+              compression_level: 9
+              strip_metadata: true
+            webp:
+              quality: 80
+              lossless: false
+              method: 4
+            avif:
+              quality: 75
+              speed: 4
+          responsive_images:
+            enabled: true
+            breakpoints: [320, 640, 768, 1024, 1280, 1920]
+            format_fallbacks:
+              avif: webp
+              webp: jpeg
+        
+        javascript:
+          enabled: true
+          minify: true
+          source_maps: false
+          tree_shaking: true
+          code_splitting: true
+          compression: "gzip"
+          target: "es2018"
+          polyfills: true
+        
+        css:
+          enabled: true
+          minify: true
+          source_maps: false
+          autoprefixer: true
+          purge_unused: true
+          critical_css: true
+          compression: "gzip"
+        
+        fonts:
+          enabled: true
+          formats: ["woff2", "woff"]
+          subset: true
+          preload_critical: true
+          fallback_fonts: true
+      
+      caching:
+        strategy: "immutable"
+        versioning: "content_hash"
+        max_age:
+          images: 31536000  # 1 year
+          css: 31536000     # 1 year
+          js: 31536000      # 1 year
+          fonts: 31536000   # 1 year
+          html: 3600        # 1 hour
+        
+      cdn:
+        invalidation:
+          enabled: true
+          batch_size: 100
+          delay_seconds: 30
+        compression:
+          enabled: true
+          algorithms: ["gzip", "brotli"]
+          level: 6
+        
+      performance:
+        lazy_loading:
+          images: true
+          iframes: true
+          threshold: "200px"
+        preloading:
+          critical_resources: true
+          next_page_resources: false
+        bundling:
+          strategy: "route_based"
+          max_bundle_size: "244kb"
+          common_chunks: true
+      
+      monitoring:
+        metrics:
+          optimization_time: true
+          file_size_reduction: true
+          processing_queue_depth: true
+          error_rate: true
+        alerts:
+          high_queue_depth: 1000
+          high_error_rate: 0.05
+          slow_processing: 30000  # 30 seconds
+
+---
+# Service Worker Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: service-worker-advanced
+  namespace: saas-idp-production
+  labels:
+    app: saas-idp
+    component: service-worker
+data:
+  sw.js: |
+    // Advanced Service Worker for SaaS IDP Platform
+    
+    const CACHE_NAME = 'saas-idp-v2';
+    const RUNTIME_CACHE = 'saas-idp-runtime';
+    const OFFLINE_PAGE = '/offline.html';
+    const API_CACHE = 'saas-idp-api-cache';
+    
+    // Cache strategies configuration
+    const CACHE_STRATEGIES = {
+      static: {
+        name: CACHE_NAME,
+        maxAge: 31536000, // 1 year
+        maxEntries: 100
+      },
+      api: {
+        name: API_CACHE,
+        maxAge: 300, // 5 minutes
+        maxEntries: 50
+      },
+      runtime: {
+        name: RUNTIME_CACHE,
+        maxAge: 86400, // 24 hours
+        maxEntries: 200
+      }
+    };
+    
+    // Resources to cache on install
+    const STATIC_CACHE_URLS = [
+      '/',
+      '/offline.html',
+      '/manifest.json',
+      '/static/css/main.css',
+      '/static/js/main.js',
+      '/_next/static/css/app.css',
+      '/images/logo.svg',
+      '/favicon.ico'
+    ];
+    
+    // Install event - cache essential resources
+    self.addEventListener('install', event => {
+      console.log('Service Worker: Installing...');
+      event.waitUntil(
+        caches.open(CACHE_NAME)
+          .then(cache => {
+            console.log('Service Worker: Caching static assets');
+            return cache.addAll(STATIC_CACHE_URLS);
+          })
+          .then(() => {
+            console.log('Service Worker: Installation complete');
+            return self.skipWaiting();
+          })
+          .catch(error => {
+            console.error('Service Worker: Installation failed', error);
+          })
+      );
+    });
+    
+    // Activate event - clean up old caches
+    self.addEventListener('activate', event => {
+      console.log('Service Worker: Activating...');
+      event.waitUntil(
+        caches.keys()
+          .then(cacheNames => {
+            return Promise.all(
+              cacheNames.map(cacheName => {
+                if (cacheName !== CACHE_NAME && 
+                    cacheName !== RUNTIME_CACHE && 
+                    cacheName !== API_CACHE) {
+                  console.log('Service Worker: Deleting old cache', cacheName);
+                  return caches.delete(cacheName);
+                }
+              })
+            );
+          })
+          .then(() => {
+            console.log('Service Worker: Activation complete');
+            return self.clients.claim();
+          })
+      );
+    });
+    
+    // Fetch event - intelligent caching strategy
+    self.addEventListener('fetch', event => {
+      const { request } = event;
+      const url = new URL(request.url);
+      
+      // Skip non-GET requests
+      if (request.method !== 'GET') return;
+      
+      // Skip cross-origin requests (unless explicitly allowed)
+      if (url.origin !== location.origin) return;
+      
+      // Route requests to appropriate strategies
+      if (isAPIRequest(request)) {
+        event.respondWith(handleAPIRequest(request));
+      } else if (isStaticAsset(request)) {
+        event.respondWith(handleStaticAsset(request));
+      } else if (isPageRequest(request)) {
+        event.respondWith(handlePageRequest(request));
+      } else {
+        event.respondWith(handleRuntimeRequest(request));
+      }
+    });
+    
+    // API Request Handler - Cache with TTL and background refresh
+    async function handleAPIRequest(request) {
+      const cache = await caches.open(API_CACHE);
+      const cacheKey = getCacheKey(request);
+      
+      try {
+        // Try network first for API requests
+        const networkResponse = await fetch(request.clone(), {
+          timeout: 5000 // 5 second timeout
+        });
+        
+        if (networkResponse.ok) {
+          // Cache successful responses
+          const responseClone = networkResponse.clone();
+          const cacheResponse = new Response(responseClone.body, {
+            status: responseClone.status,
+            statusText: responseClone.statusText,
+            headers: {
+              ...Object.fromEntries(responseClone.headers),
+              'sw-cache-timestamp': Date.now().toString(),
+              'sw-cache-ttl': CACHE_STRATEGIES.api.maxAge.toString()
+            }
+          });
+          
+          cache.put(cacheKey, cacheResponse);
+          return networkResponse;
+        }
+        
+        // If network fails, fall back to cache
+        throw new Error('Network response not ok');
+      } catch (error) {
+        console.log('Service Worker: Network failed, trying cache', error);
+        const cachedResponse = await cache.match(cacheKey);
+        
+        if (cachedResponse && !isCacheExpired(cachedResponse)) {
+          // Add cache headers
+          const response = cachedResponse.clone();
+          response.headers.set('sw-cache', 'HIT');
+          response.headers.set('sw-cache-date', new Date(
+            parseInt(cachedResponse.headers.get('sw-cache-timestamp'))
+          ).toISOString());
+          
+          return response;
+        }
+        
+        // Return error response if no cache available
+        return new Response(
+          JSON.stringify({ error: 'Network unavailable', offline: true }),
+          { 
+            status: 503,
+            headers: { 'Content-Type': 'application/json' }
+          }
+        );
+      }
+    }
+    
+    // Static Asset Handler - Cache first with long TTL
+    async function handleStaticAsset(request) {
+      const cache = await caches.open(CACHE_NAME);
+      const cachedResponse = await cache.match(request);
+      
+      if (cachedResponse) {
+        // Background update for cache refresh
+        fetch(request).then(networkResponse => {
+          if (networkResponse.ok) {
+            cache.put(request, networkResponse.clone());
+          }
+        }).catch(() => {
+          // Silently fail background updates
+        });
+        
+        return cachedResponse;
+      }
+      
+      try {
+        const networkResponse = await fetch(request);
+        if (networkResponse.ok) {
+          cache.put(request, networkResponse.clone());
+        }
+        return networkResponse;
+      } catch (error) {
+        console.error('Service Worker: Failed to fetch static asset', error);
+        return new Response('Asset not available offline', { status: 404 });
+      }
+    }
+    
+    // Page Request Handler - Network first with offline fallback
+    async function handlePageRequest(request) {
+      try {
+        const networkResponse = await fetch(request);
+        
+        if (networkResponse.ok) {
+          // Cache successful page responses
+          const cache = await caches.open(RUNTIME_CACHE);
+          cache.put(request, networkResponse.clone());
+        }
+        
+        return networkResponse;
+      } catch (error) {
+        console.log('Service Worker: Page request failed, serving offline page');
+        const cache = await caches.open(CACHE_NAME);
+        return cache.match(OFFLINE_PAGE) || 
+               new Response('Offline', { status: 503 });
+      }
+    }
+    
+    // Runtime Request Handler - Stale while revalidate
+    async function handleRuntimeRequest(request) {
+      const cache = await caches.open(RUNTIME_CACHE);
+      const cachedResponse = await cache.match(request);
+      
+      const networkFetch = fetch(request).then(networkResponse => {
+        if (networkResponse.ok) {
+          cache.put(request, networkResponse.clone());
+        }
+        return networkResponse;
+      });
+      
+      // Return cached version immediately, update in background
+      return cachedResponse || networkFetch;
+    }
+    
+    // Utility Functions
+    function isAPIRequest(request) {
+      const url = new URL(request.url);
+      return url.pathname.startsWith('/api/');
+    }
+    
+    function isStaticAsset(request) {
+      const url = new URL(request.url);
+      return /\.(css|js|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$/.test(url.pathname) ||
+             url.pathname.startsWith('/_next/static/') ||
+             url.pathname.startsWith('/static/');
+    }
+    
+    function isPageRequest(request) {
+      const url = new URL(request.url);
+      return request.headers.get('accept').includes('text/html');
+    }
+    
+    function getCacheKey(request) {
+      const url = new URL(request.url);
+      // Remove cache-busting parameters
+      url.searchParams.delete('_t');
+      url.searchParams.delete('v');
+      return url.toString();
+    }
+    
+    function isCacheExpired(response) {
+      const timestamp = parseInt(response.headers.get('sw-cache-timestamp') || '0');
+      const ttl = parseInt(response.headers.get('sw-cache-ttl') || '0');
+      return Date.now() - timestamp > ttl * 1000;
+    }
+    
+    // Background sync for offline actions
+    self.addEventListener('sync', event => {
+      if (event.tag === 'background-sync') {
+        event.waitUntil(doBackgroundSync());
+      }
+    });
+    
+    async function doBackgroundSync() {
+      try {
+        // Sync offline actions when network is available
+        const offlineActions = await getOfflineActions();
+        
+        for (const action of offlineActions) {
+          try {
+            await fetch(action.url, {
+              method: action.method,
+              headers: action.headers,
+              body: action.body
+            });
+            
+            // Remove successful action
+            await removeOfflineAction(action.id);
+          } catch (error) {
+            console.error('Background sync failed for action:', action, error);
+          }
+        }
+      } catch (error) {
+        console.error('Background sync failed:', error);
+      }
+    }
+    
+    async function getOfflineActions() {
+      // Get offline actions from IndexedDB
+      return [];
+    }
+    
+    async function removeOfflineAction(actionId) {
+      // Remove action from IndexedDB
+    }
+    
+    // Push notification handler
+    self.addEventListener('push', event => {
+      if (!event.data) return;
+      
+      const data = event.data.json();
+      const options = {
+        body: data.body,
+        icon: '/images/notification-icon.png',
+        badge: '/images/notification-badge.png',
+        data: data.data,
+        actions: [
+          { action: 'view', title: 'View' },
+          { action: 'dismiss', title: 'Dismiss' }
+        ],
+        vibrate: [200, 100, 200],
+        requireInteraction: true
+      };
+      
+      event.waitUntil(
+        self.registration.showNotification(data.title, options)
+      );
+    });
+    
+    // Notification click handler
+    self.addEventListener('notificationclick', event => {
+      event.notification.close();
+      
+      if (event.action === 'view' && event.notification.data.url) {
+        event.waitUntil(
+          clients.openWindow(event.notification.data.url)
+        );
+      }
+    });
+
+---
+# Services and RBAC
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: cache-service-sa
+  namespace: saas-idp-production
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: query-optimizer-sa
+  namespace: saas-idp-production
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: asset-optimizer-sa
+  namespace: saas-idp-production
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-cluster-service
+  namespace: saas-idp-production
+  labels:
+    app: saas-idp
+    component: redis-cluster
+spec:
+  clusterIP: None
+  ports:
+  - name: redis
+    port: 6379
+    targetPort: redis
+  - name: cluster
+    port: 16379
+    targetPort: cluster
+  selector:
+    app: saas-idp
+    component: redis-cluster
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cache-service
+  namespace: saas-idp-production
+  labels:
+    app: saas-idp
+    component: cache-service
+spec:
+  type: ClusterIP
+  ports:
+  - name: http
+    port: 8080
+    targetPort: http
+  - name: metrics
+    port: 9090
+    targetPort: metrics
+  selector:
+    app: saas-idp
+    component: cache-service
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: query-optimizer
+  namespace: saas-idp-production
+  labels:
+    app: saas-idp
+    component: query-optimizer
+spec:
+  type: ClusterIP
+  ports:
+  - name: http
+    port: 8080
+    targetPort: http
+  - name: metrics
+    port: 9090
+    targetPort: metrics
+  selector:
+    app: saas-idp
+    component: query-optimizer
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: asset-optimizer
+  namespace: saas-idp-production
+  labels:
+    app: saas-idp
+    component: asset-optimizer
+spec:
+  type: ClusterIP
+  ports:
+  - name: http
+    port: 8080
+    targetPort: http
+  - name: metrics
+    port: 9090
+    targetPort: metrics
+  selector:
+    app: saas-idp
+    component: asset-optimizer

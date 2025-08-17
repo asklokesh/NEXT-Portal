@@ -1,0 +1,1 @@
+// Resource optimization service placeholder

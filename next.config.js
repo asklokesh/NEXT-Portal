@@ -28,7 +28,8 @@ const nextConfig = {
  '@tanstack/react-query',
  'react-hot-toast',
  'zustand',
- 'zod'
+ 'zod',
+ 'jose'
  ],
  
  // Webpack optimizations for module loading
@@ -42,9 +43,9 @@ const nextConfig = {
   tls: false,
   dns: false,
   child_process: false,
-  crypto: false,
-  stream: false,
-  path: false,
+  crypto: require.resolve('crypto-browserify'),
+  stream: require.resolve('stream-browserify'),
+  path: require.resolve('path-browserify'),
   os: false,
   zlib: false,
   http: false,
@@ -163,13 +164,14 @@ const nextConfig = {
  ];
  },
 
- // Minimal rewrites for API proxy
+ // Minimal rewrites for API proxy - temporarily disabled to let API routes handle requests
  async rewrites() {
  return [
- {
- source: '/api/backstage/:path*',
- destination: `${process.env.BACKSTAGE_BACKEND_URL || 'http://localhost:4402'}/api/:path*`,
- },
+ // Temporarily disabled to allow API routes to handle Backstage requests
+ // {
+ //   source: '/api/backstage/:path*',
+ //   destination: `${process.env.BACKSTAGE_BACKEND_URL || 'http://localhost:4402'}/api/:path*`,
+ // },
  ];
  },
 };

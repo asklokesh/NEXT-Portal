@@ -1,0 +1,816 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: operational-runbooks
+  namespace: saas-idp-production
+data:
+  incident-response-playbook.md: |
+    # Incident Response Playbook - SaaS IDP Platform
+
+    ## Incident Classification
+
+    ### P0 - Critical (15 minutes response)
+    - Complete service outage
+    - Data breach or security incident
+    - Database corruption or unavailable
+    - >50% error rate for >5 minutes
+
+    ### P1 - High (30 minutes response)
+    - Partial service degradation affecting >25% users
+    - Performance degradation (>5s response time)
+    - Authentication/authorization failures
+    - Plugin installation failures affecting multiple users
+
+    ### P2 - Medium (2 hours response)
+    - Non-critical feature unavailable
+    - Minor performance issues
+    - Single plugin/service failures
+    - Monitoring alerts for non-critical components
+
+    ### P3 - Low (24 hours response)
+    - Documentation issues
+    - Minor UI bugs
+    - Enhancement requests
+    - Non-urgent maintenance
+
+    ## Incident Response Procedures
+
+    ### 1. Detection & Alert
+    ```bash
+    # Immediate actions upon alert
+    1. Acknowledge alert in PagerDuty/Slack
+    2. Create incident ticket: https://company.atlassian.net/servicedesk
+    3. Join incident bridge: #incident-response-[YYYYMMDD-HHMM]
+    4. Assign incident commander
+    ```
+
+    ### 2. Assessment & Triage
+    ```bash
+    # Quick health check commands
+    kubectl get pods -n saas-idp-production
+    kubectl get services -n saas-idp-production  
+    kubectl top nodes
+    kubectl top pods -n saas-idp-production
+    
+    # Check application health
+    curl -f https://your-domain.com/health
+    curl -f https://your-domain.com/api/health/detailed
+    
+    # Database connectivity
+    kubectl exec -n saas-idp-production deployment/saas-idp-app -- \
+      node -e "require('./src/lib/db').testConnection().then(console.log)"
+    ```
+
+    ### 3. Communication Templates
+
+    #### Initial Communication (within 15 minutes)
+    ```
+    🚨 INCIDENT ALERT - P[X] - [Brief Description]
+    
+    Start Time: [YYYY-MM-DD HH:MM UTC]
+    Impact: [User-facing impact description]
+    Status: Investigating
+    Incident Commander: @[username]
+    
+    We are investigating reports of [issue description]. 
+    Updates will be provided every 30 minutes.
+    
+    Status Page: https://status.your-domain.com
+    ```
+
+    #### Update Communication (every 30 minutes during P0/P1)
+    ```
+    📊 INCIDENT UPDATE - P[X] - [Brief Description]
+    
+    Current Status: [Investigating/Mitigating/Monitoring]
+    Root Cause: [Known/Unknown/Suspected cause]
+    
+    Actions Taken:
+    - [Action 1]
+    - [Action 2]
+    
+    Next Steps:
+    - [Next action with ETA]
+    
+    Next Update: [Time]
+    ```
+
+    #### Resolution Communication
+    ```
+    ✅ INCIDENT RESOLVED - P[X] - [Brief Description]
+    
+    Resolution Time: [YYYY-MM-DD HH:MM UTC]
+    Duration: [X hours Y minutes]
+    Root Cause: [Brief description]
+    
+    The incident has been resolved. All services are operational.
+    
+    Post-mortem will be available within 24 hours at:
+    https://docs.your-domain.com/incidents/[incident-id]
+    ```
+
+    ## Runbook Procedures
+
+    ### Database Issues
+    ```bash
+    # Check PostgreSQL status
+    kubectl exec -n saas-idp-production statefulset/postgres-primary -- \
+      psql -U idp_user -d saas_idp -c "SELECT version();"
+    
+    # Check connection pool
+    kubectl exec -n saas-idp-production statefulset/postgres-primary -- \
+      psql -U idp_user -d saas_idp -c "SELECT * FROM pg_stat_activity;"
+    
+    # Check replication status
+    kubectl exec -n saas-idp-production statefulset/postgres-primary -- \
+      psql -U idp_user -d saas_idp -c "SELECT * FROM pg_stat_replication;"
+    
+    # Emergency database failover to replica
+    kubectl patch statefulset postgres-primary -n saas-idp-production \
+      -p '{"spec":{"replicas":0}}'
+    kubectl patch service postgres-primary -n saas-idp-production \
+      -p '{"spec":{"selector":{"role":"replica"}}}'
+    ```
+
+    ### Application Pod Issues
+    ```bash
+    # Restart problematic pods
+    kubectl rollout restart deployment/saas-idp-app -n saas-idp-production
+    
+    # Check pod logs
+    kubectl logs -f deployment/saas-idp-app -n saas-idp-production --tail=100
+    
+    # Get pod events
+    kubectl get events -n saas-idp-production --sort-by='.lastTimestamp'
+    
+    # Emergency scale up
+    kubectl scale deployment saas-idp-app -n saas-idp-production --replicas=10
+    
+    # Check resource usage
+    kubectl top pods -n saas-idp-production --sort-by=memory
+    kubectl top pods -n saas-idp-production --sort-by=cpu
+    ```
+
+    ### Redis Cache Issues
+    ```bash
+    # Check Redis connectivity
+    kubectl exec -n saas-idp-production statefulset/redis-master -- redis-cli ping
+    
+    # Monitor Redis performance
+    kubectl exec -n saas-idp-production statefulset/redis-master -- \
+      redis-cli --latency-history -i 1
+    
+    # Check Redis memory usage
+    kubectl exec -n saas-idp-production statefulset/redis-master -- \
+      redis-cli info memory
+    
+    # Emergency Redis restart
+    kubectl rollout restart statefulset/redis-master -n saas-idp-production
+    
+    # Flush cache (if corrupted)
+    kubectl exec -n saas-idp-production statefulset/redis-master -- \
+      redis-cli flushall
+    ```
+
+    ### High CPU/Memory Usage
+    ```bash
+    # Identify resource-heavy pods
+    kubectl top pods -n saas-idp-production --sort-by=cpu | head -10
+    kubectl top pods -n saas-idp-production --sort-by=memory | head -10
+    
+    # Check node resource usage
+    kubectl top nodes
+    
+    # Scale up application
+    kubectl scale deployment saas-idp-app -n saas-idp-production --replicas=8
+    
+    # Add more nodes (if needed)
+    aws eks update-nodegroup-config \
+      --cluster-name saas-idp-production \
+      --nodegroup-name main-nodegroup \
+      --scaling-config minSize=3,maxSize=20,desiredSize=10
+    ```
+
+    ### SSL/TLS Certificate Issues
+    ```bash
+    # Check certificate expiry
+    kubectl get certificates -n saas-idp-production
+    kubectl describe certificate saas-idp-tls -n saas-idp-production
+    
+    # Renew certificate manually
+    kubectl delete certificate saas-idp-tls -n saas-idp-production
+    kubectl apply -f /manifests/certificates.yaml
+    
+    # Check ingress status
+    kubectl get ingress -n saas-idp-production
+    kubectl describe ingress saas-idp-ingress -n saas-idp-production
+    ```
+
+    ### Plugin Installation Failures
+    ```bash
+    # Check plugin installer status
+    kubectl logs -f job/plugin-installer-[plugin-name] -n saas-idp-production
+    
+    # Manual plugin installation
+    kubectl create job --from=cronjob/plugin-installer manual-install-$(date +%s) \
+      -n saas-idp-production
+    
+    # Rollback failed plugin installation
+    kubectl rollout undo deployment/saas-idp-app -n saas-idp-production
+    
+    # Check plugin registry connectivity
+    kubectl exec -n saas-idp-production deployment/saas-idp-app -- \
+      npm ping --registry https://registry.npmjs.org/
+    ```
+
+  monitoring-troubleshooting.md: |
+    # Monitoring & Troubleshooting Guide
+
+    ## Key Monitoring Dashboards
+
+    ### Production Health Dashboard
+    - URL: https://grafana.your-domain.com/d/production-health
+    - Metrics: Response time, error rate, throughput, resource usage
+    - Alerts: Configured for P0/P1 scenarios
+
+    ### Infrastructure Dashboard  
+    - URL: https://grafana.your-domain.com/d/infrastructure
+    - Metrics: Node health, pod status, network, storage
+    - Alerts: Resource exhaustion, node failures
+
+    ### Security Dashboard
+    - URL: https://grafana.your-domain.com/d/security
+    - Metrics: Authentication failures, security events, audit logs
+    - Alerts: Potential security threats
+
+    ## Alert Definitions
+
+    ### Critical Alerts (P0)
+    ```yaml
+    # Application down
+    - alert: ApplicationDown
+      expr: up{job="saas-idp-app"} == 0
+      for: 1m
+      
+    # High error rate  
+    - alert: HighErrorRate
+      expr: rate(http_requests_total{status=~"5.."}[5m]) > 0.1
+      for: 5m
+      
+    # Database connectivity
+    - alert: DatabaseDown
+      expr: up{job="postgres"} == 0
+      for: 1m
+    ```
+
+    ### Warning Alerts (P1/P2)
+    ```yaml
+    # High response time
+    - alert: HighResponseTime
+      expr: histogram_quantile(0.95, http_request_duration_seconds) > 2
+      for: 10m
+      
+    # High memory usage
+    - alert: HighMemoryUsage  
+      expr: container_memory_usage_bytes / container_spec_memory_limit_bytes > 0.9
+      for: 10m
+    ```
+
+    ## Troubleshooting Commands
+
+    ### Quick Diagnostics
+    ```bash
+    # Overall system health
+    kubectl get nodes
+    kubectl get pods --all-namespaces | grep -v Running
+    kubectl top nodes
+    
+    # Application-specific health
+    curl -s https://your-domain.com/health | jq .
+    kubectl logs -f deployment/saas-idp-app -n saas-idp-production | tail -50
+    
+    # Database health
+    kubectl exec -n saas-idp-production statefulset/postgres-primary -- \
+      psql -U idp_user -d saas_idp -c "SELECT * FROM pg_stat_activity WHERE state = 'active';"
+    ```
+
+    ### Performance Investigation
+    ```bash
+    # Check slow queries
+    kubectl exec -n saas-idp-production statefulset/postgres-primary -- \
+      psql -U idp_user -d saas_idp -c "SELECT query, mean_time FROM pg_stat_statements ORDER BY mean_time DESC LIMIT 10;"
+    
+    # Memory analysis
+    kubectl exec -n saas-idp-production deployment/saas-idp-app -- \
+      node -e "console.log(process.memoryUsage())"
+    
+    # Network connectivity
+    kubectl exec -n saas-idp-production deployment/saas-idp-app -- \
+      wget -qO- http://redis-master:6379
+    ```
+
+  maintenance-procedures.md: |
+    # Maintenance Procedures
+
+    ## Scheduled Maintenance Windows
+    - **Primary Window**: Sunday 2:00-4:00 AM UTC (lowest traffic)
+    - **Emergency Window**: Any time with 1-hour advance notice
+    - **Major Updates**: Coordinated with customer success team
+
+    ## Pre-Maintenance Checklist
+    ```bash
+    # 1. Verify backup completion
+    kubectl get cronjobs -n saas-idp-production
+    aws s3 ls s3://saas-idp-backups/postgres/ | tail -5
+    
+    # 2. Check system health
+    curl -f https://your-domain.com/health
+    kubectl get pods -n saas-idp-production | grep -v Running
+    
+    # 3. Scale up redundancy
+    kubectl scale deployment saas-idp-app -n saas-idp-production --replicas=5
+    
+    # 4. Notify users
+    # Update status page: https://status.your-domain.com
+    ```
+
+    ## Maintenance Procedures
+
+    ### Application Deployment
+    ```bash
+    # Rolling update with zero downtime
+    kubectl set image deployment/saas-idp-app \
+      app=saas-idp-app:v1.2.0 \
+      -n saas-idp-production
+    
+    # Monitor rollout
+    kubectl rollout status deployment/saas-idp-app -n saas-idp-production
+    
+    # Verify deployment
+    kubectl get pods -n saas-idp-production -l app=saas-idp-app
+    curl -f https://your-domain.com/health
+    
+    # Rollback if needed
+    kubectl rollout undo deployment/saas-idp-app -n saas-idp-production
+    ```
+
+    ### Database Maintenance
+    ```bash
+    # Create maintenance backup
+    kubectl create job postgres-maintenance-backup-$(date +%s) \
+      --from=cronjob/postgres-backup -n saas-idp-production
+    
+    # Database update (minor version)
+    kubectl patch statefulset postgres-primary -n saas-idp-production \
+      -p '{"spec":{"template":{"spec":{"containers":[{"name":"postgres","image":"postgres:15.1-alpine"}]}}}}'
+    
+    # Monitor update
+    kubectl rollout status statefulset/postgres-primary -n saas-idp-production
+    ```
+
+    ### Certificate Renewal
+    ```bash
+    # Check certificate status
+    kubectl get certificates -n saas-idp-production
+    
+    # Renew certificate
+    kubectl annotate certificate saas-idp-tls \
+      cert-manager.io/issue-temporary-certificate="true" \
+      -n saas-idp-production
+    
+    # Verify new certificate
+    kubectl describe certificate saas-idp-tls -n saas-idp-production
+    ```
+
+    ## Post-Maintenance Checklist
+    ```bash
+    # 1. Verify all services healthy
+    kubectl get pods -n saas-idp-production
+    curl -f https://your-domain.com/health
+    
+    # 2. Run smoke tests
+    kubectl apply -f /tests/smoke-tests.yaml
+    
+    # 3. Monitor for 30 minutes
+    # Watch metrics dashboard
+    # Check error rates
+    
+    # 4. Scale back to normal
+    kubectl scale deployment saas-idp-app -n saas-idp-production --replicas=3
+    
+    # 5. Update documentation
+    # Record changes in maintenance log
+    ```
+
+  emergency-procedures.md: |
+    # Emergency Procedures
+
+    ## Emergency Contacts
+    - **Incident Commander**: +1-555-0101 (Primary), +1-555-0102 (Secondary)  
+    - **Platform Team Lead**: +1-555-0201
+    - **Database Administrator**: +1-555-0301
+    - **Security Team**: +1-555-0401
+    - **Customer Success**: +1-555-0501
+
+    ## Emergency Access
+    ```bash
+    # Emergency kubectl access
+    aws eks update-kubeconfig --region us-east-1 --name saas-idp-production
+    kubectl config use-context arn:aws:eks:us-east-1:ACCOUNT:cluster/saas-idp-production
+    
+    # Emergency database access
+    kubectl port-forward -n saas-idp-production svc/postgres-primary 5432:5432
+    psql -h localhost -p 5432 -U idp_user -d saas_idp
+    ```
+
+    ## Disaster Scenarios
+
+    ### Complete Region Failure
+    ```bash
+    # 1. Activate DR region
+    ./scripts/failover-to-dr.sh
+    
+    # 2. Update DNS
+    aws route53 change-resource-record-sets \
+      --hosted-zone-id Z123456789 \
+      --change-batch file://dns-failover.json
+    
+    # 3. Verify DR environment
+    curl -f https://your-domain.com/health
+    
+    # 4. Communicate to stakeholders
+    # Use pre-approved disaster communication template
+    ```
+
+    ### Database Corruption
+    ```bash
+    # 1. Stop all application pods
+    kubectl scale deployment saas-idp-app -n saas-idp-production --replicas=0
+    
+    # 2. Restore from latest backup
+    aws s3 cp s3://saas-idp-backups/postgres/latest.sql.gz /tmp/
+    kubectl exec -i -n saas-idp-production statefulset/postgres-primary -- \
+      psql -U idp_user -d saas_idp < /tmp/latest.sql
+    
+    # 3. Verify data integrity
+    kubectl exec -n saas-idp-production statefulset/postgres-primary -- \
+      psql -U idp_user -d saas_idp -c "SELECT COUNT(*) FROM users;"
+    
+    # 4. Restart application
+    kubectl scale deployment saas-idp-app -n saas-idp-production --replicas=3
+    ```
+
+    ### Security Breach
+    ```bash
+    # 1. Isolate affected systems
+    kubectl apply -f emergency-network-policies.yaml
+    
+    # 2. Preserve evidence
+    kubectl logs deployment/saas-idp-app -n saas-idp-production > security-incident-logs.txt
+    
+    # 3. Notify security team
+    # Follow security incident response plan
+    
+    # 4. Rotate all secrets
+    kubectl delete secret saas-idp-secrets -n saas-idp-production
+    kubectl apply -f new-secrets.yaml
+    ```
+
+    ## Recovery Procedures
+
+    ### Application Recovery
+    ```bash
+    # From complete application failure
+    kubectl apply -f /manifests/application-deployment.yaml
+    kubectl rollout status deployment/saas-idp-app -n saas-idp-production
+    
+    # Verify recovery
+    for i in {1..60}; do
+      if curl -f https://your-domain.com/health; then
+        echo "Application recovered after $i seconds"
+        break
+      fi
+      sleep 1
+    done
+    ```
+
+    ### Data Recovery
+    ```bash
+    # Point-in-time recovery
+    RESTORE_TIMESTAMP="2024-01-15 10:30:00"
+    aws rds restore-db-instance-from-db-snapshot \
+      --db-instance-identifier saas-idp-postgres-restored \
+      --db-snapshot-identifier saas-idp-postgres-backup-$(date +%Y%m%d) \
+      --restore-time "$RESTORE_TIMESTAMP"
+    ```
+
+  on-call-procedures.md: |
+    # On-Call Procedures
+
+    ## On-Call Schedule
+    - **Primary**: 24/7 rotation, 1-week shifts
+    - **Secondary**: Escalation after 15 minutes no response
+    - **Escalation**: Platform team lead after 30 minutes
+
+    ## Alert Response Times
+    - **P0 (Critical)**: 5 minutes acknowledgment, 15 minutes response
+    - **P1 (High)**: 15 minutes acknowledgment, 30 minutes response  
+    - **P2 (Medium)**: 1 hour acknowledgment, 2 hours response
+    - **P3 (Low)**: Next business day
+
+    ## Tools Access
+    ```bash
+    # Required tools for on-call engineer
+    - AWS Console: https://console.aws.amazon.com
+    - Kubernetes Dashboard: https://k8s-dashboard.your-domain.com
+    - Grafana: https://grafana.your-domain.com
+    - Kibana: https://kibana.your-domain.com
+    - PagerDuty: https://company.pagerduty.com
+    - Slack: #incident-response, #platform-alerts
+    ```
+
+    ## Escalation Matrix
+    ```
+    Level 1: On-call engineer (immediate)
+    Level 2: Platform team lead (+15 minutes)
+    Level 3: Engineering manager (+30 minutes)
+    Level 4: CTO (+1 hour for P0, +4 hours for P1)
+    ```
+
+    ## Common Alert Responses
+
+    ### "Application Down" Alert
+    ```bash
+    # 1. Quick assessment
+    kubectl get pods -n saas-idp-production
+    curl https://your-domain.com/health
+    
+    # 2. If pods are down
+    kubectl describe pods -n saas-idp-production
+    kubectl get events -n saas-idp-production --sort-by='.lastTimestamp'
+    
+    # 3. Immediate mitigation
+    kubectl rollout restart deployment/saas-idp-app -n saas-idp-production
+    ```
+
+    ### "High Error Rate" Alert  
+    ```bash
+    # 1. Check application logs
+    kubectl logs -f deployment/saas-idp-app -n saas-idp-production --tail=100 | grep ERROR
+    
+    # 2. Check database connectivity
+    kubectl exec -n saas-idp-production deployment/saas-idp-app -- \
+      node -e "require('./src/lib/db').testConnection().then(console.log).catch(console.error)"
+    
+    # 3. Scale up if resource constrained
+    kubectl scale deployment saas-idp-app -n saas-idp-production --replicas=5
+    ```
+
+    ### "Database Issues" Alert
+    ```bash
+    # 1. Check database health
+    kubectl exec -n saas-idp-production statefulset/postgres-primary -- \
+      psql -U idp_user -d saas_idp -c "SELECT 1;"
+    
+    # 2. Check connections
+    kubectl exec -n saas-idp-production statefulset/postgres-primary -- \
+      psql -U idp_user -d saas_idp -c "SELECT count(*) FROM pg_stat_activity;"
+    
+    # 3. Restart if needed
+    kubectl rollout restart statefulset/postgres-primary -n saas-idp-production
+    ```
+
+    ## Post-Incident Actions
+    ```bash
+    # 1. Ensure incident is resolved
+    # Verify all systems healthy
+    # Confirm customer impact resolved
+    
+    # 2. Document incident
+    # Create post-mortem document
+    # Schedule blameless post-mortem meeting
+    
+    # 3. Follow-up actions
+    # Create action items for prevention
+    # Update runbooks if needed
+    # Communicate lessons learned
+    ```
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: incident-commander-bot
+  namespace: saas-idp-production
+  labels:
+    app: incident-commander-bot
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: incident-commander-bot
+  template:
+    metadata:
+      labels:
+        app: incident-commander-bot
+    spec:
+      containers:
+      - name: incident-bot
+        image: node:18-alpine
+        command:
+        - /bin/sh
+        - -c
+        - |
+          npm init -y
+          npm install @slack/bolt axios
+          node /scripts/incident-commander-bot.js
+        env:
+        - name: SLACK_BOT_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: saas-idp-secrets
+              key: SLACK_BOT_TOKEN
+        - name: SLACK_APP_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: saas-idp-secrets
+              key: SLACK_APP_TOKEN
+        volumeMounts:
+        - name: bot-scripts
+          mountPath: /scripts
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "200m"
+      volumes:
+      - name: bot-scripts
+        configMap:
+          name: incident-bot-scripts
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: incident-bot-scripts
+  namespace: saas-idp-production
+data:
+  incident-commander-bot.js: |
+    const { App } = require('@slack/bolt');
+    const axios = require('axios');
+
+    const app = new App({
+      token: process.env.SLACK_BOT_TOKEN,
+      appToken: process.env.SLACK_APP_TOKEN,
+      socketMode: true,
+    });
+
+    // Incident creation command
+    app.command('/incident', async ({ command, ack, respond }) => {
+      await ack();
+
+      const [severity, description] = command.text.split(' ', 2);
+      const incidentId = `INC-${Date.now()}`;
+      
+      const incidentChannel = `incident-${incidentId.toLowerCase()}`;
+      
+      try {
+        // Create incident channel
+        const channelResult = await app.client.conversations.create({
+          name: incidentChannel,
+          is_private: false
+        });
+
+        // Send incident notification
+        await app.client.chat.postMessage({
+          channel: '#incidents',
+          text: `🚨 *INCIDENT ${severity.toUpperCase()}* - ${incidentId}
+          
+*Description:* ${description}
+*Incident Channel:* <#${channelResult.channel.id}>
+*Commander:* <@${command.user_id}>
+*Status:* Investigating
+
+Please join the incident channel for updates.`,
+          attachments: [{
+            color: severity === 'p0' ? 'danger' : severity === 'p1' ? 'warning' : 'good',
+            fields: [
+              { title: 'Incident ID', value: incidentId, short: true },
+              { title: 'Severity', value: severity.toUpperCase(), short: true },
+              { title: 'Status', value: 'Investigating', short: true },
+              { title: 'Commander', value: `<@${command.user_id}>`, short: true }
+            ]
+          }]
+        });
+
+        await respond(`Incident ${incidentId} created. Channel: <#${channelResult.channel.id}>`);
+      } catch (error) {
+        console.error(error);
+        await respond('Error creating incident. Please try again.');
+      }
+    });
+
+    // Health check command
+    app.command('/health', async ({ command, ack, respond }) => {
+      await ack();
+      
+      try {
+        // Check application health
+        const healthResponse = await axios.get('https://your-domain.com/health', { timeout: 5000 });
+        
+        await respond({
+          text: '✅ System Health Check',
+          attachments: [{
+            color: 'good',
+            fields: [
+              { title: 'Application', value: 'Healthy', short: true },
+              { title: 'Response Time', value: `${healthResponse.headers['x-response-time']}ms`, short: true },
+              { title: 'Timestamp', value: new Date().toISOString(), short: false }
+            ]
+          }]
+        });
+      } catch (error) {
+        await respond({
+          text: '🚨 System Health Check Failed',
+          attachments: [{
+            color: 'danger',
+            fields: [
+              { title: 'Status', value: 'Application Unhealthy', short: true },
+              { title: 'Error', value: error.message, short: false }
+            ]
+          }]
+        });
+      }
+    });
+
+    // Incident status update
+    app.message(/^status:/, async ({ message, say }) => {
+      if (message.channel.startsWith('incident-')) {
+        const status = message.text.replace('status:', '').trim();
+        
+        await say({
+          text: `📊 *Incident Status Update*
+          
+*Status:* ${status}
+*Updated by:* <@${message.user}>
+*Time:* ${new Date().toISOString()}`,
+          thread_ts: message.ts
+        });
+      }
+    });
+
+    (async () => {
+      await app.start();
+      console.log('⚡️ Incident Commander Bot is running!');
+    })();
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: health-check-reporter
+  namespace: saas-idp-production
+spec:
+  schedule: "*/5 * * * *"  # Every 5 minutes
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: health-checker
+            image: curlimages/curl:latest
+            command:
+            - /bin/sh
+            - -c
+            - |
+              # Comprehensive health check
+              TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+              HEALTH_STATUS="healthy"
+              
+              # Check main application
+              if ! curl -f -s https://your-domain.com/health > /dev/null; then
+                HEALTH_STATUS="unhealthy"
+                echo "Application health check failed at $TIMESTAMP"
+              fi
+              
+              # Check API endpoints
+              if ! curl -f -s https://your-domain.com/api/health > /dev/null; then
+                HEALTH_STATUS="unhealthy"
+                echo "API health check failed at $TIMESTAMP"
+              fi
+              
+              # Report status to monitoring
+              if [ "$HEALTH_STATUS" = "unhealthy" ]; then
+                # Send alert via webhook
+                curl -X POST -H 'Content-Type: application/json' \
+                  -d "{\"text\":\"🚨 Health Check Failed at $TIMESTAMP\"}" \
+                  "$SLACK_WEBHOOK_URL"
+              fi
+              
+              echo "Health check completed: $HEALTH_STATUS at $TIMESTAMP"
+            env:
+            - name: SLACK_WEBHOOK_URL
+              valueFrom:
+                secretKeyRef:
+                  name: saas-idp-secrets
+                  key: SLACK_WEBHOOK_URL
+          restartPolicy: OnFailure

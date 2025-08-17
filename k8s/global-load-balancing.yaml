@@ -1,0 +1,847 @@
+# Global Load Balancing Strategy
+# Global Load Balancer, Regional Load Balancers, Circuit Breakers, Rate Limiting
+
+---
+# Global Traffic Manager (AWS Global Accelerator Configuration)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: global-accelerator-config
+  namespace: saas-idp-production
+  labels:
+    app: saas-idp
+    component: global-accelerator
+data:
+  accelerator-config.yaml: |
+    GlobalAccelerator:
+      Name: "saas-idp-global-accelerator"
+      IpAddressType: "IPV4"
+      Enabled: true
+      
+      Listeners:
+      - Port: 80
+        Protocol: "TCP"
+        ClientAffinity: "SOURCE_IP"
+        EndpointGroups:
+        - Region: "us-east-1"
+          HealthCheckIntervalSeconds: 30
+          HealthCheckPath: "/api/health"
+          HealthCheckProtocol: "HTTP"
+          HealthCheckGracePeriodSeconds: 30
+          HealthCheckTimeoutSeconds: 10
+          HealthyThresholdCount: 3
+          UnhealthyThresholdCount: 3
+          TrafficDialPercentage: 50
+          PortOverrides:
+          - ListenerPort: 80
+            EndpointPort: 80
+          Endpoints:
+          - EndpointId: "us-east-lb-arn"
+            Weight: 128
+            ClientIPPreservationEnabled: true
+        - Region: "eu-west-1"
+          HealthCheckIntervalSeconds: 30
+          HealthCheckPath: "/api/health"
+          HealthCheckProtocol: "HTTP"
+          HealthCheckGracePeriodSeconds: 30
+          HealthCheckTimeoutSeconds: 10
+          HealthyThresholdCount: 3
+          UnhealthyThresholdCount: 3
+          TrafficDialPercentage: 30
+          Endpoints:
+          - EndpointId: "eu-west-lb-arn"
+            Weight: 128
+        - Region: "ap-southeast-1"
+          HealthCheckIntervalSeconds: 30
+          HealthCheckPath: "/api/health"
+          HealthCheckProtocol: "HTTP"
+          HealthCheckGracePeriodSeconds: 30
+          HealthCheckTimeoutSeconds: 10
+          HealthyThresholdCount: 3
+          UnhealthyThresholdCount: 3
+          TrafficDialPercentage: 20
+          Endpoints:
+          - EndpointId: "ap-southeast-lb-arn"
+            Weight: 128
+      
+      - Port: 443
+        Protocol: "TCP"
+        ClientAffinity: "SOURCE_IP"
+        EndpointGroups:
+        - Region: "us-east-1"
+          TrafficDialPercentage: 50
+          Endpoints:
+          - EndpointId: "us-east-lb-arn"
+            Weight: 128
+        - Region: "eu-west-1"
+          TrafficDialPercentage: 30
+          Endpoints:
+          - EndpointId: "eu-west-lb-arn"
+            Weight: 128
+        - Region: "ap-southeast-1"
+          TrafficDialPercentage: 20
+          Endpoints:
+          - EndpointId: "ap-southeast-lb-arn"
+            Weight: 128
+
+---
+# Istio Service Mesh Configuration for Advanced Load Balancing
+apiVersion: networking.istio.io/v1beta1
+kind: Gateway
+metadata:
+  name: saas-idp-global-gateway
+  namespace: saas-idp-production
+  labels:
+    app: saas-idp
+    component: istio-gateway
+spec:
+  selector:
+    istio: ingressgateway
+  servers:
+  - port:
+      number: 80
+      name: http
+      protocol: HTTP
+    hosts:
+    - "*.saas-idp.com"
+    tls:
+      httpsRedirect: true
+  - port:
+      number: 443
+      name: https
+      protocol: HTTPS
+    tls:
+      mode: SIMPLE
+      credentialName: saas-idp-tls-cert
+    hosts:
+    - "*.saas-idp.com"
+  - port:
+      number: 8080
+      name: websocket
+      protocol: HTTP
+    hosts:
+    - "ws.saas-idp.com"
+
+---
+# Virtual Service with Geographic Routing
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: saas-idp-global-vs
+  namespace: saas-idp-production
+  labels:
+    app: saas-idp
+    component: virtual-service
+spec:
+  hosts:
+  - "api.saas-idp.com"
+  - "app.saas-idp.com"
+  gateways:
+  - saas-idp-global-gateway
+  http:
+  - match:
+    - headers:
+        x-user-region:
+          exact: "us"
+    route:
+    - destination:
+        host: saas-idp-app.saas-idp-production.svc.cluster.local
+        subset: us-east
+      weight: 100
+    timeout: 30s
+    retries:
+      attempts: 3
+      perTryTimeout: 10s
+      retryOn: 5xx,reset,connect-failure,refused-stream
+  - match:
+    - headers:
+        x-user-region:
+          exact: "eu"
+    route:
+    - destination:
+        host: saas-idp-app.saas-idp-production.svc.cluster.local
+        subset: eu-west
+      weight: 100
+    timeout: 30s
+    retries:
+      attempts: 3
+      perTryTimeout: 10s
+  - match:
+    - headers:
+        x-user-region:
+          exact: "ap"
+    route:
+    - destination:
+        host: saas-idp-app.saas-idp-production.svc.cluster.local
+        subset: ap-southeast
+      weight: 100
+    timeout: 30s
+    retries:
+      attempts: 3
+      perTryTimeout: 10s
+  - match:
+    - uri:
+        prefix: "/api/"
+    route:
+    - destination:
+        host: saas-idp-app.saas-idp-production.svc.cluster.local
+        subset: us-east
+      weight: 60
+    - destination:
+        host: saas-idp-app.saas-idp-production.svc.cluster.local
+        subset: eu-west
+      weight: 25
+    - destination:
+        host: saas-idp-app.saas-idp-production.svc.cluster.local
+        subset: ap-southeast
+      weight: 15
+    timeout: 30s
+    retries:
+      attempts: 3
+      perTryTimeout: 10s
+      retryOn: 5xx,reset,connect-failure,refused-stream
+  - match:
+    - uri:
+        prefix: "/ws/"
+    route:
+    - destination:
+        host: websocket-service.saas-idp-production.svc.cluster.local
+        port:
+          number: 8080
+      weight: 100
+    timeout: 0s  # No timeout for WebSocket connections
+
+---
+# Destination Rules with Circuit Breaker and Load Balancing
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: saas-idp-destination-rules
+  namespace: saas-idp-production
+  labels:
+    app: saas-idp
+    component: destination-rules
+spec:
+  host: saas-idp-app.saas-idp-production.svc.cluster.local
+  trafficPolicy:
+    loadBalancer:
+      localityLbSetting:
+        enabled: true
+        distribute:
+        - from: "region1/zone1/*"
+          to:
+            "region1/zone1/*": 80
+            "region1/zone2/*": 20
+        - from: "region1/zone2/*"
+          to:
+            "region1/zone2/*": 80
+            "region1/zone1/*": 20
+        failover:
+        - from: region1
+          to: region2
+        - from: region2
+          to: region3
+      consistentHash:
+        httpHeader: "x-session-id"
+    connectionPool:
+      tcp:
+        maxConnections: 1000
+        connectTimeout: 30s
+        tcpNoDelay: true
+      http:
+        http1MaxPendingRequests: 1000
+        http2MaxRequests: 1000
+        maxRequestsPerConnection: 100
+        maxRetries: 3
+        consecutiveGateway5xxErrors: 5
+        interval: 30s
+        baseEjectionTime: 30s
+        maxEjectionPercent: 50
+        minHealthPercent: 30
+        h2UpgradePolicy: UPGRADE
+        useClientProtocol: true
+    outlierDetection:
+      consecutiveGateway5xxErrors: 5
+      consecutive5xxErrors: 5
+      interval: 30s
+      baseEjectionTime: 30s
+      maxEjectionPercent: 50
+      minHealthPercent: 30
+      splitExternalLocalOriginErrors: false
+  subsets:
+  - name: us-east
+    labels:
+      region: us-east-1
+    trafficPolicy:
+      connectionPool:
+        tcp:
+          maxConnections: 500
+        http:
+          http1MaxPendingRequests: 500
+  - name: eu-west
+    labels:
+      region: eu-west-1
+    trafficPolicy:
+      connectionPool:
+        tcp:
+          maxConnections: 300
+        http:
+          http1MaxPendingRequests: 300
+  - name: ap-southeast
+    labels:
+      region: ap-southeast-1
+    trafficPolicy:
+      connectionPool:
+        tcp:
+          maxConnections: 200
+        http:
+          http1MaxPendingRequests: 200
+
+---
+# Advanced Rate Limiting with Envoy
+apiVersion: networking.istio.io/v1alpha3
+kind: EnvoyFilter
+metadata:
+  name: rate-limit-filter
+  namespace: saas-idp-production
+  labels:
+    app: saas-idp
+    component: rate-limiting
+spec:
+  workloadSelector:
+    labels:
+      app: saas-idp
+  configPatches:
+  - applyTo: HTTP_FILTER
+    match:
+      context: SIDECAR_INBOUND
+      listener:
+        filterChain:
+          filter:
+            name: "envoy.filters.network.http_connection_manager"
+    patch:
+      operation: INSERT_BEFORE
+      value:
+        name: envoy.filters.http.ratelimit
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.filters.http.ratelimit.v3.RateLimit
+          domain: saas-idp-ratelimit
+          stage: 0
+          rate_limit_service:
+            grpc_service:
+              envoy_grpc:
+                cluster_name: rate-limit-service
+            transport_api_version: V3
+          timeout: 0.25s
+          failure_mode_deny: false
+          enable_x_ratelimit_headers: DRAFT_VERSION_03
+  - applyTo: HTTP_ROUTE
+    match:
+      context: SIDECAR_INBOUND
+    patch:
+      operation: MERGE
+      value:
+        route:
+          rate_limits:
+          - actions:
+            - request_headers:
+                header_name: "x-user-id"
+                descriptor_key: "user_id"
+            - request_headers:
+                header_name: "x-api-key"
+                descriptor_key: "api_key"
+            - remote_address: {}
+          - actions:
+            - header_value_match:
+                descriptor_value: "login"
+                headers:
+                - name: ":path"
+                  string_match:
+                    prefix: "/api/auth/"
+            stage: 1
+
+---
+# Rate Limiting Service
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rate-limit-service
+  namespace: saas-idp-production
+  labels:
+    app: saas-idp
+    component: rate-limit-service
+spec:
+  replicas: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app: saas-idp
+      component: rate-limit-service
+  template:
+    metadata:
+      labels:
+        app: saas-idp
+        component: rate-limit-service
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/stats/prometheus"
+    spec:
+      serviceAccountName: rate-limit-sa
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        fsGroup: 1001
+      containers:
+      - name: rate-limit
+        image: envoyproxy/ratelimit:master
+        ports:
+        - name: grpc
+          containerPort: 8081
+        - name: http
+          containerPort: 8080
+        env:
+        - name: LOG_LEVEL
+          value: "info"
+        - name: REDIS_SOCKET_TYPE
+          value: "tcp"
+        - name: REDIS_URL
+          value: "redis-master:6379"
+        - name: RUNTIME_ROOT
+          value: "/data"
+        - name: RUNTIME_SUBDIRECTORY
+          value: "ratelimit"
+        - name: RUNTIME_WATCH_ROOT
+          value: "false"
+        - name: RUNTIME_IGNOREDOTFILES
+          value: "true"
+        - name: USE_STATSD
+          value: "false"
+        volumeMounts:
+        - name: rate-limit-config
+          mountPath: /data/ratelimit/config
+          readOnly: true
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /healthcheck
+            port: http
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /healthcheck
+            port: http
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+      volumes:
+      - name: rate-limit-config
+        configMap:
+          name: rate-limit-config
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rate-limit-config
+  namespace: saas-idp-production
+  labels:
+    app: saas-idp
+    component: rate-limit-config
+data:
+  config.yaml: |
+    domain: saas-idp-ratelimit
+    descriptors:
+    # Rate limiting by user ID
+    - key: user_id
+      rate_limit:
+        unit: minute
+        requests_per_unit: 1000
+    # Rate limiting by API key
+    - key: api_key
+      rate_limit:
+        unit: minute
+        requests_per_unit: 5000
+    # Rate limiting by IP address
+    - key: remote_address
+      rate_limit:
+        unit: minute
+        requests_per_unit: 100
+    # Special rate limiting for login endpoints
+    - key: header_match
+      value: login
+      rate_limit:
+        unit: minute
+        requests_per_unit: 10
+    # Premium user tier
+    - key: user_id
+      descriptors:
+      - key: premium_user
+        value: "true"
+        rate_limit:
+          unit: minute
+          requests_per_unit: 10000
+    # Enterprise API keys
+    - key: api_key
+      descriptors:
+      - key: enterprise_tier
+        value: "true"
+        rate_limit:
+          unit: minute
+          requests_per_unit: 50000
+
+---
+# WebSocket Load Balancer with Sticky Sessions
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: websocket-proxy
+  namespace: saas-idp-production
+  labels:
+    app: saas-idp
+    component: websocket-proxy
+spec:
+  replicas: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 2
+  selector:
+    matchLabels:
+      app: saas-idp
+      component: websocket-proxy
+  template:
+    metadata:
+      labels:
+        app: saas-idp
+        component: websocket-proxy
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+    spec:
+      serviceAccountName: websocket-proxy-sa
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101
+        fsGroup: 101
+      containers:
+      - name: haproxy
+        image: haproxy:2.8-alpine
+        ports:
+        - name: websocket
+          containerPort: 8080
+        - name: stats
+          containerPort: 9090
+        - name: health
+          containerPort: 8081
+        volumeMounts:
+        - name: haproxy-config
+          mountPath: /usr/local/etc/haproxy
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "200m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: health
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: health
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+            add:
+            - NET_BIND_SERVICE
+      volumes:
+      - name: haproxy-config
+        configMap:
+          name: websocket-proxy-config
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: websocket-proxy-config
+  namespace: saas-idp-production
+  labels:
+    app: saas-idp
+    component: websocket-proxy-config
+data:
+  haproxy.cfg: |
+    global
+        daemon
+        maxconn 4096
+        log stdout local0 info
+        stats socket /var/run/haproxy.sock mode 666 level admin
+        stats timeout 2m
+    
+    defaults
+        mode http
+        log global
+        option httplog
+        option dontlognull
+        option log-health-checks
+        timeout connect 5s
+        timeout client 300s
+        timeout server 300s
+        timeout tunnel 3600s
+        timeout http-keep-alive 1s
+        timeout http-request 15s
+        timeout queue 30s
+        retries 3
+    
+    frontend websocket_frontend
+        bind *:8080
+        option tcplog
+        
+        # Stick table for session affinity
+        stick-table type string len 32 size 10k expire 24h
+        stick on hdr(Sec-WebSocket-Key)
+        
+        # ACL for WebSocket upgrade
+        acl is_websocket hdr(Upgrade) -i websocket
+        acl is_websocket hdr_beg(Host) -i ws.
+        
+        # WebSocket specific headers
+        capture request header Sec-WebSocket-Key len 32
+        capture request header Sec-WebSocket-Protocol len 64
+        
+        use_backend websocket_backend if is_websocket
+        default_backend http_backend
+    
+    backend websocket_backend
+        balance source
+        option tcp-check
+        
+        # Health checks for WebSocket servers
+        tcp-check connect
+        tcp-check send "GET /ws/health HTTP/1.1\r\nHost: ws.saas-idp.com\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n"
+        tcp-check expect string "HTTP/1.1 101"
+        
+        # WebSocket servers in each region
+        server ws-us-east-1 saas-idp-app.saas-idp-production.svc.cluster.local:8080 check weight 50
+        server ws-us-east-2 saas-idp-app.saas-idp-production.svc.cluster.local:8080 check weight 50
+        server ws-eu-west-1 saas-idp-app-eu.saas-idp-production.svc.cluster.local:8080 check weight 30
+        server ws-ap-southeast-1 saas-idp-app-ap.saas-idp-production.svc.cluster.local:8080 check weight 20
+    
+    backend http_backend
+        balance roundrobin
+        option httpchk GET /api/health
+        
+        server app-us-east-1 saas-idp-app.saas-idp-production.svc.cluster.local:4400 check
+        server app-us-east-2 saas-idp-app.saas-idp-production.svc.cluster.local:4400 check
+        server app-eu-west-1 saas-idp-app-eu.saas-idp-production.svc.cluster.local:4400 check
+        server app-ap-southeast-1 saas-idp-app-ap.saas-idp-production.svc.cluster.local:4400 check
+    
+    frontend stats_frontend
+        bind *:9090
+        stats enable
+        stats uri /stats
+        stats refresh 10s
+        stats show-legends
+        stats show-node
+        stats admin if TRUE
+    
+    frontend health_frontend
+        bind *:8081
+        monitor-uri /health
+        option dontlog-normal
+
+---
+# Service Mesh Fault Injection for Testing
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: fault-injection-testing
+  namespace: saas-idp-production
+  labels:
+    app: saas-idp
+    component: fault-injection
+spec:
+  hosts:
+  - saas-idp-app.saas-idp-production.svc.cluster.local
+  http:
+  - match:
+    - headers:
+        x-chaos-test:
+          exact: "delay"
+    fault:
+      delay:
+        percentage:
+          value: 10
+        fixedDelay: 5s
+    route:
+    - destination:
+        host: saas-idp-app.saas-idp-production.svc.cluster.local
+  - match:
+    - headers:
+        x-chaos-test:
+          exact: "abort"
+    fault:
+      abort:
+        percentage:
+          value: 5
+        httpStatus: 503
+    route:
+    - destination:
+        host: saas-idp-app.saas-idp-production.svc.cluster.local
+  - route:
+    - destination:
+        host: saas-idp-app.saas-idp-production.svc.cluster.local
+
+---
+# Load Balancer Health Monitoring
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: lb-health-monitor
+  namespace: saas-idp-production
+  labels:
+    app: saas-idp
+    component: lb-health-monitor
+spec:
+  selector:
+    matchLabels:
+      app: saas-idp
+      component: lb-health-monitor
+  template:
+    metadata:
+      labels:
+        app: saas-idp
+        component: lb-health-monitor
+    spec:
+      serviceAccountName: lb-health-monitor-sa
+      hostNetwork: true
+      tolerations:
+      - key: node-role.kubernetes.io/control-plane
+        effect: NoSchedule
+      - key: node-role.kubernetes.io/master
+        effect: NoSchedule
+      containers:
+      - name: health-monitor
+        image: saas-idp/lb-health-monitor:latest
+        env:
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        - name: ENDPOINTS_TO_MONITOR
+          value: "global-load-balancer:443,regional-load-balancer:443"
+        - name: CHECK_INTERVAL
+          value: "30s"
+        - name: ALERT_ENDPOINT
+          value: "http://alertmanager:9093/api/v1/alerts"
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "100m"
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 65534
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+
+---
+# Service Accounts and RBAC
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: rate-limit-sa
+  namespace: saas-idp-production
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: websocket-proxy-sa
+  namespace: saas-idp-production
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: lb-health-monitor-sa
+  namespace: saas-idp-production
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rate-limit-service
+  namespace: saas-idp-production
+  labels:
+    app: saas-idp
+    component: rate-limit-service
+spec:
+  type: ClusterIP
+  ports:
+  - name: grpc
+    port: 8081
+    targetPort: grpc
+  - name: http
+    port: 8080
+    targetPort: http
+  selector:
+    app: saas-idp
+    component: rate-limit-service
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: websocket-service
+  namespace: saas-idp-production
+  labels:
+    app: saas-idp
+    component: websocket-proxy
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+    service.beta.kubernetes.io/aws-load-balancer-proxy-protocol: "*"
+spec:
+  type: LoadBalancer
+  sessionAffinity: ClientIP
+  sessionAffinityConfig:
+    clientIP:
+      timeoutSeconds: 86400  # 24 hours for WebSocket sessions
+  ports:
+  - name: websocket
+    port: 8080
+    targetPort: websocket
+  - name: stats
+    port: 9090
+    targetPort: stats
+  selector:
+    app: saas-idp
+    component: websocket-proxy

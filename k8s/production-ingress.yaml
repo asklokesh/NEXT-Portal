@@ -1,0 +1,276 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: saas-idp-ingress
+  namespace: saas-idp-production
+  labels:
+    app: saas-idp
+    environment: production
+  annotations:
+    # NGINX Ingress Controller
+    kubernetes.io/ingress.class: "nginx"
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    
+    # Security
+    nginx.ingress.kubernetes.io/proxy-body-size: "10m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "300"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "300"
+    
+    # Headers
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      more_set_headers "X-Frame-Options: SAMEORIGIN";
+      more_set_headers "X-Content-Type-Options: nosniff";
+      more_set_headers "X-XSS-Protection: 1; mode=block";
+      more_set_headers "Referrer-Policy: strict-origin-when-cross-origin";
+      more_set_headers "Strict-Transport-Security: max-age=31536000; includeSubDomains; preload";
+    
+    # Rate Limiting
+    nginx.ingress.kubernetes.io/rate-limit-connections: "10"
+    nginx.ingress.kubernetes.io/rate-limit-rps: "10"
+    nginx.ingress.kubernetes.io/rate-limit-window: "1m"
+    
+    # CORS
+    nginx.ingress.kubernetes.io/enable-cors: "true"
+    nginx.ingress.kubernetes.io/cors-allow-methods: "GET, POST, PUT, DELETE, OPTIONS"
+    nginx.ingress.kubernetes.io/cors-allow-headers: "DNT,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Range,Authorization"
+    nginx.ingress.kubernetes.io/cors-max-age: "86400"
+    
+    # Load Balancing
+    nginx.ingress.kubernetes.io/load-balance: "round_robin"
+    nginx.ingress.kubernetes.io/upstream-hash-by: "$remote_addr"
+    
+    # Compression
+    nginx.ingress.kubernetes.io/gzip-level: "6"
+    nginx.ingress.kubernetes.io/gzip-types: "text/plain,text/css,application/json,application/javascript,text/xml,application/xml,application/xml+rss,text/javascript"
+    
+    # WebSocket Support
+    nginx.ingress.kubernetes.io/proxy-http-version: "1.1"
+    nginx.ingress.kubernetes.io/websocket-services: "saas-idp-app"
+    
+    # Health Checks
+    nginx.ingress.kubernetes.io/health-check-method: "GET"
+    nginx.ingress.kubernetes.io/health-check-path: "/api/health"
+    nginx.ingress.kubernetes.io/health-check-interval: "30s"
+    nginx.ingress.kubernetes.io/health-check-timeout: "10s"
+    
+    # Monitoring
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "10254"
+spec:
+  tls:
+  - hosts:
+    - your-domain.com
+    - app.your-domain.com
+    - api.your-domain.com
+    secretName: saas-idp-tls
+  rules:
+  - host: your-domain.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: nginx-proxy
+            port:
+              number: 80
+  - host: app.your-domain.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: nginx-proxy
+            port:
+              number: 80
+  - host: api.your-domain.com
+    http:
+      paths:
+      - path: /api
+        pathType: Prefix
+        backend:
+          service:
+            name: saas-idp-app
+            port:
+              number: 4400
+      - path: /health
+        pathType: Exact
+        backend:
+          service:
+            name: saas-idp-app
+            port:
+              number: 4400
+      - path: /metrics
+        pathType: Exact
+        backend:
+          service:
+            name: saas-idp-app
+            port:
+              number: 9090
+---
+# Alternative: Traefik Ingress
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: saas-idp-traefik
+  namespace: saas-idp-production
+  labels:
+    app: saas-idp
+    environment: production
+  annotations:
+    kubernetes.io/ingress.class: "traefik"
+    traefik.ingress.kubernetes.io/router.tls: "true"
+    traefik.ingress.kubernetes.io/router.tls.certresolver: "letsencrypt"
+    traefik.ingress.kubernetes.io/router.middlewares: "saas-idp-production-security@kubernetescrd,saas-idp-production-ratelimit@kubernetescrd"
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+spec:
+  tls:
+  - hosts:
+    - your-domain.com
+    secretName: saas-idp-traefik-tls
+  rules:
+  - host: your-domain.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: nginx-proxy
+            port:
+              number: 80
+---
+# Istio Gateway (for Istio Service Mesh)
+apiVersion: networking.istio.io/v1beta1
+kind: Gateway
+metadata:
+  name: saas-idp-gateway
+  namespace: saas-idp-production
+  labels:
+    app: saas-idp
+    environment: production
+spec:
+  selector:
+    istio: ingressgateway
+  servers:
+  - port:
+      number: 80
+      name: http
+      protocol: HTTP
+    hosts:
+    - your-domain.com
+    tls:
+      httpsRedirect: true
+  - port:
+      number: 443
+      name: https
+      protocol: HTTPS
+    tls:
+      mode: SIMPLE
+      credentialName: saas-idp-tls
+    hosts:
+    - your-domain.com
+---
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: saas-idp-vs
+  namespace: saas-idp-production
+  labels:
+    app: saas-idp
+    environment: production
+spec:
+  hosts:
+  - your-domain.com
+  gateways:
+  - saas-idp-gateway
+  http:
+  - match:
+    - uri:
+        prefix: /api/
+    route:
+    - destination:
+        host: saas-idp-app.saas-idp-production.svc.cluster.local
+        port:
+          number: 4400
+    timeout: 30s
+    retries:
+      attempts: 3
+      perTryTimeout: 10s
+  - match:
+    - uri:
+        prefix: /
+    route:
+    - destination:
+        host: nginx-proxy.saas-idp-production.svc.cluster.local
+        port:
+          number: 80
+    timeout: 30s
+---
+# Traefik Middlewares
+apiVersion: traefik.containo.us/v1alpha1
+kind: Middleware
+metadata:
+  name: security
+  namespace: saas-idp-production
+spec:
+  headers:
+    customRequestHeaders:
+      X-Forwarded-Proto: https
+    customResponseHeaders:
+      X-Frame-Options: SAMEORIGIN
+      X-Content-Type-Options: nosniff
+      X-XSS-Protection: "1; mode=block"
+      Referrer-Policy: strict-origin-when-cross-origin
+      Strict-Transport-Security: max-age=31536000; includeSubDomains; preload
+    sslRedirect: true
+---
+apiVersion: traefik.containo.us/v1alpha1
+kind: Middleware
+metadata:
+  name: ratelimit
+  namespace: saas-idp-production
+spec:
+  rateLimit:
+    burst: 20
+    average: 10
+    period: 1m
+    sourceCriterion:
+      ipStrategy:
+        depth: 1
+---
+# Certificate for cert-manager
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: saas-idp-tls
+  namespace: saas-idp-production
+  labels:
+    app: saas-idp
+    environment: production
+spec:
+  secretName: saas-idp-tls
+  issuerRef:
+    name: letsencrypt-prod
+    kind: ClusterIssuer
+  dnsNames:
+  - your-domain.com
+  - app.your-domain.com
+  - api.your-domain.com
+---
+# External DNS for automatic DNS management
+apiVersion: v1
+kind: Service
+metadata:
+  name: external-dns
+  namespace: saas-idp-production
+  annotations:
+    external-dns.alpha.kubernetes.io/hostname: your-domain.com,app.your-domain.com,api.your-domain.com
+    external-dns.alpha.kubernetes.io/ttl: "300"
+spec:
+  type: ExternalName
+  externalName: your-load-balancer-dns.elb.amazonaws.com

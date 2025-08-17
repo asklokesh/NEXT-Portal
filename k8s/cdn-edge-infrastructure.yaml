@@ -1,0 +1,773 @@
+# CDN and Edge Infrastructure Configuration
+# CloudFront, Fastly, and Edge Computing setup for global performance
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fastly-cdn-config
+  namespace: saas-idp-production
+  labels:
+    app: saas-idp
+    component: fastly-cdn
+data:
+  fastly-service.vcl: |
+    vcl 4.0;
+    
+    import std;
+    import header_manipulation;
+    import crypto;
+    
+    # Backend definitions for multi-region setup
+    backend us_east_primary {
+      .host = "us-east-lb.saas-idp.com";
+      .port = "443";
+      .ssl = true;
+      .ssl_check_cert = true;
+      .ssl_sni_hostname = "us-east-lb.saas-idp.com";
+      .connect_timeout = 5s;
+      .first_byte_timeout = 60s;
+      .between_bytes_timeout = 10s;
+      .max_connections = 1000;
+      .probe = {
+        .url = "/api/health";
+        .interval = 30s;
+        .timeout = 10s;
+        .window = 5;
+        .threshold = 3;
+        .initial = 2;
+        .expected_response = 200;
+        .request = "GET /api/health HTTP/1.1" "Host: us-east-lb.saas-idp.com" "Connection: close" "User-Agent: Fastly healthcheck";
+      };
+    }
+    
+    backend eu_west_replica {
+      .host = "eu-west-lb.saas-idp.com";
+      .port = "443";
+      .ssl = true;
+      .ssl_check_cert = true;
+      .ssl_sni_hostname = "eu-west-lb.saas-idp.com";
+      .connect_timeout = 5s;
+      .first_byte_timeout = 60s;
+      .between_bytes_timeout = 10s;
+      .max_connections = 1000;
+      .probe = {
+        .url = "/api/health";
+        .interval = 30s;
+        .timeout = 10s;
+        .window = 5;
+        .threshold = 3;
+        .initial = 2;
+        .expected_response = 200;
+        .request = "GET /api/health HTTP/1.1" "Host: eu-west-lb.saas-idp.com" "Connection: close" "User-Agent: Fastly healthcheck";
+      };
+    }
+    
+    backend ap_southeast_replica {
+      .host = "ap-southeast-lb.saas-idp.com";
+      .port = "443";
+      .ssl = true;
+      .ssl_check_cert = true;
+      .ssl_sni_hostname = "ap-southeast-lb.saas-idp.com";
+      .connect_timeout = 5s;
+      .first_byte_timeout = 60s;
+      .between_bytes_timeout = 10s;
+      .max_connections = 1000;
+      .probe = {
+        .url = "/api/health";
+        .interval = 30s;
+        .timeout = 10s;
+        .window = 5;
+        .threshold = 3;
+        .initial = 2;
+        .expected_response = 200;
+        .request = "GET /api/health HTTP/1.1" "Host: ap-southeast-lb.saas-idp.com" "Connection: close" "User-Agent: Fastly healthcheck";
+      };
+    }
+    
+    # Request processing
+    sub vcl_recv {
+      # Remove tracking cookies for caching
+      set req.http.Cookie = regsuball(req.http.Cookie, "(^|;\s*)(_ga|_gid|_gat|__utm[a-z]*)=[^;]*", "");
+      set req.http.Cookie = regsuball(req.http.Cookie, "^;\s*", "");
+      
+      # Geographic routing logic
+      if (client.geo.continent_code == "NA") {
+        set req.backend_hint = us_east_primary;
+      } else if (client.geo.continent_code == "EU") {
+        set req.backend_hint = eu_west_replica;
+      } else if (client.geo.continent_code == "AS" || client.geo.continent_code == "OC") {
+        set req.backend_hint = ap_southeast_replica;
+      } else {
+        # Default to US East for other regions
+        set req.backend_hint = us_east_primary;
+      }
+      
+      # Rate limiting
+      if (std.ip(client.ip, "0.0.0.0/0")) {
+        if (table.lookup(rate_limiter, client.ip)) {
+          if (std.atoi(table.lookup(rate_limiter, client.ip)) > 1000) {
+            return (synth(429, "Too Many Requests"));
+          }
+        }
+        table.set(rate_limiter, client.ip, std.atoi(table.lookup(rate_limiter, client.ip, "0")) + 1, 60s);
+      }
+      
+      # WebSocket upgrade handling
+      if (req.http.Upgrade ~ "(?i)websocket") {
+        return (pipe);
+      }
+      
+      # Security headers
+      if (req.url ~ "^/(api/|admin/)" && req.http.Authorization !~ "^Bearer ") {
+        return (synth(401, "Unauthorized"));
+      }
+      
+      # Cache bypass for dynamic content
+      if (req.url ~ "^/(api/auth|api/user|api/session|api/real-time)" || 
+          req.http.Cookie ~ "session|auth" || 
+          req.method != "GET") {
+        return (pass);
+      }
+      
+      # Normalize Accept-Encoding
+      if (req.http.Accept-Encoding) {
+        if (req.http.Accept-Encoding ~ "gzip") {
+          set req.http.Accept-Encoding = "gzip";
+        } else if (req.http.Accept-Encoding ~ "deflate") {
+          set req.http.Accept-Encoding = "deflate";
+        } else {
+          unset req.http.Accept-Encoding;
+        }
+      }
+      
+      return (hash);
+    }
+    
+    # Backend selection with health checks
+    sub vcl_backend_fetch {
+      # Add request ID for tracing
+      set bereq.http.X-Request-ID = std.uuid_v4();
+      
+      # Add edge location info
+      set bereq.http.X-Edge-Location = server.datacenter;
+      set bereq.http.X-Client-IP = client.ip;
+      
+      # Health check failover
+      if (!std.healthy(bereq.backend)) {
+        if (bereq.backend == us_east_primary) {
+          set bereq.backend = eu_west_replica;
+        } else if (bereq.backend == eu_west_replica) {
+          set bereq.backend = ap_southeast_replica;
+        } else {
+          set bereq.backend = us_east_primary;
+        }
+      }
+      
+      return (fetch);
+    }
+    
+    # Response processing
+    sub vcl_backend_response {
+      # Cache control based on content type
+      if (beresp.http.Content-Type ~ "^(text/css|application/javascript|text/javascript)" ||
+          bereq.url ~ "\.(css|js|png|jpg|jpeg|gif|ico|svg|woff|woff2)$") {
+        set beresp.ttl = 1y;
+        set beresp.http.Cache-Control = "public, max-age=31536000, immutable";
+      } else if (bereq.url ~ "^/(api/plugins|api/catalog)") {
+        set beresp.ttl = 5m;
+        set beresp.http.Cache-Control = "public, max-age=300, s-maxage=300";
+      } else if (bereq.url ~ "^/api/") {
+        if (beresp.status >= 200 && beresp.status < 300) {
+          set beresp.ttl = 1m;
+          set beresp.http.Cache-Control = "public, max-age=60, s-maxage=60";
+        } else {
+          set beresp.ttl = 0s;
+          set beresp.http.Cache-Control = "no-cache, no-store";
+        }
+      }
+      
+      # Compression
+      if (beresp.http.content-type ~ "^(text/|application/json|application/javascript)" &&
+          !beresp.http.Content-Encoding) {
+        set beresp.do_gzip = true;
+      }
+      
+      # Security headers
+      set beresp.http.X-Frame-Options = "SAMEORIGIN";
+      set beresp.http.X-Content-Type-Options = "nosniff";
+      set beresp.http.X-XSS-Protection = "1; mode=block";
+      set beresp.http.Referrer-Policy = "strict-origin-when-cross-origin";
+      set beresp.http.Strict-Transport-Security = "max-age=31536000; includeSubDomains; preload";
+      
+      # CORS headers for API
+      if (bereq.url ~ "^/api/") {
+        set beresp.http.Access-Control-Allow-Origin = "*";
+        set beresp.http.Access-Control-Allow-Methods = "GET, POST, PUT, DELETE, OPTIONS";
+        set beresp.http.Access-Control-Allow-Headers = "Content-Type, Authorization, X-Requested-With";
+        set beresp.http.Access-Control-Max-Age = "86400";
+      }
+      
+      return (deliver);
+    }
+    
+    sub vcl_deliver {
+      # Add performance headers
+      set resp.http.X-Cache = obj.hits > 0 ? "HIT" : "MISS";
+      set resp.http.X-Cache-Hits = obj.hits;
+      set resp.http.X-Served-By = server.hostname;
+      set resp.http.X-Edge-Location = server.datacenter;
+      
+      # Remove internal headers
+      unset resp.http.X-Varnish;
+      unset resp.http.Via;
+      unset resp.http.Age;
+      
+      return (deliver);
+    }
+    
+    sub vcl_synth {
+      if (resp.status == 429) {
+        set resp.http.Content-Type = "application/json";
+        set resp.http.Retry-After = "60";
+        synthetic({"{"error":"Rate limit exceeded","retry_after":60}"});
+        return (deliver);
+      }
+      
+      return (deliver);
+    }
+
+---
+# CloudFront Configuration with Lambda@Edge
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cloudfront-edge-functions
+  namespace: saas-idp-production
+  labels:
+    app: saas-idp
+    component: cloudfront-edge
+data:
+  edge-auth-lambda.js: |
+    'use strict';
+    
+    const jwt = require('jsonwebtoken');
+    const AWS = require('aws-sdk');
+    
+    const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
+    const ALLOWED_PATHS = ['/api/health', '/login', '/', '/signup', '/static'];
+    
+    exports.handler = async (event, context) => {
+      const request = event.Records[0].cf.request;
+      const uri = request.uri;
+      const headers = request.headers;
+      
+      // Allow static assets and public endpoints
+      if (ALLOWED_PATHS.some(path => uri.startsWith(path))) {
+        return request;
+      }
+      
+      // Extract JWT token from Authorization header or cookie
+      let token = null;
+      if (headers.authorization && headers.authorization[0]) {
+        const authHeader = headers.authorization[0].value;
+        if (authHeader.startsWith('Bearer ')) {
+          token = authHeader.substring(7);
+        }
+      } else if (headers.cookie) {
+        const cookies = headers.cookie[0].value;
+        const tokenMatch = cookies.match(/auth-token=([^;]+)/);
+        if (tokenMatch) {
+          token = tokenMatch[1];
+        }
+      }
+      
+      if (!token) {
+        return generateUnauthorizedResponse();
+      }
+      
+      try {
+        // Verify JWT token
+        const decoded = jwt.verify(token, JWT_SECRET);
+        
+        // Add user context to request
+        headers['x-user-id'] = [{ key: 'X-User-ID', value: decoded.sub }];
+        headers['x-user-role'] = [{ key: 'X-User-Role', value: decoded.role || 'user' }];
+        headers['x-user-permissions'] = [{ key: 'X-User-Permissions', value: JSON.stringify(decoded.permissions || []) }];
+        
+        return request;
+      } catch (error) {
+        console.error('JWT verification failed:', error);
+        return generateUnauthorizedResponse();
+      }
+    };
+    
+    function generateUnauthorizedResponse() {
+      return {
+        status: '401',
+        statusDescription: 'Unauthorized',
+        headers: {
+          'content-type': [{ key: 'Content-Type', value: 'application/json' }],
+          'cache-control': [{ key: 'Cache-Control', value: 'no-cache, no-store, must-revalidate' }]
+        },
+        body: JSON.stringify({
+          error: 'Unauthorized',
+          message: 'Valid authentication token required'
+        })
+      };
+    }
+
+  edge-security-lambda.js: |
+    'use strict';
+    
+    const crypto = require('crypto');
+    
+    // Security rules configuration
+    const SECURITY_RULES = {
+      maxRequestSize: 10 * 1024 * 1024, // 10MB
+      rateLimitWindow: 60 * 1000, // 1 minute
+      rateLimitMaxRequests: 1000,
+      blockedUserAgents: [
+        /bot/i,
+        /crawler/i,
+        /spider/i,
+        /scraper/i
+      ],
+      blockedIPs: [
+        // Add known malicious IPs
+      ],
+      suspiciousPatterns: [
+        /<script/i,
+        /javascript:/i,
+        /vbscript:/i,
+        /onload=/i,
+        /onerror=/i,
+        /eval\(/i,
+        /union.*select/i,
+        /drop.*table/i
+      ]
+    };
+    
+    exports.handler = async (event, context) => {
+      const request = event.Records[0].cf.request;
+      const headers = request.headers;
+      const clientIP = headers['x-forwarded-for'] ? 
+        headers['x-forwarded-for'][0].value.split(',')[0].trim() : 
+        event.Records[0].cf.config.requestId;
+      
+      // IP-based blocking
+      if (SECURITY_RULES.blockedIPs.includes(clientIP)) {
+        return generateBlockedResponse('IP blocked');
+      }
+      
+      // User-Agent filtering
+      const userAgent = headers['user-agent'] ? headers['user-agent'][0].value : '';
+      if (SECURITY_RULES.blockedUserAgents.some(pattern => pattern.test(userAgent))) {
+        return generateBlockedResponse('User agent not allowed');
+      }
+      
+      // Request size limiting
+      const contentLength = headers['content-length'] ? 
+        parseInt(headers['content-length'][0].value) : 0;
+      if (contentLength > SECURITY_RULES.maxRequestSize) {
+        return generateBlockedResponse('Request too large');
+      }
+      
+      // Suspicious pattern detection
+      const queryString = request.querystring;
+      const uri = request.uri;
+      const fullURL = `${uri}?${queryString}`;
+      
+      if (SECURITY_RULES.suspiciousPatterns.some(pattern => pattern.test(fullURL))) {
+        return generateBlockedResponse('Suspicious request pattern detected');
+      }
+      
+      // Rate limiting (simplified - in production, use Redis/DynamoDB)
+      const rateLimitKey = crypto.createHash('md5').update(clientIP).digest('hex');
+      
+      // Add security headers
+      headers['x-client-ip'] = [{ key: 'X-Client-IP', value: clientIP }];
+      headers['x-request-id'] = [{ key: 'X-Request-ID', value: context.awsRequestId }];
+      headers['x-security-check'] = [{ key: 'X-Security-Check', value: 'passed' }];
+      
+      return request;
+    };
+    
+    function generateBlockedResponse(reason) {
+      return {
+        status: '403',
+        statusDescription: 'Forbidden',
+        headers: {
+          'content-type': [{ key: 'Content-Type', value: 'application/json' }],
+          'cache-control': [{ key: 'Cache-Control', value: 'no-cache, no-store, must-revalidate' }],
+          'x-block-reason': [{ key: 'X-Block-Reason', value: reason }]
+        },
+        body: JSON.stringify({
+          error: 'Access Denied',
+          message: 'Request blocked by security policies',
+          timestamp: new Date().toISOString()
+        })
+      };
+    }
+
+---
+# Real-time Cache Invalidation System
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cache-invalidation-service
+  namespace: saas-idp-production
+  labels:
+    app: saas-idp
+    component: cache-invalidation
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app: saas-idp
+      component: cache-invalidation
+  template:
+    metadata:
+      labels:
+        app: saas-idp
+        component: cache-invalidation
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: cache-invalidation-sa
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        fsGroup: 1001
+      containers:
+      - name: cache-invalidation
+        image: saas-idp/cache-invalidation:latest
+        ports:
+        - name: http
+          containerPort: 8080
+        - name: metrics
+          containerPort: 9090
+        env:
+        - name: CLOUDFRONT_DISTRIBUTION_IDS
+          value: "E1234567890ABC,E1234567890DEF,E1234567890GHI"
+        - name: FASTLY_SERVICE_IDS
+          value: "abc123,def456,ghi789"
+        - name: FASTLY_API_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: fastly-credentials
+              key: api-token
+        - name: AWS_REGION
+          value: "us-east-1"
+        - name: REDIS_URL
+          value: "redis://redis-master:6379"
+        - name: KAFKA_BROKERS
+          value: "kafka:9092"
+        envFrom:
+        - configMapRef:
+            name: cache-invalidation-config
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "200m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: http
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cache-invalidation-config
+  namespace: saas-idp-production
+  labels:
+    app: saas-idp
+    component: cache-invalidation
+data:
+  config.yaml: |
+    cache_invalidation:
+      providers:
+        cloudfront:
+          enabled: true
+          batch_size: 100
+          max_retry_attempts: 3
+          retry_delay_ms: 1000
+        fastly:
+          enabled: true
+          batch_size: 50
+          max_retry_attempts: 3
+          retry_delay_ms: 500
+        varnish:
+          enabled: true
+          servers:
+            - "varnish-1.saas-idp.com:6081"
+            - "varnish-2.saas-idp.com:6081"
+      
+      invalidation_rules:
+        - pattern: "/api/plugins/*"
+          ttl: 300
+          priority: high
+          providers: ["cloudfront", "fastly"]
+        - pattern: "/static/*"
+          ttl: 31536000
+          priority: low
+          providers: ["cloudfront", "fastly"]
+        - pattern: "/_next/static/*"
+          ttl: 31536000
+          priority: low
+          providers: ["cloudfront", "fastly"]
+        - pattern: "/api/catalog/*"
+          ttl: 600
+          priority: medium
+          providers: ["cloudfront", "fastly", "varnish"]
+      
+      triggers:
+        - event: "plugin.updated"
+          patterns: ["/api/plugins/*", "/plugins/*"]
+        - event: "catalog.updated" 
+          patterns: ["/api/catalog/*", "/catalog/*"]
+        - event: "user.updated"
+          patterns: ["/api/user/*"]
+        - event: "deployment.completed"
+          patterns: ["/*"]
+      
+      monitoring:
+        metrics_enabled: true
+        log_level: "info"
+        trace_sampling_rate: 0.1
+
+---
+# Edge Computing Workers (Cloudflare Workers alternative)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: edge-workers-config
+  namespace: saas-idp-production
+  labels:
+    app: saas-idp
+    component: edge-workers
+data:
+  api-cache-worker.js: |
+    // Edge Worker for intelligent API caching
+    class APICacheWorker {
+      constructor() {
+        this.cache = caches.default;
+        this.CACHE_TTL = {
+          '/api/plugins': 300,      // 5 minutes
+          '/api/catalog': 600,      // 10 minutes
+          '/api/templates': 1800,   // 30 minutes
+          '/api/health': 60,        // 1 minute
+          '/api/metrics': 120       // 2 minutes
+        };
+      }
+      
+      async handleRequest(request) {
+        const url = new URL(request.url);
+        const cacheKey = new Request(url.toString(), request);
+        
+        // Check cache first
+        let response = await this.cache.match(cacheKey);
+        if (response) {
+          const age = Date.now() - new Date(response.headers.get('date')).getTime();
+          const ttl = this.getTTL(url.pathname) * 1000;
+          
+          if (age < ttl) {
+            response.headers.set('X-Cache', 'HIT');
+            response.headers.set('X-Cache-Age', Math.floor(age / 1000).toString());
+            return response;
+          }
+        }
+        
+        // Fetch from origin
+        response = await fetch(request);
+        
+        // Cache successful responses
+        if (response.status === 200 && request.method === 'GET') {
+          const ttl = this.getTTL(url.pathname);
+          const cacheResponse = response.clone();
+          
+          cacheResponse.headers.set('Cache-Control', `public, max-age=${ttl}`);
+          cacheResponse.headers.set('X-Cache', 'MISS');
+          
+          // Store in cache
+          await this.cache.put(cacheKey, cacheResponse);
+        }
+        
+        return response;
+      }
+      
+      getTTL(pathname) {
+        for (const [pattern, ttl] of Object.entries(this.CACHE_TTL)) {
+          if (pathname.startsWith(pattern)) {
+            return ttl;
+          }
+        }
+        return 60; // Default 1 minute
+      }
+    }
+    
+    addEventListener('fetch', event => {
+      const worker = new APICacheWorker();
+      event.respondWith(worker.handleRequest(event.request));
+    });
+
+  geo-routing-worker.js: |
+    // Geographic routing and optimization worker
+    class GeoRoutingWorker {
+      constructor() {
+        this.origins = {
+          'US': 'https://us-east-lb.saas-idp.com',
+          'EU': 'https://eu-west-lb.saas-idp.com',
+          'AS': 'https://ap-southeast-lb.saas-idp.com'
+        };
+        
+        this.fallbackChain = {
+          'US': ['EU', 'AS'],
+          'EU': ['US', 'AS'], 
+          'AS': ['US', 'EU']
+        };
+      }
+      
+      async handleRequest(request) {
+        const cf = request.cf;
+        const continent = cf ? cf.continent : 'US';
+        
+        let origin = this.origins[continent] || this.origins['US'];
+        let attempts = 0;
+        const maxAttempts = 3;
+        
+        while (attempts < maxAttempts) {
+          try {
+            const response = await this.fetchWithTimeout(request, origin, 10000);
+            
+            if (response.ok) {
+              // Add routing headers
+              response.headers.set('X-Origin-Region', continent);
+              response.headers.set('X-Origin-URL', origin);
+              response.headers.set('X-Edge-Location', cf ? cf.colo : 'unknown');
+              return response;
+            }
+            
+            // Try fallback origins
+            const fallbacks = this.fallbackChain[continent] || [];
+            if (attempts < fallbacks.length) {
+              origin = this.origins[fallbacks[attempts]];
+              attempts++;
+              continue;
+            }
+            
+            return response;
+            
+          } catch (error) {
+            attempts++;
+            if (attempts >= maxAttempts) {
+              return new Response(
+                JSON.stringify({
+                  error: 'Service Unavailable',
+                  message: 'All origins are currently unavailable'
+                }),
+                { 
+                  status: 503,
+                  headers: { 'Content-Type': 'application/json' }
+                }
+              );
+            }
+            
+            // Try next fallback
+            const fallbacks = this.fallbackChain[continent] || [];
+            if (attempts - 1 < fallbacks.length) {
+              origin = this.origins[fallbacks[attempts - 1]];
+            }
+          }
+        }
+      }
+      
+      async fetchWithTimeout(request, origin, timeout) {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), timeout);
+        
+        try {
+          const url = new URL(request.url);
+          url.host = new URL(origin).host;
+          url.protocol = new URL(origin).protocol;
+          
+          const modifiedRequest = new Request(url.toString(), {
+            method: request.method,
+            headers: request.headers,
+            body: request.body,
+            signal: controller.signal
+          });
+          
+          const response = await fetch(modifiedRequest);
+          clearTimeout(timeoutId);
+          return response;
+        } catch (error) {
+          clearTimeout(timeoutId);
+          throw error;
+        }
+      }
+    }
+    
+    addEventListener('fetch', event => {
+      const worker = new GeoRoutingWorker();
+      event.respondWith(worker.handleRequest(event.request));
+    });
+
+---
+# Service Account for Cache Invalidation
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: cache-invalidation-sa
+  namespace: saas-idp-production
+  labels:
+    app: saas-idp
+    component: cache-invalidation
+  annotations:
+    eks.amazonaws.com/role-arn: "arn:aws:iam::ACCOUNT-ID:role/CacheInvalidationRole"
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cache-invalidation-service
+  namespace: saas-idp-production
+  labels:
+    app: saas-idp
+    component: cache-invalidation
+spec:
+  type: ClusterIP
+  ports:
+  - name: http
+    port: 80
+    targetPort: http
+  - name: metrics
+    port: 9090
+    targetPort: metrics
+  selector:
+    app: saas-idp
+    component: cache-invalidation

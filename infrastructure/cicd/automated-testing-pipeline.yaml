@@ -1,0 +1,658 @@
+# Automated Testing Pipeline - Enterprise Grade
+# Comprehensive testing strategy with 90%+ code coverage requirement
+
+apiVersion: tekton.dev/v1beta1
+kind: Pipeline
+metadata:
+  name: automated-testing-pipeline
+  namespace: tekton-pipelines
+  annotations:
+    description: "Comprehensive automated testing pipeline for enterprise SaaS IDP"
+    testing.coverage.minimum: "90%"
+    testing.types: "unit,integration,e2e,performance,security,accessibility"
+spec:
+  params:
+    - name: git-url
+      type: string
+      description: Git repository URL
+    - name: git-revision
+      type: string
+      description: Git revision to test
+      default: main
+    - name: test-environment
+      type: string
+      description: Test environment (staging/production)
+      default: staging
+    - name: performance-test-enabled
+      type: string
+      description: Enable performance testing
+      default: "true"
+    - name: load-test-duration
+      type: string
+      description: Load test duration
+      default: "10m"
+    - name: concurrent-users
+      type: string
+      description: Number of concurrent users for load testing
+      default: "1000"
+    - name: coverage-threshold
+      type: string
+      description: Code coverage threshold
+      default: "90"
+
+  workspaces:
+    - name: source-ws
+      description: Source code workspace
+    - name: test-results-ws
+      description: Test results and artifacts workspace
+    - name: cache-ws
+      description: Dependency cache workspace
+
+  tasks:
+    # 1. Source Code Preparation
+    - name: source-preparation
+      taskRef:
+        name: git-clone
+        kind: ClusterTask
+      workspaces:
+        - name: output
+          workspace: source-ws
+      params:
+        - name: url
+          value: $(params.git-url)
+        - name: revision
+          value: $(params.git-revision)
+        - name: deleteExisting
+          value: "true"
+
+    # 2. Dependency Installation with Caching
+    - name: install-dependencies
+      runAfter: ["source-preparation"]
+      taskRef:
+        name: npm-install-with-cache
+      workspaces:
+        - name: source
+          workspace: source-ws
+        - name: cache
+          workspace: cache-ws
+      params:
+        - name: cache-key
+          value: "npm-cache-$(params.git-revision)"
+        - name: package-manager
+          value: "npm"
+
+    # 3. Code Linting and Style Checks
+    - name: code-linting
+      runAfter: ["install-dependencies"]
+      taskRef:
+        name: eslint-typescript
+      workspaces:
+        - name: source
+          workspace: source-ws
+        - name: results
+          workspace: test-results-ws
+      params:
+        - name: lint-config
+          value: ".eslintrc.js"
+        - name: typescript-config
+          value: "tsconfig.json"
+        - name: fail-on-error
+          value: "true"
+        - name: output-format
+          value: "junit"
+
+    # 4. Unit Tests with Coverage
+    - name: unit-tests
+      runAfter: ["code-linting"]
+      taskRef:
+        name: jest-unit-tests
+      workspaces:
+        - name: source
+          workspace: source-ws
+        - name: results
+          workspace: test-results-ws
+      params:
+        - name: test-command
+          value: "test:unit:ci"
+        - name: coverage-enabled
+          value: "true"
+        - name: coverage-threshold
+          value: "$(params.coverage-threshold)"
+        - name: jest-config
+          value: "jest.config.js"
+        - name: max-workers
+          value: "4"
+
+    # 5. Component Testing (React Testing Library)
+    - name: component-tests
+      runAfter: ["unit-tests"]
+      taskRef:
+        name: react-component-tests
+      workspaces:
+        - name: source
+          workspace: source-ws
+        - name: results
+          workspace: test-results-ws
+      params:
+        - name: test-pattern
+          value: "**/*.test.{ts,tsx}"
+        - name: setup-files
+          value: "./src/setupTests.ts"
+        - name: coverage-enabled
+          value: "true"
+
+    # 6. API Integration Tests
+    - name: api-integration-tests
+      runAfter: ["component-tests"]
+      taskRef:
+        name: api-integration-tests
+      workspaces:
+        - name: source
+          workspace: source-ws
+        - name: results
+          workspace: test-results-ws
+      params:
+        - name: api-base-url
+          value: "https://$(params.test-environment).saas-idp.company.com/api"
+        - name: test-data-setup
+          value: "true"
+        - name: cleanup-after-tests
+          value: "true"
+        - name: timeout
+          value: "30s"
+
+    # 7. Database Integration Tests
+    - name: database-tests
+      runAfter: ["api-integration-tests"]
+      taskRef:
+        name: database-integration-tests
+      workspaces:
+        - name: source
+          workspace: source-ws
+        - name: results
+          workspace: test-results-ws
+      params:
+        - name: database-url
+          value: "postgresql://test:test@postgres-test:5432/saas_idp_test"
+        - name: migration-tests
+          value: "true"
+        - name: rollback-tests
+          value: "true"
+        - name: performance-tests
+          value: "true"
+
+    # 8. Security Tests Integration
+    - name: security-tests
+      runAfter: ["database-tests"]
+      taskRef:
+        name: security-test-suite
+      workspaces:
+        - name: source
+          workspace: source-ws
+        - name: results
+          workspace: test-results-ws
+      params:
+        - name: auth-tests
+          value: "true"
+        - name: authorization-tests
+          value: "true"
+        - name: input-validation-tests
+          value: "true"
+        - name: xss-protection-tests
+          value: "true"
+        - name: csrf-protection-tests
+          value: "true"
+
+    # 9. End-to-End Tests (Playwright)
+    - name: e2e-tests
+      runAfter: ["security-tests"]
+      taskRef:
+        name: playwright-e2e-tests
+      workspaces:
+        - name: source
+          workspace: source-ws
+        - name: results
+          workspace: test-results-ws
+      params:
+        - name: base-url
+          value: "https://$(params.test-environment).saas-idp.company.com"
+        - name: browsers
+          value: "chromium,firefox,webkit"
+        - name: workers
+          value: "4"
+        - name: retries
+          value: "2"
+        - name: timeout
+          value: "30000"
+        - name: video
+          value: "retain-on-failure"
+        - name: screenshots
+          value: "only-on-failure"
+
+    # 10. Accessibility Tests
+    - name: accessibility-tests
+      runAfter: ["e2e-tests"]
+      taskRef:
+        name: axe-accessibility-tests
+      workspaces:
+        - name: source
+          workspace: source-ws
+        - name: results
+          workspace: test-results-ws
+      params:
+        - name: target-url
+          value: "https://$(params.test-environment).saas-idp.company.com"
+        - name: wcag-level
+          value: "AA"
+        - name: rules-config
+          value: "./tests/accessibility/axe-config.json"
+
+    # 11. Performance Testing (K6)
+    - name: performance-tests
+      runAfter: ["accessibility-tests"]
+      when:
+        - input: $(params.performance-test-enabled)
+          operator: in
+          values: ["true"]
+      taskRef:
+        name: k6-performance-tests
+      workspaces:
+        - name: source
+          workspace: source-ws
+        - name: results
+          workspace: test-results-ws
+      params:
+        - name: target-url
+          value: "https://$(params.test-environment).saas-idp.company.com"
+        - name: virtual-users
+          value: "$(params.concurrent-users)"
+        - name: duration
+          value: "$(params.load-test-duration)"
+        - name: ramp-up-time
+          value: "2m"
+        - name: test-scenario
+          value: "./tests/performance/load-test-scenarios.js"
+
+    # 12. Stress Testing
+    - name: stress-tests
+      runAfter: ["performance-tests"]
+      when:
+        - input: $(params.performance-test-enabled)
+          operator: in
+          values: ["true"]
+      taskRef:
+        name: k6-stress-tests
+      workspaces:
+        - name: source
+          workspace: source-ws
+        - name: results
+          workspace: test-results-ws
+      params:
+        - name: target-url
+          value: "https://$(params.test-environment).saas-idp.company.com"
+        - name: max-virtual-users
+          value: "5000"
+        - name: stress-duration
+          value: "5m"
+        - name: break-point-detection
+          value: "true"
+
+    # 13. Plugin System Tests
+    - name: plugin-system-tests
+      runAfter: ["stress-tests"]
+      taskRef:
+        name: plugin-system-tests
+      workspaces:
+        - name: source
+          workspace: source-ws
+        - name: results
+          workspace: test-results-ws
+      params:
+        - name: test-plugins
+          value: "@backstage/plugin-catalog,@backstage/plugin-techdocs"
+        - name: plugin-installation-tests
+          value: "true"
+        - name: plugin-dependency-tests
+          value: "true"
+        - name: plugin-isolation-tests
+          value: "true"
+
+    # 14. Backup and Recovery Tests
+    - name: backup-recovery-tests
+      runAfter: ["plugin-system-tests"]
+      taskRef:
+        name: backup-recovery-tests
+      workspaces:
+        - name: source
+          workspace: source-ws
+        - name: results
+          workspace: test-results-ws
+      params:
+        - name: backup-strategy-test
+          value: "true"
+        - name: recovery-time-test
+          value: "true"
+        - name: data-integrity-test
+          value: "true"
+        - name: disaster-recovery-test
+          value: "false"  # Run only in staging
+
+    # 15. Cross-Browser Compatibility Tests
+    - name: cross-browser-tests
+      runAfter: ["backup-recovery-tests"]
+      taskRef:
+        name: cross-browser-compatibility
+      workspaces:
+        - name: source
+          workspace: source-ws
+        - name: results
+          workspace: test-results-ws
+      params:
+        - name: browsers
+          value: "chrome,firefox,safari,edge"
+        - name: mobile-browsers
+          value: "chrome-mobile,safari-mobile"
+        - name: viewport-sizes
+          value: "desktop,tablet,mobile"
+
+    # 16. Visual Regression Tests
+    - name: visual-regression-tests
+      runAfter: ["cross-browser-tests"]
+      taskRef:
+        name: visual-regression-tests
+      workspaces:
+        - name: source
+          workspace: source-ws
+        - name: results
+          workspace: test-results-ws
+      params:
+        - name: baseline-branch
+          value: "main"
+        - name: threshold
+          value: "0.02"
+        - name: pages-to-test
+          value: "dashboard,plugins,catalog,templates,monitoring"
+
+  finally:
+    # Test Results Aggregation
+    - name: test-results-aggregation
+      taskRef:
+        name: test-results-aggregator
+      workspaces:
+        - name: results
+          workspace: test-results-ws
+      params:
+        - name: output-formats
+          value: "junit,html,json"
+        - name: coverage-consolidation
+          value: "true"
+        - name: generate-badge
+          value: "true"
+        - name: upload-artifacts
+          value: "true"
+        - name: notify-teams
+          value: "true"
+
+---
+# Custom Testing Tasks
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: jest-unit-tests
+  namespace: tekton-pipelines
+spec:
+  description: Runs Jest unit tests with coverage reporting
+  params:
+    - name: test-command
+      description: npm script to run tests
+      type: string
+      default: "test"
+    - name: coverage-enabled
+      description: Enable coverage reporting
+      type: string
+      default: "true"
+    - name: coverage-threshold
+      description: Coverage threshold percentage
+      type: string
+      default: "90"
+    - name: jest-config
+      description: Jest configuration file
+      type: string
+      default: "jest.config.js"
+    - name: max-workers
+      description: Maximum number of worker processes
+      type: string
+      default: "4"
+  workspaces:
+    - name: source
+      description: Source code workspace
+    - name: results
+      description: Test results workspace
+  steps:
+    - name: run-unit-tests
+      image: node:18-alpine
+      workingDir: /workspace/source
+      script: |
+        #!/bin/sh
+        set -e
+        
+        echo "Running Jest unit tests..."
+        
+        # Run tests with coverage
+        if [ "$(params.coverage-enabled)" = "true" ]; then
+          npm run $(params.test-command) -- \
+            --coverage \
+            --coverageReporters=text,lcov,cobertura,html \
+            --coverageDirectory=/workspace/results/coverage \
+            --coverageThreshold='{"global":{"branches":$(params.coverage-threshold),"functions":$(params.coverage-threshold),"lines":$(params.coverage-threshold),"statements":$(params.coverage-threshold)}}' \
+            --maxWorkers=$(params.max-workers) \
+            --ci \
+            --watchAll=false \
+            --reporters=default,jest-junit
+        else
+          npm run $(params.test-command) -- \
+            --maxWorkers=$(params.max-workers) \
+            --ci \
+            --watchAll=false \
+            --reporters=default,jest-junit
+        fi
+        
+        # Copy test results
+        cp junit.xml /workspace/results/ || true
+        
+        echo "Unit tests completed successfully"
+
+---
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: k6-performance-tests
+  namespace: tekton-pipelines
+spec:
+  description: Runs K6 performance tests
+  params:
+    - name: target-url
+      description: Target URL for performance tests
+      type: string
+    - name: virtual-users
+      description: Number of virtual users
+      type: string
+      default: "100"
+    - name: duration
+      description: Test duration
+      type: string
+      default: "5m"
+    - name: ramp-up-time
+      description: Ramp-up time
+      type: string
+      default: "1m"
+    - name: test-scenario
+      description: Test scenario file
+      type: string
+      default: "./tests/performance/load-test.js"
+  workspaces:
+    - name: source
+      description: Source code workspace
+    - name: results
+      description: Test results workspace
+  steps:
+    - name: run-performance-tests
+      image: grafana/k6:latest
+      workingDir: /workspace/source
+      script: |
+        #!/bin/sh
+        set -e
+        
+        echo "Running K6 performance tests..."
+        echo "Target: $(params.target-url)"
+        echo "Virtual Users: $(params.virtual-users)"
+        echo "Duration: $(params.duration)"
+        
+        # Run K6 performance tests
+        k6 run \
+          --vus $(params.virtual-users) \
+          --duration $(params.duration) \
+          --ramp-up-duration $(params.ramp-up-time) \
+          --out json=/workspace/results/performance-results.json \
+          --out influxdb=http://influxdb:8086/k6 \
+          --env TARGET_URL=$(params.target-url) \
+          $(params.test-scenario)
+        
+        # Generate HTML report
+        if [ -f /workspace/results/performance-results.json ]; then
+          k6-html-reporter --input /workspace/results/performance-results.json \
+                          --output /workspace/results/performance-report.html
+        fi
+        
+        echo "Performance tests completed"
+
+---
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: test-results-aggregator
+  namespace: tekton-pipelines
+spec:
+  description: Aggregates all test results into comprehensive reports
+  params:
+    - name: output-formats
+      description: Output formats for reports
+      type: string
+      default: "html,json"
+    - name: coverage-consolidation
+      description: Consolidate coverage reports
+      type: string
+      default: "true"
+    - name: generate-badge
+      description: Generate test coverage badge
+      type: string
+      default: "true"
+    - name: upload-artifacts
+      description: Upload test artifacts
+      type: string
+      default: "true"
+    - name: notify-teams
+      description: Send notifications to teams
+      type: string
+      default: "true"
+  workspaces:
+    - name: results
+      description: Test results workspace
+  steps:
+    - name: aggregate-results
+      image: test-aggregator:latest
+      env:
+        - name: SLACK_WEBHOOK_URL
+          valueFrom:
+            secretKeyRef:
+              name: notification-secrets
+              key: slack-webhook-url
+        - name: AWS_ACCESS_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: aws-credentials
+              key: access-key-id
+        - name: AWS_SECRET_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: aws-credentials
+              key: secret-access-key
+      script: |
+        #!/bin/bash
+        set -e
+        
+        cd /workspace/results
+        
+        echo "Aggregating test results..."
+        
+        # Consolidate JUnit reports
+        find . -name "*.xml" -type f -exec junit-merge {} + > consolidated-test-results.xml
+        
+        # Consolidate coverage reports
+        if [[ "$(params.coverage-consolidation)" == "true" ]]; then
+          find . -name "lcov.info" -type f -exec lcov-result-merger {} \; > consolidated-coverage.lcov
+          genhtml consolidated-coverage.lcov --output-directory coverage-html
+        fi
+        
+        # Generate comprehensive test report
+        test-report-generator \
+          --input . \
+          --output-formats "$(params.output-formats)" \
+          --include-performance true \
+          --include-security true \
+          --include-accessibility true
+        
+        # Generate test coverage badge
+        if [[ "$(params.generate-badge)" == "true" ]]; then
+          COVERAGE_PERCENT=$(coverage-calculator --input consolidated-coverage.lcov)
+          badge-generator --label "Coverage" --message "${COVERAGE_PERCENT}%" \
+                         --color green --output coverage-badge.svg
+        fi
+        
+        # Calculate test metrics
+        TOTAL_TESTS=$(test-counter --input consolidated-test-results.xml)
+        PASSED_TESTS=$(test-counter --input consolidated-test-results.xml --status passed)
+        FAILED_TESTS=$(test-counter --input consolidated-test-results.xml --status failed)
+        TEST_SUCCESS_RATE=$((PASSED_TESTS * 100 / TOTAL_TESTS))
+        
+        echo "Test Summary:"
+        echo "Total Tests: $TOTAL_TESTS"
+        echo "Passed: $PASSED_TESTS"
+        echo "Failed: $FAILED_TESTS"
+        echo "Success Rate: $TEST_SUCCESS_RATE%"
+        
+        # Upload artifacts to S3
+        if [[ "$(params.upload-artifacts)" == "true" ]]; then
+          aws s3 cp . s3://test-artifacts-bucket/saas-idp/$(date +%Y%m%d%H%M%S)/ --recursive
+        fi
+        
+        # Send notifications
+        if [[ "$(params.notify-teams)" == "true" ]]; then
+          curl -X POST "$SLACK_WEBHOOK_URL" \
+            -H 'Content-type: application/json' \
+            --data "{
+              \"text\": \"Test Pipeline Completed for SaaS IDP\",
+              \"attachments\": [{
+                \"color\": \"$([ $TEST_SUCCESS_RATE -ge 95 ] && echo 'good' || echo 'warning')\",
+                \"fields\": [{
+                  \"title\": \"Total Tests\",
+                  \"value\": \"$TOTAL_TESTS\",
+                  \"short\": true
+                }, {
+                  \"title\": \"Success Rate\",
+                  \"value\": \"$TEST_SUCCESS_RATE%\",
+                  \"short\": true
+                }, {
+                  \"title\": \"Coverage\",
+                  \"value\": \"${COVERAGE_PERCENT}%\",
+                  \"short\": true
+                }, {
+                  \"title\": \"Status\",
+                  \"value\": \"$([ $FAILED_TESTS -eq 0 ] && echo 'PASS' || echo 'FAIL')\",
+                  \"short\": true
+                }]
+              }]
+            }"
+        fi
+        
+        echo "Test results aggregation completed successfully"

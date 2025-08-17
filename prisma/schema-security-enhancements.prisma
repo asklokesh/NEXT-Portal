@@ -1,0 +1,433 @@
+// ==============================================
+// PLUGIN SECURITY ENHANCEMENTS
+// Database schema additions for plugin security verification
+// ==============================================
+
+// Plugin Security Metadata
+model PluginSecurityMetadata {
+  id                    String            @id @default(cuid())
+  pluginId              String
+  pluginVersionId       String?
+  
+  // Digital Signatures
+  hasValidSignature     Boolean           @default(false)
+  signatureAlgorithm    String?           // RSA-SHA256, ECDSA-SHA256, Ed25519
+  signaturePublicKey    String?           // Truncated public key for reference
+  signatureTimestamp    DateTime?
+  signatureValidatedBy  String?           // User/system that validated
+  signatureValidatedAt  DateTime?
+  
+  // Checksums and Integrity
+  sha256Checksum        String?           // SHA-256 hash
+  sha512Checksum        String?           // SHA-512 hash
+  blake2bChecksum       String?           // Blake2b hash (if supported)
+  integrityVerified     Boolean           @default(false)
+  checksumSource        String?           // npm, registry, manual
+  
+  // Trust Scoring
+  trustScore            Float             @default(0)    // 0-100 trust score
+  trustScoreCalculatedAt DateTime?
+  trustMetrics          Json?             // Detailed trust metrics
+  riskLevel             SecurityRiskLevel @default(UNKNOWN)
+  riskFactors           String[]          @default([])   // Array of risk factors
+  
+  // Security Scans
+  lastSecurityScan      DateTime?
+  securityScanStatus    SecurityScanStatus @default(PENDING)
+  vulnerabilityScanId   String?           // Reference to external scan
+  malwareScanResult     String?           // clean, suspicious, malware
+  complianceStatus      ComplianceStatus  @default(UNKNOWN)
+  
+  // Package Information
+  packageSize           BigInt?           // Package size in bytes
+  packageArchitecture   String?           // x64, arm64, etc.
+  packageFormat         String?           // tarball, zip, etc.
+  downloadSource        String?           // URL where package was downloaded
+  
+  // Security Policies
+  exemptions            Json?             // Security policy exemptions
+  approvalRequired      Boolean           @default(false)
+  approvedBy            String?           // User who approved security exceptions
+  approvedAt            DateTime?
+  approvalReason        String?
+  
+  // Audit Trail
+  securityEvents        PluginSecurityEvent[]
+  createdAt             DateTime          @default(now())
+  updatedAt             DateTime          @updatedAt
+  
+  // Relationships
+  plugin                Plugin            @relation(fields: [pluginId], references: [id], onDelete: Cascade)
+  pluginVersion         PluginVersion?    @relation(fields: [pluginVersionId], references: [id], onDelete: Cascade)
+  
+  @@unique([pluginId, pluginVersionId])
+  @@index([pluginId, trustScore])
+  @@index([riskLevel, securityScanStatus])
+  @@index([lastSecurityScan])
+  @@index([trustScore])
+  @@index([hasValidSignature, integrityVerified])
+  @@map("plugin_security_metadata")
+}
+
+// Security Events and Audit Log
+model PluginSecurityEvent {
+  id                    String            @id @default(cuid())
+  securityMetadataId    String
+  eventType             SecurityEventType
+  severity              SecurityEventSeverity
+  
+  // Event Details
+  title                 String
+  description           String
+  details               Json?             // Additional event-specific data
+  source                String            // System component that generated event
+  
+  // Context Information
+  pluginName            String
+  pluginVersion         String?
+  userId                String?           // User associated with event
+  ipAddress             String?
+  userAgent             String?
+  
+  // Resolution
+  status                SecurityEventStatus @default(OPEN)
+  resolvedBy            String?
+  resolvedAt            DateTime?
+  resolutionNotes       String?
+  
+  // Metadata
+  metadata              Json?
+  timestamp             DateTime          @default(now())
+  createdAt             DateTime          @default(now())
+  
+  // Relationships
+  securityMetadata      PluginSecurityMetadata @relation(fields: [securityMetadataId], references: [id], onDelete: Cascade)
+  
+  @@index([eventType, severity, timestamp])
+  @@index([pluginName, eventType])
+  @@index([status, severity])
+  @@index([timestamp])
+  @@map("plugin_security_events")
+}
+
+// Trusted Publishers Registry
+model TrustedPublisher {
+  id                    String            @id @default(cuid())
+  name                  String            @unique // @backstage, @roadiehq, etc.
+  displayName           String
+  
+  // Publisher Information
+  email                 String?
+  website               String?
+  description           String?
+  
+  // Trust Information
+  trustLevel            PublisherTrustLevel @default(VERIFIED)
+  verifiedAt            DateTime?
+  verifiedBy            String?           // Admin who verified
+  
+  // Cryptographic Keys
+  publicKeys            Json              // Array of public keys
+  keyRotationSchedule   String?           // Cron schedule for key rotation
+  lastKeyRotation       DateTime?
+  
+  // Policies and Restrictions
+  allowedPackagePatterns String[]         @default([]) // Regex patterns for allowed packages
+  securityPolicies      Json?            // Publisher-specific security policies
+  autoApproval          Boolean          @default(false)
+  
+  // Status
+  isActive              Boolean          @default(true)
+  isSuspended           Boolean          @default(false)
+  suspensionReason      String?
+  suspendedAt           DateTime?
+  suspendedBy           String?
+  
+  // Audit
+  createdAt             DateTime         @default(now())
+  updatedAt             DateTime         @updatedAt
+  
+  @@index([name, isActive])
+  @@index([trustLevel, isActive])
+  @@map("trusted_publishers")
+}
+
+// Security Policies and Rules
+model SecurityPolicy {
+  id                    String            @id @default(cuid())
+  name                  String            @unique
+  displayName           String
+  description           String?
+  
+  // Policy Configuration
+  policyType            SecurityPolicyType
+  rules                 Json              // Policy rules definition
+  enforcement           PolicyEnforcement @default(WARN)
+  priority              Int               @default(100)
+  
+  // Scope
+  appliesToPlugins      String[]          @default([]) // Plugin name patterns
+  appliesToCategories   String[]          @default([]) // Plugin categories
+  exemptions            String[]          @default([]) // Exempted plugins
+  
+  // Lifecycle
+  isActive              Boolean           @default(true)
+  effectiveFrom         DateTime          @default(now())
+  effectiveUntil        DateTime?
+  
+  // Ownership
+  ownedBy               String            // User/team who owns the policy
+  approvers             String[]          @default([]) // Users who can approve exceptions
+  
+  // Audit
+  createdAt             DateTime          @default(now())
+  updatedAt             DateTime          @updatedAt
+  
+  @@index([policyType, isActive])
+  @@index([enforcement, priority])
+  @@map("security_policies")
+}
+
+// Security Scan Results
+model SecurityScanResult {
+  id                    String            @id @default(cuid())
+  pluginId              String
+  pluginVersionId       String?
+  scanType              SecurityScanType
+  
+  // Scan Information
+  scanId                String            @unique // External scan ID
+  scanEngine            String            // snyk, osv, npm-audit, etc.
+  scanVersion           String?           // Version of scan engine
+  
+  // Results
+  status                SecurityScanStatus
+  startedAt             DateTime
+  completedAt           DateTime?
+  duration              Int?              // Scan duration in milliseconds
+  
+  // Findings
+  vulnerabilityCount    Int               @default(0)
+  criticalCount         Int               @default(0)
+  highCount             Int               @default(0)
+  mediumCount           Int               @default(0)
+  lowCount              Int               @default(0)
+  infoCount             Int               @default(0)
+  
+  // Detailed Results
+  findings              Json?             // Detailed scan findings
+  rawResults            Json?             // Raw scan output
+  recommendations       Json?             // Security recommendations
+  
+  // Metadata
+  metadata              Json?
+  createdAt             DateTime          @default(now())
+  
+  // Relationships
+  plugin                Plugin            @relation(fields: [pluginId], references: [id], onDelete: Cascade)
+  pluginVersion         PluginVersion?    @relation(fields: [pluginVersionId], references: [id], onDelete: Cascade)
+  
+  @@index([pluginId, scanType, completedAt])
+  @@index([status, scanType])
+  @@index([criticalCount, highCount])
+  @@index([completedAt])
+  @@map("security_scan_results")
+}
+
+// Security Compliance Reports
+model SecurityComplianceReport {
+  id                    String            @id @default(cuid())
+  pluginId              String
+  pluginVersionId       String?
+  reportType            ComplianceReportType
+  
+  // Report Information
+  generatedAt           DateTime          @default(now())
+  generatedBy           String            // User or system
+  reportPeriod          String            // daily, weekly, monthly
+  
+  // Compliance Status
+  overallScore          Float             @default(0) // 0-100 compliance score
+  passedChecks          Int               @default(0)
+  failedChecks          Int               @default(0)
+  exemptedChecks        Int               @default(0)
+  
+  // Detailed Results
+  checkResults          Json              // Detailed compliance check results
+  policyViolations      Json?             // Policy violations found
+  recommendations       Json?             // Compliance recommendations
+  actionItems           Json?             // Required action items
+  
+  // Status
+  status                ComplianceStatus  @default(PENDING)
+  approvedBy            String?
+  approvedAt            DateTime?
+  
+  // Metadata
+  metadata              Json?
+  createdAt             DateTime          @default(now())
+  
+  // Relationships
+  plugin                Plugin            @relation(fields: [pluginId], references: [id], onDelete: Cascade)
+  pluginVersion         PluginVersion?    @relation(fields: [pluginVersionId], references: [id], onDelete: Cascade)
+  
+  @@index([pluginId, reportType, generatedAt])
+  @@index([overallScore, status])
+  @@index([generatedAt])
+  @@map("security_compliance_reports")
+}
+
+// Enhanced Security Enums
+enum SecurityRiskLevel {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+  UNKNOWN
+}
+
+enum SecurityScanStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+  CANCELLED
+  EXPIRED
+}
+
+enum SecurityEventType {
+  SIGNATURE_VERIFICATION
+  CHECKSUM_VALIDATION
+  VULNERABILITY_DETECTED
+  TRUST_SCORE_CHANGED
+  POLICY_VIOLATION
+  MALWARE_DETECTED
+  COMPLIANCE_FAILURE
+  APPROVAL_REQUEST
+  EXEMPTION_GRANTED
+  SCAN_COMPLETED
+}
+
+enum SecurityEventSeverity {
+  INFO
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum SecurityEventStatus {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+  DISMISSED
+  ESCALATED
+}
+
+enum PublisherTrustLevel {
+  UNKNOWN
+  UNVERIFIED
+  BASIC
+  VERIFIED
+  TRUSTED
+  CERTIFIED
+}
+
+enum SecurityPolicyType {
+  SIGNATURE_REQUIRED
+  CHECKSUM_REQUIRED
+  TRUST_THRESHOLD
+  VULNERABILITY_LIMITS
+  PUBLISHER_ALLOWLIST
+  PACKAGE_SIZE_LIMIT
+  COMPLIANCE_REQUIRED
+  CUSTOM
+}
+
+enum PolicyEnforcement {
+  DISABLED
+  WARN
+  BLOCK
+  REQUIRE_APPROVAL
+}
+
+enum SecurityScanType {
+  VULNERABILITY
+  MALWARE
+  DEPENDENCY
+  LICENSE
+  COMPLIANCE
+  STATIC_ANALYSIS
+  DYNAMIC_ANALYSIS
+  COMPOSITE
+}
+
+enum ComplianceStatus {
+  UNKNOWN
+  PENDING
+  COMPLIANT
+  NON_COMPLIANT
+  CONDITIONALLY_COMPLIANT
+  EXEMPTED
+}
+
+enum ComplianceReportType {
+  PLUGIN_SECURITY
+  VULNERABILITY_ASSESSMENT
+  POLICY_COMPLIANCE
+  TRUST_EVALUATION
+  COMPREHENSIVE
+}
+
+// ==========================================
+// ADDITIONS TO EXISTING MODELS
+// ==========================================
+
+// Add security fields to existing Plugin model (these would be added to the main schema)
+/*
+model Plugin {
+  // ... existing fields ...
+  
+  // Enhanced Security Fields (add these to main Plugin model)
+  securityMetadata       PluginSecurityMetadata[]
+  securityScanResults    SecurityScanResult[]
+  complianceReports      SecurityComplianceReport[]
+  
+  // Security Status Summary (computed fields)
+  lastSecurityScan       DateTime?
+  securityRiskLevel      SecurityRiskLevel? @default(UNKNOWN)
+  trustScore             Float?             @default(0)
+  hasSecurityIssues      Boolean            @default(false)
+  securityApprovalStatus SecurityApprovalStatus? @default(PENDING)
+  
+  // ... existing relationships ...
+}
+*/
+
+// Add security fields to existing PluginVersion model
+/*
+model PluginVersion {
+  // ... existing fields ...
+  
+  // Security Fields (add these to main PluginVersion model)
+  securityMetadata       PluginSecurityMetadata[]
+  securityScanResults    SecurityScanResult[]
+  complianceReports      SecurityComplianceReport[]
+  
+  // Signature and Integrity
+  digitalSignature       String?            // Base64 encoded signature
+  publicKeyFingerprint   String?            // SHA-256 of public key
+  integrityHash          String?            // Combined integrity hash
+  securityScanPassed     Boolean            @default(false)
+  
+  // ... existing relationships ...
+}
+*/
+
+enum SecurityApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CONDITIONALLY_APPROVED
+  EXPIRED
+}

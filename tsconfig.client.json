@@ -1,0 +1,32 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "composite": true,
+    "declaration": true,
+    "declarationMap": true,
+    "outDir": ".next/cache/types/client",
+    "rootDir": "./src",
+    "tsBuildInfoFile": ".next/cache/client.tsbuildinfo",
+    "lib": ["dom", "dom.iterable", "esnext"],
+    "types": ["react", "react-dom"]
+  },
+  "include": [
+    "src/components/**/*.ts",
+    "src/components/**/*.tsx",
+    "src/hooks/**/*.ts",
+    "src/hooks/**/*.tsx",
+    "src/lib/client/**/*.ts",
+    "src/lib/utils.ts",
+    "src/store/**/*.ts",
+    "src/types/**/*.ts"
+  ],
+  "exclude": [
+    "src/app/api/**/*",
+    "src/lib/server/**/*",
+    "src/services/**/*",
+    "**/*.test.ts",
+    "**/*.test.tsx",
+    "**/*.spec.ts",
+    "**/*.spec.tsx"
+  ]
+}

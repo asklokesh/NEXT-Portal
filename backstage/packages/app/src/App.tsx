@@ -107,8 +107,8 @@ const app = createApp({
  return (
  <SignInPage
  {...props}
- providers={['guest', 'custom', ...providers]}
- title="Select a sign-in method"
+ providers={['github-auth-provider', 'guest']}
+ title="Sign in to SaaS IDP Portal"
  align="center"
  />
  );

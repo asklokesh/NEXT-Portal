@@ -1,0 +1,714 @@
+#!/usr/bin/env ts-node
+/**
+ * API Testing Script - Production Endpoint Validation
+ * Runs comprehensive tests against real database connections
+ */
+
+import axios from 'axios';
+import { performance } from 'perf_hooks';
+import { createTestTenant, createTestUser, cleanupTestData, seedCatalogEntities, seedPlugins } from '../tests/helpers/test-setup';
+import { APILoadTester, productionLoadTestConfig } from '../tests/load/api-load-test';
+
+interface TestSuite {
+  name: string;
+  tests: TestCase[];
+}
+
+interface TestCase {
+  name: string;
+  execute: () => Promise<TestResult>;
+}
+
+interface TestResult {
+  success: boolean;
+  duration: number;
+  error?: string;
+  data?: any;
+  metrics?: any;
+}
+
+interface APITestReport {
+  suites: {
+    name: string;
+    passed: number;
+    failed: number;
+    duration: number;
+    tests: {
+      name: string;
+      success: boolean;
+      duration: number;
+      error?: string;
+    }[];
+  }[];
+  overall: {
+    totalTests: number;
+    passed: number;
+    failed: number;
+    duration: number;
+    successRate: number;
+  };
+  performance: {
+    averageResponseTime: number;
+    slowestEndpoint: string;
+    fastestEndpoint: string;
+    databaseHealth: any;
+  };
+  recommendations: string[];
+}
+
+class APITestRunner {
+  private baseUrl: string;
+  private testContext: any;
+  private results: APITestReport;
+
+  constructor(baseUrl: string = 'http://localhost:4400') {
+    this.baseUrl = baseUrl;
+    this.results = {
+      suites: [],
+      overall: {
+        totalTests: 0,
+        passed: 0,
+        failed: 0,
+        duration: 0,
+        successRate: 0
+      },
+      performance: {
+        averageResponseTime: 0,
+        slowestEndpoint: '',
+        fastestEndpoint: '',
+        databaseHealth: {}
+      },
+      recommendations: []
+    };
+  }
+
+  async runAllTests(): Promise<APITestReport> {
+    console.log('🚀 Starting Production API Test Suite');
+    console.log(`Testing against: ${this.baseUrl}`);
+    console.log('=' .repeat(60));
+
+    try {
+      // Setup test environment
+      await this.setupTestEnvironment();
+
+      // Define test suites
+      const testSuites: TestSuite[] = [
+        await this.createCatalogEntitiesTestSuite(),
+        await this.createScaffolderTemplatesTestSuite(),
+        await this.createPluginHealthTestSuite(),
+        await this.createPluginConfigTestSuite(),
+        await this.createPerformanceTestSuite(),
+        await this.createErrorHandlingTestSuite()
+      ];
+
+      const startTime = performance.now();
+
+      // Run all test suites
+      for (const suite of testSuites) {
+        await this.runTestSuite(suite);
+      }
+
+      const totalDuration = performance.now() - startTime;
+      this.results.overall.duration = totalDuration;
+
+      // Calculate overall metrics
+      this.calculateOverallMetrics();
+
+      // Generate recommendations
+      this.generateRecommendations();
+
+      // Print report
+      this.printTestReport();
+
+      return this.results;
+
+    } finally {
+      await this.cleanupTestEnvironment();
+    }
+  }
+
+  private async setupTestEnvironment(): Promise<void> {
+    console.log('🔧 Setting up test environment...');
+
+    try {
+      // Create test tenant and user
+      const tenant = await createTestTenant('api-test-corp');
+      const user = await createTestUser('api-test@testcorp.com', tenant.id);
+
+      // Seed test data
+      const entities = await seedCatalogEntities(tenant.id, 20);
+      const plugins = await seedPlugins(tenant.id, 10);
+
+      this.testContext = {
+        tenant,
+        user,
+        entities,
+        plugins,
+        authToken: this.generateTestToken(user)
+      };
+
+      console.log(`✅ Test environment ready (Tenant: ${tenant.id})`);
+    } catch (error) {
+      console.error('❌ Failed to setup test environment:', error);
+      throw error;
+    }
+  }
+
+  private async cleanupTestEnvironment(): Promise<void> {
+    if (this.testContext?.tenant?.id) {
+      console.log('🧹 Cleaning up test environment...');
+      await cleanupTestData(this.testContext.tenant.id);
+      console.log('✅ Cleanup completed');
+    }
+  }
+
+  private async runTestSuite(suite: TestSuite): Promise<void> {
+    console.log(`\n📋 Running ${suite.name}...`);
+    
+    const suiteStartTime = performance.now();
+    const suiteResult = {
+      name: suite.name,
+      passed: 0,
+      failed: 0,
+      duration: 0,
+      tests: [] as any[]
+    };
+
+    for (const test of suite.tests) {
+      try {
+        console.log(`  • ${test.name}`);
+        const result = await test.execute();
+        
+        if (result.success) {
+          suiteResult.passed++;
+          console.log(`    ✅ Passed (${result.duration.toFixed(2)}ms)`);
+        } else {
+          suiteResult.failed++;
+          console.log(`    ❌ Failed: ${result.error}`);
+        }
+
+        suiteResult.tests.push({
+          name: test.name,
+          success: result.success,
+          duration: result.duration,
+          error: result.error
+        });
+
+      } catch (error) {
+        suiteResult.failed++;
+        console.log(`    ❌ Failed: ${error}`);
+        suiteResult.tests.push({
+          name: test.name,
+          success: false,
+          duration: 0,
+          error: error instanceof Error ? error.message : 'Unknown error'
+        });
+      }
+    }
+
+    suiteResult.duration = performance.now() - suiteStartTime;
+    this.results.suites.push(suiteResult);
+    
+    console.log(`  📊 ${suiteResult.passed}/${suite.tests.length} tests passed`);
+  }
+
+  private async createCatalogEntitiesTestSuite(): Promise<TestSuite> {
+    return {
+      name: 'Catalog Entities API',
+      tests: [
+        {
+          name: 'Fetch all entities with authentication',
+          execute: async () => {
+            const startTime = performance.now();
+            const response = await this.makeRequest('/api/backstage/entities');
+            const duration = performance.now() - startTime;
+
+            if (response.status !== 200) {
+              return { success: false, duration, error: `Expected 200, got ${response.status}` };
+            }
+
+            const data = response.data;
+            if (!data.entities || !Array.isArray(data.entities)) {
+              return { success: false, duration, error: 'Invalid response structure' };
+            }
+
+            return { success: true, duration, data };
+          }
+        },
+        {
+          name: 'Filter entities by kind',
+          execute: async () => {
+            const startTime = performance.now();
+            const response = await this.makeRequest('/api/backstage/entities?kind=Component');
+            const duration = performance.now() - startTime;
+
+            if (response.status !== 200) {
+              return { success: false, duration, error: `Expected 200, got ${response.status}` };
+            }
+
+            const isValidFilter = response.data.entities.every((entity: any) => entity.kind === 'Component');
+            if (!isValidFilter) {
+              return { success: false, duration, error: 'Filtering not working correctly' };
+            }
+
+            return { success: true, duration };
+          }
+        },
+        {
+          name: 'Pagination functionality',
+          execute: async () => {
+            const startTime = performance.now();
+            const response = await this.makeRequest('/api/backstage/entities?limit=5&offset=0');
+            const duration = performance.now() - startTime;
+
+            if (response.status !== 200) {
+              return { success: false, duration, error: `Expected 200, got ${response.status}` };
+            }
+
+            const { pagination } = response.data;
+            if (pagination.limit !== 5 || pagination.offset !== 0) {
+              return { success: false, duration, error: 'Pagination parameters not respected' };
+            }
+
+            return { success: true, duration };
+          }
+        },
+        {
+          name: 'Unauthorized access returns 401',
+          execute: async () => {
+            const startTime = performance.now();
+            const response = await this.makeRequest('/api/backstage/entities', { skipAuth: true });
+            const duration = performance.now() - startTime;
+
+            if (response.status !== 401) {
+              return { success: false, duration, error: `Expected 401, got ${response.status}` };
+            }
+
+            return { success: true, duration };
+          }
+        },
+        {
+          name: 'Tenant isolation',
+          execute: async () => {
+            const startTime = performance.now();
+            const response = await this.makeRequest('/api/backstage/entities', {
+              headers: { 'X-Tenant-ID': 'different-tenant' }
+            });
+            const duration = performance.now() - startTime;
+
+            // Should return empty results for different tenant
+            if (response.status === 200 && response.data.entities.length === 0) {
+              return { success: true, duration };
+            }
+
+            return { success: false, duration, error: 'Tenant isolation not working' };
+          }
+        }
+      ]
+    };
+  }
+
+  private async createScaffolderTemplatesTestSuite(): Promise<TestSuite> {
+    return {
+      name: 'Scaffolder Templates API',
+      tests: [
+        {
+          name: 'Fetch templates successfully',
+          execute: async () => {
+            const startTime = performance.now();
+            const response = await this.makeRequest('/api/backstage/scaffolder/templates');
+            const duration = performance.now() - startTime;
+
+            if (response.status !== 200) {
+              return { success: false, duration, error: `Expected 200, got ${response.status}` };
+            }
+
+            const data = response.data;
+            if (!data.items || !Array.isArray(data.items)) {
+              return { success: false, duration, error: 'Invalid response structure' };
+            }
+
+            return { success: true, duration, data };
+          }
+        },
+        {
+          name: 'Templates have valid structure',
+          execute: async () => {
+            const startTime = performance.now();
+            const response = await this.makeRequest('/api/backstage/scaffolder/templates');
+            const duration = performance.now() - startTime;
+
+            if (response.status !== 200) {
+              return { success: false, duration, error: `Expected 200, got ${response.status}` };
+            }
+
+            const templates = response.data.items;
+            for (const template of templates) {
+              if (!template.kind || template.kind !== 'Template') {
+                return { success: false, duration, error: 'Invalid template structure' };
+              }
+              if (!template.metadata || !template.spec) {
+                return { success: false, duration, error: 'Missing required template fields' };
+              }
+            }
+
+            return { success: true, duration };
+          }
+        }
+      ]
+    };
+  }
+
+  private async createPluginHealthTestSuite(): Promise<TestSuite> {
+    return {
+      name: 'Plugin Health Monitoring API',
+      tests: [
+        {
+          name: 'Get health summary',
+          execute: async () => {
+            const startTime = performance.now();
+            const response = await this.makeRequest('/api/plugin-health?action=summary');
+            const duration = performance.now() - startTime;
+
+            if (response.status !== 200) {
+              return { success: false, duration, error: `Expected 200, got ${response.status}` };
+            }
+
+            const data = response.data;
+            if (!data.success || !data.summary) {
+              return { success: false, duration, error: 'Invalid health summary response' };
+            }
+
+            return { success: true, duration };
+          }
+        },
+        {
+          name: 'List all plugins',
+          execute: async () => {
+            const startTime = performance.now();
+            const response = await this.makeRequest('/api/plugin-health');
+            const duration = performance.now() - startTime;
+
+            if (response.status !== 200) {
+              return { success: false, duration, error: `Expected 200, got ${response.status}` };
+            }
+
+            const data = response.data;
+            if (!data.success || !Array.isArray(data.plugins)) {
+              return { success: false, duration, error: 'Invalid plugins list response' };
+            }
+
+            return { success: true, duration };
+          }
+        },
+        {
+          name: 'Filter plugins by status',
+          execute: async () => {
+            const startTime = performance.now();
+            const response = await this.makeRequest('/api/plugin-health?status=running');
+            const duration = performance.now() - startTime;
+
+            // Should succeed regardless of actual plugin status
+            if (response.status !== 200) {
+              return { success: false, duration, error: `Expected 200, got ${response.status}` };
+            }
+
+            return { success: true, duration };
+          }
+        }
+      ]
+    };
+  }
+
+  private async createPluginConfigTestSuite(): Promise<TestSuite> {
+    return {
+      name: 'Plugin Configuration API',
+      tests: [
+        {
+          name: 'Fetch configurations with auth',
+          execute: async () => {
+            const startTime = performance.now();
+            const response = await this.makeRequest('/api/plugins/test-plugin/configurations');
+            const duration = performance.now() - startTime;
+
+            // Should return 200 or 404 (plugin not found)
+            if (![200, 404].includes(response.status)) {
+              return { success: false, duration, error: `Unexpected status: ${response.status}` };
+            }
+
+            return { success: true, duration };
+          }
+        },
+        {
+          name: 'Unauthorized access returns 401',
+          execute: async () => {
+            const startTime = performance.now();
+            const response = await this.makeRequest('/api/plugins/test-plugin/configurations', { skipAuth: true });
+            const duration = performance.now() - startTime;
+
+            if (response.status !== 401) {
+              return { success: false, duration, error: `Expected 401, got ${response.status}` };
+            }
+
+            return { success: true, duration };
+          }
+        },
+        {
+          name: 'Invalid plugin ID returns 400',
+          execute: async () => {
+            const startTime = performance.now();
+            const response = await this.makeRequest('/api/plugins/undefined/configurations');
+            const duration = performance.now() - startTime;
+
+            if (response.status !== 400) {
+              return { success: false, duration, error: `Expected 400, got ${response.status}` };
+            }
+
+            return { success: true, duration };
+          }
+        }
+      ]
+    };
+  }
+
+  private async createPerformanceTestSuite(): Promise<TestSuite> {
+    return {
+      name: 'Performance Tests',
+      tests: [
+        {
+          name: 'Response time under 2 seconds',
+          execute: async () => {
+            const startTime = performance.now();
+            const response = await this.makeRequest('/api/backstage/entities');
+            const duration = performance.now() - startTime;
+
+            if (duration > 2000) {
+              return { success: false, duration, error: `Response too slow: ${duration}ms` };
+            }
+
+            return { success: true, duration };
+          }
+        },
+        {
+          name: 'Concurrent requests handling',
+          execute: async () => {
+            const startTime = performance.now();
+            
+            const requests = Array.from({ length: 10 }, () => 
+              this.makeRequest('/api/backstage/entities')
+            );
+
+            const responses = await Promise.all(requests);
+            const duration = performance.now() - startTime;
+
+            const allSuccessful = responses.every(r => r.status === 200);
+            if (!allSuccessful) {
+              return { success: false, duration, error: 'Not all concurrent requests succeeded' };
+            }
+
+            return { success: true, duration };
+          }
+        }
+      ]
+    };
+  }
+
+  private async createErrorHandlingTestSuite(): Promise<TestSuite> {
+    return {
+      name: 'Error Handling Tests',
+      tests: [
+        {
+          name: 'Invalid endpoint returns 404',
+          execute: async () => {
+            const startTime = performance.now();
+            const response = await this.makeRequest('/api/non-existent-endpoint');
+            const duration = performance.now() - startTime;
+
+            if (response.status !== 404) {
+              return { success: false, duration, error: `Expected 404, got ${response.status}` };
+            }
+
+            return { success: true, duration };
+          }
+        },
+        {
+          name: 'Malformed requests handled gracefully',
+          execute: async () => {
+            const startTime = performance.now();
+            
+            try {
+              const response = await axios.post(`${this.baseUrl}/api/plugin-health`, 
+                'invalid json', 
+                {
+                  headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${this.testContext.authToken}`,
+                    'X-Tenant-ID': this.testContext.tenant.id
+                  },
+                  validateStatus: () => true
+                }
+              );
+              
+              const duration = performance.now() - startTime;
+
+              // Should return 400 or 500, not crash
+              if (![400, 500].includes(response.status)) {
+                return { success: false, duration, error: `Unexpected status: ${response.status}` };
+              }
+
+              return { success: true, duration };
+            } catch (error) {
+              const duration = performance.now() - startTime;
+              return { success: false, duration, error: 'Request failed unexpectedly' };
+            }
+          }
+        }
+      ]
+    };
+  }
+
+  private async makeRequest(path: string, options: any = {}): Promise<any> {
+    const { skipAuth = false, headers = {} } = options;
+    
+    const requestHeaders = {
+      'Content-Type': 'application/json',
+      ...headers
+    };
+
+    if (!skipAuth && this.testContext) {
+      requestHeaders['Authorization'] = `Bearer ${this.testContext.authToken}`;
+      requestHeaders['X-Tenant-ID'] = headers['X-Tenant-ID'] || this.testContext.tenant.id;
+    }
+
+    try {
+      const response = await axios.get(`${this.baseUrl}${path}`, {
+        headers: requestHeaders,
+        timeout: 30000,
+        validateStatus: () => true // Accept all status codes
+      });
+
+      return response;
+    } catch (error) {
+      // Handle network errors
+      return {
+        status: 0,
+        data: null,
+        error: error instanceof Error ? error.message : 'Network error'
+      };
+    }
+  }
+
+  private generateTestToken(user: any): string {
+    // In real implementation, this would generate a proper JWT
+    return `test-token-${user.id}-${Date.now()}`;
+  }
+
+  private calculateOverallMetrics(): void {
+    let totalTests = 0;
+    let totalPassed = 0;
+    let totalFailed = 0;
+
+    for (const suite of this.results.suites) {
+      totalTests += suite.tests.length;
+      totalPassed += suite.passed;
+      totalFailed += suite.failed;
+    }
+
+    this.results.overall = {
+      totalTests,
+      passed: totalPassed,
+      failed: totalFailed,
+      duration: this.results.overall.duration,
+      successRate: totalTests > 0 ? (totalPassed / totalTests) * 100 : 0
+    };
+
+    // Calculate performance metrics
+    const allTests = this.results.suites.flatMap(s => s.tests);
+    const responseTimes = allTests.filter(t => t.success).map(t => t.duration);
+    
+    if (responseTimes.length > 0) {
+      this.results.performance.averageResponseTime = 
+        responseTimes.reduce((sum, time) => sum + time, 0) / responseTimes.length;
+    }
+  }
+
+  private generateRecommendations(): void {
+    const recommendations: string[] = [];
+
+    if (this.results.overall.successRate < 90) {
+      recommendations.push('🔴 Test success rate is below 90%. Investigate failing tests.');
+    }
+
+    if (this.results.performance.averageResponseTime > 1000) {
+      recommendations.push('🟡 Average response time is above 1 second. Consider optimization.');
+    }
+
+    if (this.results.overall.successRate === 100) {
+      recommendations.push('✅ All tests passed! API is production ready.');
+    }
+
+    if (this.results.performance.averageResponseTime < 500) {
+      recommendations.push('✅ Excellent response times. Performance is optimal.');
+    }
+
+    this.results.recommendations = recommendations;
+  }
+
+  private printTestReport(): void {
+    console.log('\n📊 API TEST REPORT');
+    console.log('='.repeat(60));
+    console.log(`Total Tests: ${this.results.overall.totalTests}`);
+    console.log(`Passed: ${this.results.overall.passed}`);
+    console.log(`Failed: ${this.results.overall.failed}`);
+    console.log(`Success Rate: ${this.results.overall.successRate.toFixed(2)}%`);
+    console.log(`Duration: ${this.results.overall.duration.toFixed(2)}ms`);
+    console.log(`Avg Response Time: ${this.results.performance.averageResponseTime.toFixed(2)}ms`);
+
+    console.log('\n📋 SUITE BREAKDOWN');
+    console.log('-'.repeat(60));
+    
+    for (const suite of this.results.suites) {
+      const status = suite.failed === 0 ? '✅' : '❌';
+      console.log(`${status} ${suite.name}: ${suite.passed}/${suite.tests.length} passed`);
+      
+      if (suite.failed > 0) {
+        const failedTests = suite.tests.filter(t => !t.success);
+        for (const test of failedTests) {
+          console.log(`    ❌ ${test.name}: ${test.error}`);
+        }
+      }
+    }
+
+    console.log('\n💡 RECOMMENDATIONS');
+    console.log('-'.repeat(60));
+    for (const recommendation of this.results.recommendations) {
+      console.log(recommendation);
+    }
+  }
+}
+
+// Main execution
+async function main() {
+  const runner = new APITestRunner();
+  
+  try {
+    const report = await runner.runAllTests();
+    
+    if (report.overall.successRate === 100) {
+      console.log('\n🎉 All tests passed! API is production ready.');
+      process.exit(0);
+    } else {
+      console.log('\n⚠️  Some tests failed. Review the report above.');
+      process.exit(1);
+    }
+  } catch (error) {
+    console.error('\n❌ Test execution failed:', error);
+    process.exit(1);
+  }
+}
+
+if (require.main === module) {
+  main();
+}
+
+export { APITestRunner };

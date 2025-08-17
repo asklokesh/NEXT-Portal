@@ -1,0 +1,289 @@
+# Alertmanager configuration for SaaS IDP
+global:
+  # The smarthost and SMTP sender used for mail notifications.
+  smtp_smarthost: 'localhost:587'
+  smtp_from: 'alerts@saas-idp.com'
+  smtp_auth_username: 'alerts@saas-idp.com'
+  smtp_auth_password: 'YOUR_SMTP_PASSWORD'
+  
+  # The root route on which each incoming alert enters.
+  resolve_timeout: 5m
+  
+  # Slack webhook URL for notifications
+  slack_api_url: 'https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK'
+
+# The directory from which notification templates are read.
+templates:
+  - '/etc/alertmanager/templates/*.tmpl'
+
+# Route tree for incoming alerts
+route:
+  group_by: ['alertname', 'cluster', 'service']
+  group_wait: 10s
+  group_interval: 10s
+  repeat_interval: 1h
+  receiver: 'web.hook'
+  
+  routes:
+  # Critical alerts - immediate notification
+  - match:
+      severity: critical
+    receiver: 'critical-alerts'
+    group_wait: 0s
+    group_interval: 1m
+    repeat_interval: 5m
+    
+  # Security alerts - dedicated security team notification
+  - match:
+      service: authentication
+    receiver: 'security-team'
+    group_wait: 30s
+    group_interval: 5m
+    repeat_interval: 30m
+    
+  # Plugin-specific alerts
+  - match:
+      service: plugins
+    receiver: 'plugin-team'
+    group_wait: 1m
+    group_interval: 10m
+    repeat_interval: 2h
+    
+  # Database alerts
+  - match:
+      service: database
+    receiver: 'database-team'
+    group_wait: 30s
+    group_interval: 5m
+    repeat_interval: 1h
+    
+  # Business metrics alerts (info level)
+  - match:
+      severity: info
+    receiver: 'business-metrics'
+    group_wait: 5m
+    group_interval: 1h
+    repeat_interval: 24h
+
+# Inhibition rules to prevent alert spam
+inhibit_rules:
+- source_match:
+    severity: 'critical'
+  target_match:
+    severity: 'warning'
+  equal: ['alertname', 'cluster', 'service']
+
+- source_match:
+    alertname: 'SystemHealthCritical'
+  target_match_re:
+    alertname: '.*'
+  equal: ['cluster']
+
+receivers:
+# Default webhook receiver
+- name: 'web.hook'
+  webhook_configs:
+  - url: 'http://localhost:5001/webhook'
+    send_resolved: true
+
+# Critical alerts - multiple channels
+- name: 'critical-alerts'
+  email_configs:
+  - to: 'sre-team@saas-idp.com'
+    subject: 'CRITICAL: SaaS IDP Alert - {{ .GroupLabels.alertname }}'
+    body: |
+      {{ range .Alerts }}
+      Alert: {{ .Annotations.summary }}
+      Description: {{ .Annotations.description }}
+      Severity: {{ .Labels.severity }}
+      Service: {{ .Labels.service }}
+      Component: {{ .Labels.component }}
+      Runbook: {{ .Annotations.runbook_url }}
+      
+      Labels:
+      {{ range .Labels.SortedPairs }} - {{ .Name }} = {{ .Value }}
+      {{ end }}
+      {{ end }}
+    html: |
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <style>
+          .critical { color: red; font-weight: bold; }
+          .warning { color: orange; font-weight: bold; }
+          .info { color: blue; }
+          .resolved { color: green; font-weight: bold; }
+        </style>
+      </head>
+      <body>
+        <h2 class="critical">🚨 CRITICAL ALERT - SaaS IDP</h2>
+        {{ range .Alerts }}
+        <div style="border: 1px solid #ccc; padding: 10px; margin: 10px 0;">
+          <h3 class="{{ .Labels.severity }}">{{ .Annotations.summary }}</h3>
+          <p><strong>Description:</strong> {{ .Annotations.description }}</p>
+          <p><strong>Service:</strong> {{ .Labels.service }}</p>
+          <p><strong>Component:</strong> {{ .Labels.component }}</p>
+          <p><strong>Time:</strong> {{ .StartsAt }}</p>
+          {{ if .Annotations.runbook_url }}
+          <p><a href="{{ .Annotations.runbook_url }}">📖 Runbook</a></p>
+          {{ end }}
+        </div>
+        {{ end }}
+      </body>
+      </html>
+
+  slack_configs:
+  - api_url: '{{ .SlackAPIURL }}'
+    channel: '#alerts-critical'
+    title: 'CRITICAL: SaaS IDP Alert'
+    text: |
+      {{ range .Alerts }}
+      🚨 *{{ .Annotations.summary }}*
+      
+      *Description:* {{ .Annotations.description }}
+      *Service:* {{ .Labels.service }}
+      *Component:* {{ .Labels.component }}
+      *Severity:* {{ .Labels.severity }}
+      {{ if .Annotations.runbook_url }}
+      *Runbook:* <{{ .Annotations.runbook_url }}|View Runbook>
+      {{ end }}
+      {{ end }}
+    send_resolved: true
+    
+  pagerduty_configs:
+  - routing_key: 'YOUR_PAGERDUTY_INTEGRATION_KEY'
+    description: '{{ range .Alerts }}{{ .Annotations.summary }}{{ end }}'
+    severity: 'critical'
+
+# Security team notifications
+- name: 'security-team'
+  email_configs:
+  - to: 'security-team@saas-idp.com'
+    subject: 'SECURITY: SaaS IDP Alert - {{ .GroupLabels.alertname }}'
+    body: |
+      Security Alert Detected:
+      
+      {{ range .Alerts }}
+      Alert: {{ .Annotations.summary }}
+      Description: {{ .Annotations.description }}
+      Service: {{ .Labels.service }}
+      Component: {{ .Labels.component }}
+      Time: {{ .StartsAt }}
+      
+      Security Context:
+      {{ if .Labels.actor }} - Actor: {{ .Labels.actor }}{{ end }}
+      {{ if .Labels.resource }} - Resource: {{ .Labels.resource }}{{ end }}
+      {{ if .Labels.action }} - Action: {{ .Labels.action }}{{ end }}
+      
+      {{ if .Annotations.runbook_url }}
+      Runbook: {{ .Annotations.runbook_url }}
+      {{ end }}
+      {{ end }}
+      
+  slack_configs:
+  - api_url: '{{ .SlackAPIURL }}'
+    channel: '#security-alerts'
+    title: '🔒 Security Alert - SaaS IDP'
+    text: |
+      {{ range .Alerts }}
+      🔒 *Security Alert: {{ .Annotations.summary }}*
+      
+      *Description:* {{ .Annotations.description }}
+      *Service:* {{ .Labels.service }}
+      *Time:* {{ .StartsAt }}
+      {{ if .Annotations.runbook_url }}
+      *Runbook:* <{{ .Annotations.runbook_url }}|Security Runbook>
+      {{ end }}
+      {{ end }}
+
+# Plugin team notifications
+- name: 'plugin-team'
+  email_configs:
+  - to: 'plugin-team@saas-idp.com'
+    subject: 'Plugin Alert: {{ .GroupLabels.alertname }}'
+    body: |
+      Plugin System Alert:
+      
+      {{ range .Alerts }}
+      Plugin: {{ .Labels.plugin_id }}
+      Alert: {{ .Annotations.summary }}
+      Description: {{ .Annotations.description }}
+      Operation: {{ .Labels.operation }}
+      Version: {{ .Labels.version }}
+      Time: {{ .StartsAt }}
+      {{ end }}
+      
+  slack_configs:
+  - api_url: '{{ .SlackAPIURL }}'
+    channel: '#plugin-alerts'
+    title: '🔌 Plugin Alert'
+    text: |
+      {{ range .Alerts }}
+      🔌 *Plugin Alert: {{ .Labels.plugin_id }}*
+      
+      *Issue:* {{ .Annotations.summary }}
+      *Operation:* {{ .Labels.operation }}
+      *Version:* {{ .Labels.version }}
+      {{ end }}
+
+# Database team notifications
+- name: 'database-team'
+  email_configs:
+  - to: 'database-team@saas-idp.com'
+    subject: 'Database Alert: {{ .GroupLabels.alertname }}'
+    body: |
+      Database Alert:
+      
+      {{ range .Alerts }}
+      Database: {{ .Labels.database }}
+      Alert: {{ .Annotations.summary }}
+      Description: {{ .Annotations.description }}
+      Time: {{ .StartsAt }}
+      {{ end }}
+      
+  slack_configs:
+  - api_url: '{{ .SlackAPIURL }}'
+    channel: '#database-alerts'
+    title: '🗃️ Database Alert'
+    text: |
+      {{ range .Alerts }}
+      🗃️ *Database Alert: {{ .Labels.database }}*
+      
+      *Issue:* {{ .Annotations.summary }}
+      *Description:* {{ .Annotations.description }}
+      {{ end }}
+
+# Business metrics (low priority)
+- name: 'business-metrics'
+  email_configs:
+  - to: 'product-team@saas-idp.com'
+    subject: 'Business Metrics Alert: {{ .GroupLabels.alertname }}'
+    body: |
+      Business Metrics Alert:
+      
+      {{ range .Alerts }}
+      Metric: {{ .Annotations.summary }}
+      Description: {{ .Annotations.description }}
+      Time: {{ .StartsAt }}
+      {{ end }}
+      
+  slack_configs:
+  - api_url: '{{ .SlackAPIURL }}'
+    channel: '#business-metrics'
+    title: '📊 Business Metrics Alert'
+    text: |
+      {{ range .Alerts }}
+      📊 *Business Alert: {{ .Annotations.summary }}*
+      
+      {{ .Annotations.description }}
+      {{ end }}
+
+# Webhook for external integrations
+- name: 'webhook-integration'
+  webhook_configs:
+  - url: 'https://your-external-system.com/webhook'
+    send_resolved: true
+    http_config:
+      basic_auth:
+        username: 'webhook_user'
+        password: 'webhook_password'

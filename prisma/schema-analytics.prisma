@@ -1,0 +1,413 @@
+// Analytics and Usage Tracking Schema Extension
+// Additional models for comprehensive tenant analytics
+
+// Usage Metrics Storage
+model UsageMetric {
+  id                String              @id @default(cuid())
+  tenantId          String
+  metricType        MetricType
+  value             Float
+  unit              String              @default("count")
+  metadata          Json?
+  aggregationPeriod AggregationPeriod   @default(HOURLY)
+  timestamp         DateTime            @default(now())
+  createdAt         DateTime            @default(now())
+
+  // Relations
+  organization      Organization        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@map("usage_metrics")
+  @@index([tenantId, metricType, timestamp])
+  @@index([timestamp])
+  @@index([metricType, timestamp])
+}
+
+// Real-time Aggregations for Performance
+model HourlyAggregation {
+  id           String      @id @default(cuid())
+  tenantId     String
+  metricType   MetricType
+  hourKey      String      // Format: YYYY-MM-DD-HH
+  value        Float
+  count        Int         @default(1)
+  minValue     Float?
+  maxValue     Float?
+  avgValue     Float?
+  timestamp    DateTime
+  lastUpdated  DateTime    @updatedAt
+
+  // Relations
+  organization Organization @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, metricType, hourKey], name: "tenantId_metricType_hourKey")
+  @@map("hourly_aggregations")
+  @@index([tenantId, timestamp])
+  @@index([metricType, timestamp])
+}
+
+// Daily Aggregations for Trends
+model DailyAggregation {
+  id           String      @id @default(cuid())
+  tenantId     String
+  metricType   MetricType
+  date         DateTime    // Date only (start of day)
+  value        Float
+  count        Int         @default(1)
+  minValue     Float?
+  maxValue     Float?
+  avgValue     Float?
+  percentile95 Float?
+  growthRate   Float?      // Compared to previous period
+  
+  // Relations
+  organization Organization @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, metricType, date])
+  @@map("daily_aggregations")
+  @@index([tenantId, date])
+  @@index([metricType, date])
+}
+
+// User Session Tracking
+model UserSession {
+  id              String      @id @default(cuid())
+  userId          String
+  tenantId        String
+  sessionId       String      @unique
+  startTime       DateTime    @default(now())
+  endTime         DateTime?
+  duration        Int?        // in seconds
+  pageViews       Int         @default(0)
+  actions         Int         @default(0)
+  ipAddress       String?
+  userAgent       String?
+  referrer        String?
+  entryPage       String?
+  exitPage        String?
+  isActive        Boolean     @default(true)
+
+  // Relations
+  user            User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization    Organization @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  pageViews       PageView[]
+  userActions     UserAction[]
+
+  @@map("user_sessions")
+  @@index([tenantId, startTime])
+  @@index([userId, startTime])
+  @@index([sessionId])
+}
+
+// Page View Tracking
+model PageView {
+  id          String      @id @default(cuid())
+  sessionId   String
+  tenantId    String
+  userId      String?
+  path        String
+  title       String?
+  loadTime    Int?        // in milliseconds
+  timestamp   DateTime    @default(now())
+  referrer    String?
+  exitTime    DateTime?
+  timeOnPage  Int?        // in seconds
+
+  // Relations
+  session     UserSession @relation(fields: [sessionId], references: [sessionId], onDelete: Cascade)
+  organization Organization @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user        User?       @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@map("page_views")
+  @@index([tenantId, timestamp])
+  @@index([sessionId, timestamp])
+  @@index([path, timestamp])
+}
+
+// User Action Tracking
+model UserAction {
+  id          String      @id @default(cuid())
+  sessionId   String
+  tenantId    String
+  userId      String?
+  action      String      // click, hover, submit, etc.
+  target      String?     // element identifier
+  page        String?     // current page
+  metadata    Json?       // additional action data
+  timestamp   DateTime    @default(now())
+
+  // Relations
+  session     UserSession @relation(fields: [sessionId], references: [sessionId], onDelete: Cascade)
+  organization Organization @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user        User?       @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@map("user_actions")
+  @@index([tenantId, timestamp])
+  @@index([sessionId, timestamp])
+  @@index([action, timestamp])
+}
+
+// Feature Usage Tracking
+model FeatureUsage {
+  id              String      @id @default(cuid())
+  tenantId        String
+  userId          String?
+  feature         String      // feature identifier
+  action          String?     // specific action within feature
+  usageCount      Int         @default(1)
+  lastUsed        DateTime    @default(now())
+  firstUsed       DateTime    @default(now())
+  totalDuration   Int?        // total time spent in seconds
+  metadata        Json?
+
+  // Relations
+  organization    Organization @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user            User?       @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@unique([tenantId, userId, feature])
+  @@map("feature_usage")
+  @@index([tenantId, feature])
+  @@index([feature, lastUsed])
+}
+
+// Error Tracking
+model ErrorLog {
+  id          String      @id @default(cuid())
+  tenantId    String?
+  userId      String?
+  sessionId   String?
+  errorType   String      // javascript, api, system, etc.
+  message     String
+  stack       String?
+  url         String?
+  lineNumber  Int?
+  columnNumber Int?
+  userAgent   String?
+  timestamp   DateTime    @default(now())
+  resolved    Boolean     @default(false)
+  metadata    Json?
+
+  // Relations
+  organization Organization? @relation(fields: [tenantId], references: [id], onDelete: SetNull)
+  user        User?         @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@map("error_logs")
+  @@index([tenantId, timestamp])
+  @@index([errorType, timestamp])
+  @@index([resolved, timestamp])
+}
+
+// API Usage Tracking
+model ApiUsage {
+  id              String      @id @default(cuid())
+  tenantId        String
+  userId          String?
+  endpoint        String
+  method          String      // GET, POST, PUT, DELETE
+  statusCode      Int
+  responseTime    Int         // in milliseconds
+  requestSize     Int?        // in bytes
+  responseSize    Int?        // in bytes
+  userAgent       String?
+  ipAddress       String?
+  timestamp       DateTime    @default(now())
+  metadata        Json?       // additional request data
+
+  // Relations
+  organization    Organization @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user            User?       @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@map("api_usage")
+  @@index([tenantId, timestamp])
+  @@index([endpoint, timestamp])
+  @@index([statusCode, timestamp])
+}
+
+// Plugin Analytics
+model PluginAnalytics {
+  id              String      @id @default(cuid())
+  tenantId        String
+  pluginId        String
+  userId          String?
+  action          String      // install, uninstall, enable, disable, configure
+  version         String?
+  duration        Int?        // for operations like install
+  success         Boolean     @default(true)
+  errorMessage    String?
+  metadata        Json?
+  timestamp       DateTime    @default(now())
+
+  // Relations
+  organization    Organization @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  plugin          Plugin      @relation(fields: [pluginId], references: [id], onDelete: Cascade)
+  user            User?       @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@map("plugin_analytics")
+  @@index([tenantId, timestamp])
+  @@index([pluginId, action, timestamp])
+  @@index([action, timestamp])
+}
+
+// Performance Metrics
+model PerformanceMetric {
+  id              String      @id @default(cuid())
+  tenantId        String?
+  metricName      String      // page_load, api_response, plugin_init, etc.
+  value           Float       // time in milliseconds typically
+  percentile      Float?      // if this is a percentile measurement
+  sampleSize      Int?        // number of samples for this metric
+  url             String?     // associated URL if applicable
+  userAgent       String?
+  timestamp       DateTime    @default(now())
+  metadata        Json?
+
+  // Relations
+  organization    Organization? @relation(fields: [tenantId], references: [id], onDelete: SetNull)
+
+  @@map("performance_metrics")
+  @@index([tenantId, timestamp])
+  @@index([metricName, timestamp])
+}
+
+// Business Metrics
+model BusinessMetric {
+  id              String      @id @default(cuid())
+  tenantId        String
+  metricType      BusinessMetricType
+  value           Float
+  currency        String?     @default("USD")
+  period          DateTime    // the period this metric represents
+  metadata        Json?
+  timestamp       DateTime    @default(now())
+
+  // Relations
+  organization    Organization @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, metricType, period])
+  @@map("business_metrics")
+  @@index([tenantId, period])
+  @@index([metricType, period])
+}
+
+// Analytics Reports
+model AnalyticsReport {
+  id              String      @id @default(cuid())
+  tenantId        String
+  reportType      ReportType
+  title           String
+  description     String?
+  parameters      Json        // report generation parameters
+  data            Json        // the actual report data
+  generatedBy     String?     // user who generated the report
+  generatedAt     DateTime    @default(now())
+  isScheduled     Boolean     @default(false)
+  scheduleConfig  Json?       // cron-like schedule configuration
+  isPublic        Boolean     @default(false)
+  expiresAt       DateTime?
+
+  // Relations
+  organization    Organization @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  generator       User?       @relation(fields: [generatedBy], references: [id], onDelete: SetNull)
+
+  @@map("analytics_reports")
+  @@index([tenantId, reportType, generatedAt])
+  @@index([generatedAt])
+}
+
+// Enums for Analytics
+enum MetricType {
+  API_CALLS
+  STORAGE_GB
+  BANDWIDTH_GB
+  ACTIVE_USERS
+  PLUGIN_INSTALLS
+  LOGIN_COUNT
+  ERROR_COUNT
+  RESPONSE_TIME
+  FEATURE_USAGE
+  INTEGRATION_CALLS
+  WEBHOOK_DELIVERIES
+  SUPPORT_TICKETS
+  REVENUE
+  SESSION_DURATION
+  PAGE_VIEWS
+  USER_ACTIONS
+  LOAD_TIME
+}
+
+enum AggregationPeriod {
+  REAL_TIME
+  HOURLY
+  DAILY
+  WEEKLY
+  MONTHLY
+  YEARLY
+}
+
+enum BusinessMetricType {
+  MONTHLY_RECURRING_REVENUE
+  ANNUAL_RECURRING_REVENUE
+  CUSTOMER_LIFETIME_VALUE
+  CHURN_RATE
+  CONVERSION_RATE
+  CUSTOMER_ACQUISITION_COST
+  NET_PROMOTER_SCORE
+  SUPPORT_SATISFACTION
+  FEATURE_ADOPTION_RATE
+  RETENTION_RATE
+}
+
+enum ReportType {
+  USAGE_SUMMARY
+  PERFORMANCE_ANALYSIS
+  BUSINESS_INSIGHTS
+  USER_BEHAVIOR
+  PLUGIN_ANALYTICS
+  SECURITY_AUDIT
+  COMPLIANCE_REPORT
+  CUSTOM_DASHBOARD
+}
+
+// Add relations to existing models
+
+// Add to User model
+model User {
+  // ... existing fields ...
+  
+  // Analytics relations
+  sessions        UserSession[]
+  pageViews       PageView[]
+  userActions     UserAction[]
+  featureUsage    FeatureUsage[]
+  errorLogs       ErrorLog[]
+  apiUsage        ApiUsage[]
+  pluginAnalytics PluginAnalytics[]
+  generatedReports AnalyticsReport[]
+}
+
+// Add to Organization model  
+model Organization {
+  // ... existing fields ...
+  
+  // Analytics relations
+  usageMetrics        UsageMetric[]
+  hourlyAggregations  HourlyAggregation[]
+  dailyAggregations   DailyAggregation[]
+  userSessions        UserSession[]
+  pageViews           PageView[]
+  userActions         UserAction[]
+  featureUsage        FeatureUsage[]
+  errorLogs           ErrorLog[]
+  apiUsage            ApiUsage[]
+  pluginAnalytics     PluginAnalytics[]
+  performanceMetrics  PerformanceMetric[]
+  businessMetrics     BusinessMetric[]
+  analyticsReports    AnalyticsReport[]
+}
+
+// Add to Plugin model
+model Plugin {
+  // ... existing fields ...
+  
+  // Analytics relations
+  analytics       PluginAnalytics[]
+}

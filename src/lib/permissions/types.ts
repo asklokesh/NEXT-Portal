@@ -130,6 +130,7 @@ export interface PermissionContext {
   entityOwner?: string;
   entityMetadata?: Record<string, any>;
   requestMetadata?: Record<string, any>;
+  roles?: string[]; // Added for Edge Runtime permission checks
 }
 
 // Permission Decision

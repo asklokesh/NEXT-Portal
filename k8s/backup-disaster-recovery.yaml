@@ -1,0 +1,587 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: backup-config
+  namespace: saas-idp-production
+data:
+  backup-retention.yaml: |
+    # Backup retention policies
+    retention_policies:
+      daily:
+        keep: 7
+        schedule: "0 2 * * *"  # 2 AM daily
+      weekly:
+        keep: 4
+        schedule: "0 3 * * 0"  # 3 AM Sunday
+      monthly:
+        keep: 12
+        schedule: "0 4 1 * *"  # 4 AM 1st of month
+      
+    # Recovery objectives
+    recovery_objectives:
+      rpo: 1_hour  # Recovery Point Objective
+      rto: 4_hours # Recovery Time Objective
+      
+    # Backup encryption
+    encryption:
+      enabled: true
+      algorithm: "AES-256-GCM"
+      key_rotation_days: 90
+
+  postgres-backup-script.sh: |
+    #!/bin/bash
+    set -e
+    
+    # Configuration
+    TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+    BACKUP_DIR="/backups/postgres"
+    S3_BUCKET="saas-idp-backups"
+    RETENTION_DAYS=30
+    
+    # Database connection details
+    DB_HOST="postgres-primary"
+    DB_PORT="5432"
+    DB_NAME="saas_idp"
+    DB_USER="idp_user"
+    
+    echo "Starting PostgreSQL backup at $(date)"
+    
+    # Create backup directory
+    mkdir -p ${BACKUP_DIR}
+    
+    # Full database backup
+    BACKUP_FILE="${BACKUP_DIR}/postgres_full_${TIMESTAMP}.sql.gz"
+    echo "Creating full backup: ${BACKUP_FILE}"
+    
+    PGPASSWORD=$POSTGRES_PASSWORD pg_dump \
+      -h ${DB_HOST} \
+      -p ${DB_PORT} \
+      -U ${DB_USER} \
+      -d ${DB_NAME} \
+      --verbose \
+      --clean \
+      --if-exists \
+      --create \
+      --format=custom \
+      --compress=9 \
+      --no-password \
+      | gzip > ${BACKUP_FILE}
+    
+    # Verify backup
+    if [ -f "${BACKUP_FILE}" ] && [ -s "${BACKUP_FILE}" ]; then
+      echo "Backup created successfully: $(ls -lh ${BACKUP_FILE})"
+      
+      # Upload to S3
+      aws s3 cp ${BACKUP_FILE} s3://${S3_BUCKET}/postgres/$(basename ${BACKUP_FILE}) \
+        --storage-class STANDARD_IA \
+        --server-side-encryption AES256
+      
+      if [ $? -eq 0 ]; then
+        echo "Backup uploaded to S3 successfully"
+        rm -f ${BACKUP_FILE}  # Remove local copy after successful upload
+      else
+        echo "Failed to upload backup to S3"
+        exit 1
+      fi
+    else
+      echo "Backup failed or file is empty"
+      exit 1
+    fi
+    
+    # Schema-only backup for faster recovery testing
+    SCHEMA_FILE="${BACKUP_DIR}/postgres_schema_${TIMESTAMP}.sql"
+    PGPASSWORD=$POSTGRES_PASSWORD pg_dump \
+      -h ${DB_HOST} \
+      -p ${DB_PORT} \
+      -U ${DB_USER} \
+      -d ${DB_NAME} \
+      --schema-only \
+      --no-password > ${SCHEMA_FILE}
+    
+    # Upload schema backup
+    aws s3 cp ${SCHEMA_FILE} s3://${S3_BUCKET}/postgres/schemas/$(basename ${SCHEMA_FILE}) \
+      --server-side-encryption AES256
+    rm -f ${SCHEMA_FILE}
+    
+    # Cleanup old local backups
+    find ${BACKUP_DIR} -name "postgres_*.sql.gz" -mtime +${RETENTION_DAYS} -delete
+    
+    echo "PostgreSQL backup completed at $(date)"
+
+  redis-backup-script.sh: |
+    #!/bin/bash
+    set -e
+    
+    TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+    BACKUP_DIR="/backups/redis"
+    S3_BUCKET="saas-idp-backups"
+    
+    echo "Starting Redis backup at $(date)"
+    
+    # Create backup directory
+    mkdir -p ${BACKUP_DIR}
+    
+    # Create RDB snapshot
+    BACKUP_FILE="${BACKUP_DIR}/redis_${TIMESTAMP}.rdb"
+    
+    # Connect to Redis and create backup
+    redis-cli -h redis-master -p 6379 --rdb ${BACKUP_FILE}
+    
+    if [ -f "${BACKUP_FILE}" ] && [ -s "${BACKUP_FILE}" ]; then
+      echo "Redis backup created: $(ls -lh ${BACKUP_FILE})"
+      
+      # Compress backup
+      gzip ${BACKUP_FILE}
+      COMPRESSED_FILE="${BACKUP_FILE}.gz"
+      
+      # Upload to S3
+      aws s3 cp ${COMPRESSED_FILE} s3://${S3_BUCKET}/redis/$(basename ${COMPRESSED_FILE}) \
+        --storage-class STANDARD_IA \
+        --server-side-encryption AES256
+      
+      if [ $? -eq 0 ]; then
+        echo "Redis backup uploaded to S3 successfully"
+        rm -f ${COMPRESSED_FILE}
+      else
+        echo "Failed to upload Redis backup to S3"
+        exit 1
+      fi
+    else
+      echo "Redis backup failed"
+      exit 1
+    fi
+    
+    echo "Redis backup completed at $(date)"
+
+  application-backup-script.sh: |
+    #!/bin/bash
+    set -e
+    
+    TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+    BACKUP_DIR="/backups/application"
+    S3_BUCKET="saas-idp-backups"
+    
+    echo "Starting application data backup at $(date)"
+    
+    # Create backup directory
+    mkdir -p ${BACKUP_DIR}
+    
+    # Backup uploaded files
+    if [ -d "/app/uploads" ]; then
+      UPLOADS_BACKUP="${BACKUP_DIR}/uploads_${TIMESTAMP}.tar.gz"
+      tar -czf ${UPLOADS_BACKUP} -C /app uploads/
+      
+      aws s3 cp ${UPLOADS_BACKUP} s3://${S3_BUCKET}/application/uploads/$(basename ${UPLOADS_BACKUP}) \
+        --storage-class STANDARD_IA \
+        --server-side-encryption AES256
+      rm -f ${UPLOADS_BACKUP}
+      
+      echo "Uploads backup completed"
+    fi
+    
+    # Backup configuration files
+    CONFIG_BACKUP="${BACKUP_DIR}/config_${TIMESTAMP}.tar.gz"
+    kubectl get configmaps -n saas-idp-production -o yaml > ${BACKUP_DIR}/configmaps.yaml
+    kubectl get secrets -n saas-idp-production -o yaml > ${BACKUP_DIR}/secrets.yaml
+    tar -czf ${CONFIG_BACKUP} -C ${BACKUP_DIR} configmaps.yaml secrets.yaml
+    
+    aws s3 cp ${CONFIG_BACKUP} s3://${S3_BUCKET}/application/config/$(basename ${CONFIG_BACKUP}) \
+      --server-side-encryption AES256
+    rm -f ${CONFIG_BACKUP} ${BACKUP_DIR}/configmaps.yaml ${BACKUP_DIR}/secrets.yaml
+    
+    echo "Configuration backup completed"
+    echo "Application backup completed at $(date)"
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: postgres-backup
+  namespace: saas-idp-production
+spec:
+  schedule: "0 2 * * *"  # Daily at 2 AM
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 1
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          serviceAccountName: backup-service-account
+          containers:
+          - name: postgres-backup
+            image: postgres:15-alpine
+            command:
+            - /bin/bash
+            - /scripts/postgres-backup-script.sh
+            env:
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secret
+                  key: POSTGRES_PASSWORD
+            - name: AWS_DEFAULT_REGION
+              value: "us-east-1"
+            volumeMounts:
+            - name: backup-scripts
+              mountPath: /scripts
+            - name: backup-storage
+              mountPath: /backups
+            resources:
+              requests:
+                memory: "512Mi"
+                cpu: "250m"
+              limits:
+                memory: "2Gi"
+                cpu: "1000m"
+          volumes:
+          - name: backup-scripts
+            configMap:
+              name: backup-config
+              defaultMode: 0755
+          - name: backup-storage
+            persistentVolumeClaim:
+              claimName: backup-storage-pvc
+          restartPolicy: OnFailure
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: redis-backup
+  namespace: saas-idp-production
+spec:
+  schedule: "30 2 * * *"  # Daily at 2:30 AM
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          serviceAccountName: backup-service-account
+          containers:
+          - name: redis-backup
+            image: redis:7-alpine
+            command:
+            - /bin/bash
+            - /scripts/redis-backup-script.sh
+            env:
+            - name: AWS_DEFAULT_REGION
+              value: "us-east-1"
+            volumeMounts:
+            - name: backup-scripts
+              mountPath: /scripts
+            - name: backup-storage
+              mountPath: /backups
+            resources:
+              requests:
+                memory: "256Mi"
+                cpu: "100m"
+              limits:
+                memory: "1Gi"
+                cpu: "500m"
+          volumes:
+          - name: backup-scripts
+            configMap:
+              name: backup-config
+              defaultMode: 0755
+          - name: backup-storage
+            persistentVolumeClaim:
+              claimName: backup-storage-pvc
+          restartPolicy: OnFailure
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: application-backup
+  namespace: saas-idp-production
+spec:
+  schedule: "0 3 * * *"  # Daily at 3 AM
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          serviceAccountName: backup-service-account
+          containers:
+          - name: application-backup
+            image: bitnami/kubectl:latest
+            command:
+            - /bin/bash
+            - /scripts/application-backup-script.sh
+            env:
+            - name: AWS_DEFAULT_REGION
+              value: "us-east-1"
+            volumeMounts:
+            - name: backup-scripts
+              mountPath: /scripts
+            - name: backup-storage
+              mountPath: /backups
+            - name: uploads-volume
+              mountPath: /app/uploads
+            resources:
+              requests:
+                memory: "256Mi"
+                cpu: "100m"
+              limits:
+                memory: "1Gi"
+                cpu: "500m"
+          volumes:
+          - name: backup-scripts
+            configMap:
+              name: backup-config
+              defaultMode: 0755
+          - name: backup-storage
+            persistentVolumeClaim:
+              claimName: backup-storage-pvc
+          - name: uploads-volume
+            persistentVolumeClaim:
+              claimName: uploads-pvc
+          restartPolicy: OnFailure
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: backup-storage-pvc
+  namespace: saas-idp-production
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 50Gi
+  storageClassName: gp3
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: backup-service-account
+  namespace: saas-idp-production
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT-ID:role/saas-idp-backup-role
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  namespace: saas-idp-production
+  name: backup-role
+rules:
+- apiGroups: [""]
+  resources: ["configmaps", "secrets"]
+  verbs: ["get", "list"]
+- apiGroups: [""]
+  resources: ["persistentvolumes", "persistentvolumeclaims"]
+  verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: backup-rolebinding
+  namespace: saas-idp-production
+subjects:
+- kind: ServiceAccount
+  name: backup-service-account
+  namespace: saas-idp-production
+roleRef:
+  kind: Role
+  name: backup-role
+  apiGroup: rbac.authorization.k8s.io
+---
+# Disaster Recovery Testing Job
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: disaster-recovery-test
+  namespace: saas-idp-production
+spec:
+  schedule: "0 4 * * 6"  # Weekly on Saturday at 4 AM
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          serviceAccountName: backup-service-account
+          containers:
+          - name: dr-test
+            image: postgres:15-alpine
+            command:
+            - /bin/bash
+            - -c
+            - |
+              set -e
+              echo "Starting disaster recovery test at $(date)"
+              
+              # Get latest backup from S3
+              LATEST_BACKUP=$(aws s3 ls s3://saas-idp-backups/postgres/ | sort | tail -n 1 | awk '{print $4}')
+              echo "Testing restore of backup: $LATEST_BACKUP"
+              
+              # Download backup
+              aws s3 cp s3://saas-idp-backups/postgres/$LATEST_BACKUP /tmp/test_backup.sql.gz
+              
+              # Verify backup integrity
+              gunzip -t /tmp/test_backup.sql.gz
+              if [ $? -eq 0 ]; then
+                echo "Backup integrity check: PASSED"
+              else
+                echo "Backup integrity check: FAILED"
+                exit 1
+              fi
+              
+              # Test restore to temporary database (schema only for speed)
+              echo "Testing schema restore..."
+              gunzip -c /tmp/test_backup.sql.gz | head -n 1000 > /tmp/test_schema.sql
+              
+              # Create test database
+              PGPASSWORD=$POSTGRES_PASSWORD createdb -h postgres-primary -U idp_user test_restore_db
+              
+              # Restore schema (first 1000 lines for quick test)
+              PGPASSWORD=$POSTGRES_PASSWORD psql -h postgres-primary -U idp_user -d test_restore_db < /tmp/test_schema.sql
+              
+              # Verify restore
+              TABLE_COUNT=$(PGPASSWORD=$POSTGRES_PASSWORD psql -h postgres-primary -U idp_user -d test_restore_db -t -c "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public';" | xargs)
+              
+              if [ "$TABLE_COUNT" -gt 0 ]; then
+                echo "Disaster recovery test: PASSED (Found $TABLE_COUNT tables)"
+                
+                # Send success notification
+                curl -X POST -H 'Content-type: application/json' \
+                  --data '{"text":"✅ Disaster Recovery Test PASSED - Backup restore verified successfully"}' \
+                  $SLACK_WEBHOOK_URL
+              else
+                echo "Disaster recovery test: FAILED (No tables found)"
+                
+                # Send failure notification
+                curl -X POST -H 'Content-type: application/json' \
+                  --data '{"text":"🚨 Disaster Recovery Test FAILED - Backup restore failed"}' \
+                  $SLACK_WEBHOOK_URL
+                
+                exit 1
+              fi
+              
+              # Cleanup test database
+              PGPASSWORD=$POSTGRES_PASSWORD dropdb -h postgres-primary -U idp_user test_restore_db
+              rm -f /tmp/test_backup.sql.gz /tmp/test_schema.sql
+              
+              echo "Disaster recovery test completed at $(date)"
+            env:
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secret
+                  key: POSTGRES_PASSWORD
+            - name: SLACK_WEBHOOK_URL
+              valueFrom:
+                secretKeyRef:
+                  name: saas-idp-secrets
+                  key: SLACK_WEBHOOK_URL
+            - name: AWS_DEFAULT_REGION
+              value: "us-east-1"
+            resources:
+              requests:
+                memory: "512Mi"
+                cpu: "250m"
+              limits:
+                memory: "1Gi"
+                cpu: "500m"
+          restartPolicy: OnFailure
+---
+# Multi-region replication setup
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: replication-config
+  namespace: saas-idp-production
+data:
+  setup-cross-region-replication.sh: |
+    #!/bin/bash
+    # Cross-region replication setup for disaster recovery
+    
+    # Primary region: us-east-1
+    # DR region: us-west-2
+    
+    echo "Setting up cross-region replication..."
+    
+    # S3 Cross-Region Replication for backups
+    aws s3api put-bucket-replication \
+      --bucket saas-idp-backups \
+      --replication-configuration '{
+        "Role": "arn:aws:iam::ACCOUNT-ID:role/replication-role",
+        "Rules": [{
+          "ID": "saas-idp-dr-replication",
+          "Status": "Enabled",
+          "Priority": 1,
+          "Filter": {"Prefix": ""},
+          "Destination": {
+            "Bucket": "arn:aws:s3:::saas-idp-backups-dr",
+            "StorageClass": "STANDARD_IA"
+          }
+        }]
+      }'
+    
+    # RDS Cross-Region Read Replica setup
+    aws rds create-db-instance-read-replica \
+      --db-instance-identifier saas-idp-postgres-dr \
+      --source-db-instance-identifier saas-idp-postgres-primary \
+      --db-instance-class db.t3.large \
+      --availability-zone us-west-2a \
+      --auto-minor-version-upgrade \
+      --publicly-accessible false \
+      --multi-az true
+    
+    echo "Cross-region replication setup completed"
+
+  failover-procedure.sh: |
+    #!/bin/bash
+    # Automated failover procedure
+    
+    set -e
+    
+    echo "EMERGENCY FAILOVER INITIATED at $(date)"
+    
+    # Step 1: Promote read replica to primary
+    echo "Promoting DR database to primary..."
+    aws rds promote-read-replica \
+      --db-instance-identifier saas-idp-postgres-dr \
+      --region us-west-2
+    
+    # Wait for promotion to complete
+    echo "Waiting for database promotion..."
+    aws rds wait db-instance-available \
+      --db-instance-identifier saas-idp-postgres-dr \
+      --region us-west-2
+    
+    # Step 2: Update DNS to point to DR region
+    echo "Updating DNS records..."
+    aws route53 change-resource-record-sets \
+      --hosted-zone-id Z123456789 \
+      --change-batch '{
+        "Changes": [{
+          "Action": "UPSERT",
+          "ResourceRecordSet": {
+            "Name": "api.your-domain.com",
+            "Type": "CNAME",
+            "TTL": 60,
+            "ResourceRecords": [{"Value": "saas-idp-dr-alb.us-west-2.elb.amazonaws.com"}]
+          }
+        }]
+      }'
+    
+    # Step 3: Start DR application cluster
+    echo "Starting DR application cluster..."
+    kubectl apply -f /manifests/dr-deployment.yaml --context=us-west-2
+    
+    # Step 4: Verify application health
+    echo "Verifying application health in DR region..."
+    sleep 60  # Wait for pods to start
+    
+    HEALTH_CHECK=$(curl -s -o /dev/null -w "%{http_code}" https://api.your-domain.com/health)
+    if [ "$HEALTH_CHECK" = "200" ]; then
+      echo "✅ FAILOVER SUCCESSFUL - Application is healthy in DR region"
+      
+      # Send success notification
+      curl -X POST -H 'Content-type: application/json' \
+        --data '{"text":"🚨 EMERGENCY FAILOVER COMPLETED SUCCESSFULLY\nApplication is now running in DR region (us-west-2)\nTime: '$(date)'"}' \
+        $SLACK_WEBHOOK_URL
+    else
+      echo "❌ FAILOVER FAILED - Application health check failed"
+      exit 1
+    fi
+    
+    echo "Failover procedure completed at $(date)"

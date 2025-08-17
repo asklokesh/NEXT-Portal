@@ -6,6 +6,10 @@ let pluginsCache: any = null;
 let cacheTime = 0;
 const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
 
+// Clear cache to force fresh data with deduplication fix
+pluginsCache = null;
+cacheTime = 0;
+
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
@@ -90,16 +94,32 @@ async function fetchAllBackstagePlugins() {
   }
   
   // Add curated premium plugins from Spotify, RoadieHQ, etc.
-  plugins.push(...getCuratedPremiumPlugins());
+  // But check for duplicates first
+  const curatedPlugins = getCuratedPremiumPlugins();
+  for (const curatedPlugin of curatedPlugins) {
+    // Only add if not already exists
+    if (!plugins.find(p => p.id === curatedPlugin.id)) {
+      plugins.push(curatedPlugin);
+    }
+  }
+  
+  // Final deduplication pass to ensure no duplicates
+  const uniquePlugins = plugins.reduce((acc, current) => {
+    const existing = acc.find(item => item.id === current.id);
+    if (!existing) {
+      acc.push(current);
+    }
+    return acc;
+  }, []);
   
   // Sort by popularity (downloads + stars)
-  plugins.sort((a, b) => {
+  uniquePlugins.sort((a, b) => {
     const scoreA = (a.downloads || 0) + (a.stars || 0) * 10;
     const scoreB = (b.downloads || 0) + (b.stars || 0) * 10;
     return scoreB - scoreA;
   });
   
-  return plugins;
+  return uniquePlugins;
 }
 
 function transformNpmPackageToPlugin(npmPackage: any) {

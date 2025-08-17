@@ -1,0 +1,189 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: backstage-plugins
+  namespace: backstage
+data:
+  plugins.json: |
+    {
+      "installed": [],
+      "pending": [],
+      "failed": []
+    }
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: plugin-installer-config
+  namespace: backstage
+data:
+  config.yaml: |
+    mode: production
+    backstageRoot: /app
+    packagesPath: /app/packages
+    dynamicPluginsPath: /dynamic-plugins
+    artifactRepository: s3://backstage-artifacts/plugins
+    npmRegistry: https://registry.npmjs.org
+    securityScanning:
+      enabled: true
+      provider: trivy
+    deployment:
+      strategy: rolling
+      maxSurge: 1
+      maxUnavailable: 0
+
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: plugin-installer
+  namespace: backstage
+spec:
+  template:
+    spec:
+      serviceAccountName: backstage-plugin-installer
+      containers:
+      - name: installer
+        image: node:18-alpine
+        env:
+        - name: PLUGIN_NAME
+          value: "$(PLUGIN_NAME)"
+        - name: PLUGIN_VERSION
+          value: "$(PLUGIN_VERSION)"
+        - name: BACKSTAGE_NAMESPACE
+          value: "backstage"
+        - name: AWS_REGION
+          value: "us-west-2"
+        volumeMounts:
+        - name: plugins-config
+          mountPath: /config
+        - name: kube-config
+          mountPath: /root/.kube
+        - name: shared-plugins
+          mountPath: /plugins
+        command:
+        - sh
+        - -c
+        - |
+          #!/bin/sh
+          set -e
+          
+          echo "Installing plugin: $PLUGIN_NAME@$PLUGIN_VERSION"
+          
+          # 1. Download plugin package
+          npm pack $PLUGIN_NAME@$PLUGIN_VERSION
+          
+          # 2. Extract and validate
+          tar -xzf *.tgz
+          cd package
+          
+          # 3. Security scan
+          npm audit --json > /tmp/audit.json
+          
+          # 4. Copy to shared volume
+          cp -r . /plugins/$PLUGIN_NAME
+          
+          # 5. Update ConfigMap
+          kubectl patch configmap backstage-plugins \
+            -n backstage \
+            --type merge \
+            -p '{"data":{"'$PLUGIN_NAME'":"'$PLUGIN_VERSION'"}}'
+          
+          # 6. Trigger Backstage restart
+          kubectl rollout restart deployment/backstage -n backstage
+          
+          echo "Plugin installation complete"
+      volumes:
+      - name: plugins-config
+        configMap:
+          name: plugin-installer-config
+      - name: kube-config
+        secret:
+          secretName: kubeconfig
+      - name: shared-plugins
+        persistentVolumeClaim:
+          claimName: backstage-plugins-pvc
+      restartPolicy: OnFailure
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: backstage-plugin-installer
+  namespace: backstage
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: plugin-installer
+  namespace: backstage
+rules:
+- apiGroups: [""]
+  resources: ["configmaps"]
+  verbs: ["get", "list", "patch", "update"]
+- apiGroups: ["apps"]
+  resources: ["deployments"]
+  verbs: ["get", "patch"]
+- apiGroups: ["apps"]
+  resources: ["deployments/scale"]
+  verbs: ["patch"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: plugin-installer
+  namespace: backstage
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: plugin-installer
+subjects:
+- kind: ServiceAccount
+  name: backstage-plugin-installer
+  namespace: backstage
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: backstage-plugins-pvc
+  namespace: backstage
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: efs-sc  # For EKS with EFS
+  resources:
+    requests:
+      storage: 10Gi
+
+---
+# CronJob for plugin health checks
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: plugin-health-checker
+  namespace: backstage
+spec:
+  schedule: "*/5 * * * *"  # Every 5 minutes
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          serviceAccountName: backstage-plugin-installer
+          containers:
+          - name: health-checker
+            image: curlimages/curl:latest
+            command:
+            - sh
+            - -c
+            - |
+              # Check health of each installed plugin
+              kubectl get configmap backstage-plugins -o json | \
+              jq -r '.data | keys[]' | while read plugin; do
+                echo "Checking health of $plugin"
+                curl -s http://backstage:7007/api/plugins/$plugin/health || echo "Plugin $plugin unhealthy"
+              done
+          restartPolicy: OnFailure

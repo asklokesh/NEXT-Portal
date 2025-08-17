@@ -1,0 +1,330 @@
+# SLO (Service Level Objectives) Configuration for SaaS IDP
+# This configuration defines SLIs, SLOs, and error budgets for production monitoring
+
+groups:
+  - name: saas_idp_slo_monitoring
+    interval: 60s
+    rules:
+      # =============================================================================
+      # AVAILABILITY SLOs (99.99% uptime target)
+      # =============================================================================
+      
+      # API Service Availability SLI
+      - record: saas_idp:sli_availability:rate5m
+        expr: |
+          (
+            sum(rate(saas_idp_http_requests_total{status_code!~"5.."}[5m])) by (service)
+            /
+            sum(rate(saas_idp_http_requests_total[5m])) by (service)
+          )
+      
+      # API Service Availability SLO (99.99%)
+      - record: saas_idp:slo_availability:target
+        expr: 0.9999
+      
+      # Error Budget for Availability (0.01% errors allowed)
+      - record: saas_idp:error_budget_availability:remaining
+        expr: |
+          (
+            saas_idp:slo_availability:target
+            - 
+            (1 - saas_idp:sli_availability:rate5m)
+          ) / (1 - saas_idp:slo_availability:target)
+      
+      # Error Budget Burn Rate (1x = normal consumption, >1x = faster burn)
+      - record: saas_idp:error_budget_availability:burn_rate_1h
+        expr: |
+          (
+            1 - saas_idp:sli_availability:rate5m
+          ) / (
+            (1 - saas_idp:slo_availability:target) / (24 * 30)  # Monthly budget
+          )
+      
+      # =============================================================================
+      # LATENCY SLOs (95% of requests < 2s, 99% < 5s)
+      # =============================================================================
+      
+      # API Latency SLI - 95th percentile
+      - record: saas_idp:sli_latency_p95:rate5m
+        expr: |
+          (
+            histogram_quantile(0.95, 
+              sum(rate(saas_idp_http_request_duration_seconds_bucket[5m])) by (le, service)
+            )
+          )
+      
+      # API Latency SLI - 99th percentile  
+      - record: saas_idp:sli_latency_p99:rate5m
+        expr: |
+          (
+            histogram_quantile(0.99,
+              sum(rate(saas_idp_http_request_duration_seconds_bucket[5m])) by (le, service)
+            )
+          )
+      
+      # Fast Requests SLI (< 2 seconds for 95% of requests)
+      - record: saas_idp:sli_latency_fast:rate5m
+        expr: |
+          (
+            sum(rate(saas_idp_http_request_duration_seconds_bucket{le="2.0"}[5m])) by (service)
+            /
+            sum(rate(saas_idp_http_request_duration_seconds_count[5m])) by (service)
+          )
+      
+      # Latency SLO Target (95% of requests should be < 2s)
+      - record: saas_idp:slo_latency_fast:target
+        expr: 0.95
+      
+      # Error Budget for Latency
+      - record: saas_idp:error_budget_latency:remaining
+        expr: |
+          (
+            saas_idp:sli_latency_fast:rate5m - saas_idp:slo_latency_fast:target
+          ) / (1 - saas_idp:slo_latency_fast:target)
+      
+      # =============================================================================
+      # PLUGIN SYSTEM SLOs
+      # =============================================================================
+      
+      # Plugin Health SLI (percentage of healthy plugins)
+      - record: saas_idp:sli_plugin_health:ratio
+        expr: |
+          (
+            count(saas_idp_plugin_health_status == 1)
+            /
+            count(saas_idp_plugin_health_status)
+          )
+      
+      # Plugin Health SLO (99% of plugins should be healthy)
+      - record: saas_idp:slo_plugin_health:target
+        expr: 0.99
+      
+      # Plugin Installation Success Rate SLI
+      - record: saas_idp:sli_plugin_install_success:rate5m
+        expr: |
+          (
+            sum(rate(saas_idp_plugin_installs_total{status="success"}[5m]))
+            /
+            sum(rate(saas_idp_plugin_installs_total[5m]))
+          )
+      
+      # Plugin Installation SLO (95% success rate)
+      - record: saas_idp:slo_plugin_install:target
+        expr: 0.95
+      
+      # =============================================================================
+      # AUTHENTICATION SLOs
+      # =============================================================================
+      
+      # Authentication Success Rate SLI
+      - record: saas_idp:sli_auth_success:rate5m
+        expr: |
+          (
+            sum(rate(saas_idp_authentication_attempts_total[5m])) 
+            - 
+            sum(rate(saas_idp_authentication_failures_total[5m]))
+          ) / sum(rate(saas_idp_authentication_attempts_total[5m]))
+      
+      # Authentication SLO (99.5% success rate)
+      - record: saas_idp:slo_auth_success:target
+        expr: 0.995
+      
+      # Authentication Latency SLI (95% under 3 seconds)
+      - record: saas_idp:sli_auth_latency:rate5m
+        expr: |
+          (
+            sum(rate(saas_idp_authentication_duration_seconds_bucket{le="3.0"}[5m]))
+            /
+            sum(rate(saas_idp_authentication_duration_seconds_count[5m]))
+          )
+      
+      # Authentication Latency SLO
+      - record: saas_idp:slo_auth_latency:target
+        expr: 0.95
+      
+      # =============================================================================
+      # USER JOURNEY SLOs
+      # =============================================================================
+      
+      # Template Creation Journey Success SLI
+      - record: saas_idp:sli_template_creation_success:rate5m
+        expr: |
+          (
+            sum(rate(saas_idp_user_journey_completions_total{journey="template_creation", status="success"}[5m]))
+            /
+            sum(rate(saas_idp_user_journey_completions_total{journey="template_creation"}[5m]))
+          )
+      
+      # Template Creation SLO (90% success rate)
+      - record: saas_idp:slo_template_creation:target
+        expr: 0.90
+      
+      # Service Deployment Journey Success SLI
+      - record: saas_idp:sli_service_deployment_success:rate5m
+        expr: |
+          (
+            sum(rate(saas_idp_user_journey_completions_total{journey="service_deployment", status="success"}[5m]))
+            /
+            sum(rate(saas_idp_user_journey_completions_total{journey="service_deployment"}[5m]))
+          )
+      
+      # Service Deployment SLO (95% success rate)
+      - record: saas_idp:slo_service_deployment:target
+        expr: 0.95
+      
+      # =============================================================================
+      # BUSINESS SLOs
+      # =============================================================================
+      
+      # Customer Satisfaction SLI
+      - record: saas_idp:sli_customer_satisfaction:score
+        expr: avg(saas_idp_customer_satisfaction_score)
+      
+      # Customer Satisfaction SLO (8.0 out of 10)
+      - record: saas_idp:slo_customer_satisfaction:target
+        expr: 8.0
+      
+      # Feature Adoption Rate SLI (Template Creation)
+      - record: saas_idp:sli_feature_adoption_templates:rate1h
+        expr: |
+          (
+            sum(rate(saas_idp_feature_usage_total{feature="template_creation"}[1h]))
+            /
+            sum(rate(saas_idp_user_sessions_total[1h]))
+          )
+      
+      # Feature Adoption SLO (30% of sessions should create templates)
+      - record: saas_idp:slo_feature_adoption_templates:target
+        expr: 0.30
+
+  # =============================================================================
+  # SLO ALERTING RULES
+  # =============================================================================
+  - name: saas_idp_slo_alerts
+    interval: 60s
+    rules:
+      # FAST ERROR BUDGET BURN (2% budget consumed in 1 hour)
+      - alert: SLO_ErrorBudgetBurnRateFast
+        expr: saas_idp:error_budget_availability:burn_rate_1h > 14.4  # 2% in 1 hour
+        for: 2m
+        labels:
+          severity: critical
+          priority: P0
+          service: slo
+          component: error_budget
+          impact: sla_breach
+          burn_rate: fast
+        annotations:
+          summary: "SLO CRITICAL: Fast error budget burn detected"
+          description: "Error budget burning at {{ $value }}x normal rate. At this rate, monthly budget will be exhausted in {{ 720 / $value | humanizeDuration }}"
+          runbook_url: "https://docs.saas-idp.com/runbooks/slo-fast-burn"
+          escalation: "immediately"
+          
+      # SLOW ERROR BUDGET BURN (10% budget consumed in 6 hours) 
+      - alert: SLO_ErrorBudgetBurnRateSlow
+        expr: saas_idp:error_budget_availability:burn_rate_1h > 2.4  # 10% in 6 hours
+        for: 15m
+        labels:
+          severity: warning
+          priority: P1
+          service: slo
+          component: error_budget
+          impact: sla_risk
+          burn_rate: slow
+        annotations:
+          summary: "SLO WARNING: Slow error budget burn detected" 
+          description: "Error budget burning at {{ $value }}x normal rate. Monitor for continued degradation"
+          runbook_url: "https://docs.saas-idp.com/runbooks/slo-slow-burn"
+          
+      # ERROR BUDGET EXHAUSTION WARNING (90% consumed)
+      - alert: SLO_ErrorBudgetLow
+        expr: saas_idp:error_budget_availability:remaining < 0.1
+        for: 5m
+        labels:
+          severity: warning
+          priority: P1
+          service: slo
+          component: error_budget
+          impact: sla_risk
+        annotations:
+          summary: "SLO WARNING: Error budget nearly exhausted"
+          description: "Only {{ $value | humanizePercentage }} of error budget remaining this month"
+          runbook_url: "https://docs.saas-idp.com/runbooks/slo-budget-low"
+          
+      # LATENCY SLO BREACH
+      - alert: SLO_LatencyBreach
+        expr: saas_idp:sli_latency_fast:rate5m < saas_idp:slo_latency_fast:target
+        for: 5m
+        labels:
+          severity: warning
+          priority: P1
+          service: slo
+          component: latency
+          impact: performance_degraded
+        annotations:
+          summary: "SLO BREACH: Latency SLO not meeting target"
+          description: "Only {{ $value | humanizePercentage }} of requests are fast (target: {{ saas_idp:slo_latency_fast:target | humanizePercentage }})"
+          runbook_url: "https://docs.saas-idp.com/runbooks/slo-latency-breach"
+          
+      # PLUGIN HEALTH SLO BREACH
+      - alert: SLO_PluginHealthBreach
+        expr: saas_idp:sli_plugin_health:ratio < saas_idp:slo_plugin_health:target
+        for: 10m
+        labels:
+          severity: warning
+          priority: P1
+          service: slo
+          component: plugins
+          impact: features_degraded
+        annotations:
+          summary: "SLO BREACH: Plugin health below target"
+          description: "Plugin health at {{ $value | humanizePercentage }} (target: {{ saas_idp:slo_plugin_health:target | humanizePercentage }})"
+          runbook_url: "https://docs.saas-idp.com/runbooks/slo-plugin-health-breach"
+          
+      # AUTHENTICATION SLO BREACH
+      - alert: SLO_AuthenticationBreach
+        expr: saas_idp:sli_auth_success:rate5m < saas_idp:slo_auth_success:target
+        for: 3m
+        labels:
+          severity: critical
+          priority: P0
+          service: slo
+          component: authentication
+          impact: login_degraded
+        annotations:
+          summary: "SLO CRITICAL: Authentication success rate below target"
+          description: "Auth success rate at {{ $value | humanizePercentage }} (target: {{ saas_idp:slo_auth_success:target | humanizePercentage }})"
+          runbook_url: "https://docs.saas-idp.com/runbooks/slo-auth-breach"
+          escalation: "immediately"
+          
+      # CUSTOMER SATISFACTION SLO BREACH
+      - alert: SLO_CustomerSatisfactionBreach
+        expr: saas_idp:sli_customer_satisfaction:score < saas_idp:slo_customer_satisfaction:target
+        for: 30m
+        labels:
+          severity: info
+          priority: P2
+          service: slo
+          component: customer_satisfaction
+          impact: user_experience
+        annotations:
+          summary: "SLO WARNING: Customer satisfaction below target"
+          description: "Customer satisfaction at {{ $value }} (target: {{ saas_idp:slo_customer_satisfaction:target }})"
+          runbook_url: "https://docs.saas-idp.com/runbooks/slo-satisfaction-breach"
+          business_team: "true"
+
+  # =============================================================================
+  # ERROR BUDGET RESET AUTOMATION
+  # =============================================================================  
+  - name: saas_idp_error_budget_reset
+    interval: 24h
+    rules:
+      # Monthly error budget reset trigger
+      - record: saas_idp:error_budget:reset_trigger
+        expr: |
+          day_of_month() == 1 and hour() == 0
+        
+      # Weekly error budget partial reset (for gradual recovery)
+      - record: saas_idp:error_budget:partial_reset_trigger  
+        expr: |
+          day_of_week() == 1 and hour() == 0

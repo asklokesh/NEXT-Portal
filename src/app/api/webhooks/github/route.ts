@@ -2,6 +2,25 @@ import { NextRequest, NextResponse } from 'next/server';
 import crypto from 'crypto';
 import { z } from 'zod';
 import { webhookManager } from '@/lib/sync/WebhookManager';
+import Redis from 'ioredis';
+
+// Enhanced real-time event system imports
+import { RealtimeEventService } from '@/lib/events/realtime-event-service';
+import { PluginQualityService } from '@/lib/plugins/quality-service';
+import { SecurityScanService } from '@/lib/security/security-scan-service';
+import { NotificationService } from '@/lib/notifications/notification-service';
+
+// Redis for event distribution and caching
+const redis = new Redis({
+  host: process.env.REDIS_HOST || 'localhost',
+  port: parseInt(process.env.REDIS_PORT || '6379'),
+  password: process.env.REDIS_PASSWORD,
+  retryDelayOnFailover: 100,
+  maxRetriesPerRequest: 3,
+  lazyConnect: true,
+  enableAutoPipelining: true,
+  db: 1 // Use different DB for events
+});
 
 // GitHub webhook event schemas
 const GitHubBaseEventSchema = z.object({
@@ -145,9 +164,52 @@ function verifyGitHubSignature(payload: string, signature: string, secret: strin
   }
 }
 
+// Helper function to detect Backstage plugin repositories
+async function isBackstagePluginRepository(repository: any): Promise<boolean> {
+  // Check repository name patterns
+  if (repository.name.includes('backstage-plugin') || 
+      repository.name.includes('plugin-') ||
+      repository.full_name.includes('backstage') ||
+      repository.name.startsWith('@backstage/') ||
+      repository.name.includes('roadiehq')) {
+    return true;
+  }
+
+  // Check repository description
+  if (repository.description && 
+      (repository.description.toLowerCase().includes('backstage') ||
+       repository.description.toLowerCase().includes('plugin') ||
+       repository.description.toLowerCase().includes('internal developer platform'))) {
+    return true;
+  }
+
+  // Check topics/tags
+  if (repository.topics && repository.topics.some((topic: string) => 
+    topic.includes('backstage') || 
+    topic.includes('plugin') ||
+    topic.includes('internal-developer-platform') ||
+    topic.includes('idp') ||
+    topic.includes('developer-experience')
+  )) {
+    return true;
+  }
+
+  // Language and ecosystem hints
+  if (repository.language === 'TypeScript' || repository.language === 'JavaScript') {
+    // Could implement additional package.json checking here
+    // For now, use heuristics based on naming
+    return repository.name.includes('backstage') || repository.name.includes('plugin');
+  }
+
+  return false;
+}
+
 async function processRepositoryEvent(eventType: string, payload: any): Promise<void> {
   const repository = payload.repository;
   if (!repository) return;
+
+  const realtimeEvents = RealtimeEventService.getInstance();
+  const isPluginRepo = await isBackstagePluginRepository(repository);
 
   // Check if this repository contains Backstage catalog files
   const catalogFiles = [
@@ -175,8 +237,25 @@ async function processRepositoryEvent(eventType: string, payload: any): Promise<
           owner: repository.owner,
         },
         eventType,
+        isPluginRepo,
         timestamp: Date.now(),
       });
+
+      // Real-time notification for repository events affecting plugins
+      if (isPluginRepo) {
+        await realtimeEvents.broadcast('plugin.repository.event', {
+          eventType,
+          repository: {
+            id: repository.id,
+            name: repository.name,
+            fullName: repository.full_name,
+            url: repository.html_url,
+            private: repository.private,
+            owner: repository.owner
+          },
+          timestamp: new Date().toISOString()
+        });
+      }
     }
   } catch (error) {
     console.error('Error processing repository event:', error);
@@ -188,6 +267,16 @@ async function processPushEvent(payload: z.infer<typeof GitHubPushEventSchema>):
   
   if (!repository || !commits.length) return;
 
+  const realtimeEvents = RealtimeEventService.getInstance();
+  const qualityService = new PluginQualityService();
+  const securityScan = new SecurityScanService();
+  const notifications = new NotificationService();
+
+  // Check if this is a Backstage plugin repository
+  const isPluginRepo = await isBackstagePluginRepository(repository);
+  const branchName = ref.replace('refs/heads/', '');
+  const isMainBranch = branchName === 'main' || branchName === 'master';
+
   // Check if push affects catalog files
   const catalogFilesChanged = commits.some(commit =>
     [...commit.added, ...commit.modified, ...commit.removed].some(file =>
@@ -197,6 +286,133 @@ async function processPushEvent(payload: z.infer<typeof GitHubPushEventSchema>):
     )
   );
 
+  // Check for package.json changes (for dependency security scanning)
+  const hasPackageChanges = commits.some(commit =>
+    [...commit.added, ...commit.modified].some(file => 
+      file.includes('package.json') || file.includes('yarn.lock') || file.includes('package-lock.json')
+    )
+  );
+
+  // Enhanced real-time processing for plugin repositories
+  if (isPluginRepo) {
+    console.log(`Processing plugin repository update: ${repository.full_name}`);
+    
+    // Immediate real-time broadcast
+    await realtimeEvents.broadcast('plugin.repository.updated', {
+      repository: {
+        id: repository.id,
+        name: repository.name,
+        fullName: repository.full_name,
+        url: repository.html_url,
+        private: repository.private,
+        owner: repository.owner
+      },
+      ref,
+      branch: branchName,
+      commits: commits.map(commit => ({
+        id: commit.id,
+        message: commit.message,
+        author: commit.author,
+        filesChanged: {
+          added: commit.added,
+          modified: commit.modified,
+          removed: commit.removed
+        }
+      })),
+      headCommit: head_commit,
+      isMainBranch,
+      catalogFilesChanged,
+      hasPackageChanges,
+      timestamp: new Date().toISOString()
+    });
+
+    // Trigger quality re-evaluation for main branch changes
+    if (isMainBranch) {
+      console.log(`Triggering quality re-evaluation for ${repository.full_name}`);
+      
+      await redis.lpush('quality_assessment_queue', JSON.stringify({
+        type: 'repository_update',
+        repository: {
+          id: repository.id,
+          name: repository.name,
+          fullName: repository.full_name,
+          url: repository.html_url
+        },
+        commitId: head_commit?.id,
+        branch: branchName,
+        timestamp: new Date().toISOString()
+      }));
+
+      // Real-time quality status update
+      await realtimeEvents.broadcast('plugin.quality.evaluation_started', {
+        repository: repository.full_name,
+        commitId: head_commit?.id,
+        reason: 'main_branch_update',
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    // Security scanning for dependency changes
+    if (hasPackageChanges) {
+      console.log(`Package changes detected, triggering security scan for ${repository.full_name}`);
+      
+      await redis.lpush('security_scan_queue', JSON.stringify({
+        type: 'dependency_update',
+        repository: {
+          id: repository.id,
+          name: repository.name,
+          fullName: repository.full_name,
+          url: repository.html_url
+        },
+        commitId: head_commit?.id,
+        changedFiles: commits.flatMap(commit => 
+          [...commit.added, ...commit.modified].filter(file => 
+            file.includes('package.json') || file.includes('yarn.lock') || file.includes('package-lock.json')
+          )
+        ),
+        timestamp: new Date().toISOString()
+      }));
+
+      // Real-time security scan notification
+      await realtimeEvents.broadcast('plugin.security.scan_triggered', {
+        repository: repository.full_name,
+        reason: 'dependency_update',
+        commitId: head_commit?.id,
+        files: commits.flatMap(commit => 
+          [...commit.added, ...commit.modified].filter(file => 
+            file.includes('package.json') || file.includes('yarn.lock') || file.includes('package-lock.json')
+          )
+        ),
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    // Send real-time notification to portal users
+    if (isMainBranch) {
+      await notifications.sendRealTimeNotification({
+        type: 'plugin_update',
+        title: `Plugin Updated: ${repository.name}`,
+        message: `${repository.full_name} has been updated with ${commits.length} new commit(s)`,
+        data: {
+          repository: repository.full_name,
+          commits: commits.length,
+          lastCommit: head_commit?.message,
+          branch: branchName,
+          catalogFilesChanged,
+          hasPackageChanges
+        },
+        channels: ['websocket', 'database'],
+        targetUsers: 'plugin_subscribers',
+        metadata: {
+          repositoryId: repository.id,
+          isPluginRepo: true,
+          priority: hasPackageChanges || catalogFilesChanged ? 'high' : 'normal'
+        }
+      });
+    }
+  }
+
+  // Enhanced catalog processing
   if (catalogFilesChanged) {
     await webhookManager.sendEvent('catalog.entity.changed', {
       repository: {
@@ -205,7 +421,7 @@ async function processPushEvent(payload: z.infer<typeof GitHubPushEventSchema>):
         fullName: repository.full_name,
         url: repository.html_url,
       },
-      branch: ref.replace('refs/heads/', ''),
+      branch: branchName,
       commits: commits.map(commit => ({
         id: commit.id,
         message: commit.message,
@@ -217,17 +433,53 @@ async function processPushEvent(payload: z.infer<typeof GitHubPushEventSchema>):
         },
       })),
       headCommit: head_commit,
+      isPluginRepo,
       timestamp: Date.now(),
+    });
+
+    // Real-time catalog refresh notification
+    await realtimeEvents.broadcast('catalog.refresh_triggered', {
+      repository: repository.full_name,
+      branch: branchName,
+      reason: 'catalog_files_changed',
+      affectedFiles: commits.flatMap(commit => 
+        [...commit.added, ...commit.modified, ...commit.removed].filter(file =>
+          file.includes('catalog-info.') || 
+          file.includes('backstage.') ||
+          file.includes('.backstage/')
+        )
+      ),
+      timestamp: new Date().toISOString()
     });
   }
 
   // Always send generic push event for monitoring
   await webhookManager.sendEvent('github.push', {
     repository: repository.full_name,
-    branch: ref.replace('refs/heads/', ''),
+    branch: branchName,
     commitCount: commits.length,
     pusher: payload.sender.login,
+    isPluginRepo,
+    catalogFilesChanged,
+    hasPackageChanges,
     timestamp: Date.now(),
+  });
+
+  // Real-time metrics update
+  await realtimeEvents.broadcast('github.push', {
+    repository: {
+      id: repository.id,
+      name: repository.name,
+      fullName: repository.full_name,
+      isPluginRepo
+    },
+    branch: branchName,
+    isMainBranch,
+    commits: commits.length,
+    pusher: payload.sender.login,
+    catalogFilesChanged,
+    hasPackageChanges,
+    timestamp: new Date().toISOString()
   });
 }
 

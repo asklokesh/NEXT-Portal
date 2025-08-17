@@ -1,0 +1,266 @@
+#!/bin/bash
+
+# Setup Production-Like Local Environment
+# This script sets up a complete production-like environment locally for testing and demos
+
+set -e  # Exit on any error
+
+echo "========================================="
+echo "🚀 Setting up Production-Like Local Environment"
+echo "========================================="
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+# Check dependencies
+check_dependency() {
+    if ! command -v $1 &> /dev/null; then
+        echo -e "${RED}❌ $1 is not installed${NC}"
+        echo -e "${YELLOW}Please install $1 and try again${NC}"
+        exit 1
+    else
+        echo -e "${GREEN}✅ $1 is available${NC}"
+    fi
+}
+
+echo -e "${BLUE}Checking dependencies...${NC}"
+check_dependency "docker"
+check_dependency "node"
+check_dependency "npm"
+
+# Check Docker is running
+if ! docker info > /dev/null 2>&1; then
+    echo -e "${RED}❌ Docker is not running${NC}"
+    echo -e "${YELLOW}Please start Docker and try again${NC}"
+    exit 1
+fi
+
+# Create necessary directories
+echo -e "${BLUE}Creating required directories...${NC}"
+mkdir -p demo-data
+mkdir -p logs
+mkdir -p monitoring/grafana/dashboards
+mkdir -p monitoring/grafana/datasources
+mkdir -p monitoring/promtail
+
+# Generate demo data if it doesn't exist
+if [ ! -f "demo-data/techcorp-demo.json" ]; then
+    echo -e "${BLUE}Generating demo data...${NC}"
+    node -e "
+    const demoData = {
+        company: {
+            name: 'TechCorp',
+            industry: 'Technology',
+            size: 'Enterprise',
+            employees: 2500
+        },
+        metrics: {
+            dora: {
+                deploymentFrequency: 12.5,
+                leadTime: 2.3,
+                mttr: 45,
+                changeFailureRate: 5.2
+            },
+            costs: {
+                monthly: 485000,
+                annual: 5820000,
+                optimization: 125000
+            }
+        },
+        teams: [
+            { name: 'Platform Team', members: 8, services: 15 },
+            { name: 'Frontend Team', members: 12, services: 8 },
+            { name: 'Backend Team', members: 15, services: 22 },
+            { name: 'Data Team', members: 6, services: 9 },
+            { name: 'ML Team', members: 4, services: 5 },
+            { name: 'Security Team', members: 5, services: 7 },
+            { name: 'DevOps Team', members: 7, services: 12 },
+            { name: 'QA Team', members: 9, services: 3 }
+        ],
+        compliance: {
+            frameworks: ['SOC2', 'GDPR', 'HIPAA'],
+            violations: []
+        },
+        incidents: [
+            {
+                id: 'INC-001',
+                title: 'Database Connection Pool Exhaustion',
+                severity: 'high',
+                status: 'resolved',
+                createdAt: new Date(Date.now() - 86400000).toISOString()
+            }
+        ]
+    };
+    require('fs').writeFileSync('demo-data/techcorp-demo.json', JSON.stringify(demoData, null, 2));
+    console.log('✅ Demo data generated');
+    "
+fi
+
+# Generate sample catalog entities
+if [ ! -f "demo-data/catalog-entities.json" ]; then
+    echo -e "${BLUE}Generating catalog entities...${NC}"
+    node -e "
+    const entities = [];
+    const services = ['user-service', 'payment-processor', 'notification-service', 'auth-service', 'api-gateway', 
+                     'data-pipeline', 'ml-inference', 'frontend-app', 'admin-dashboard', 'analytics-service'];
+    const teams = ['platform-team', 'frontend-team', 'backend-team', 'data-team'];
+    
+    services.forEach((service, i) => {
+        entities.push({
+            apiVersion: 'backstage.io/v1alpha1',
+            kind: 'Component',
+            metadata: {
+                name: service,
+                title: service.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' '),
+                description: \`Production \${service} component\`,
+                tags: ['production', 'microservice'],
+                annotations: {
+                    'backstage.io/managed-by-location': 'url:https://github.com/techcorp/\${service}',
+                    'github.com/project-slug': 'techcorp/\${service}'
+                }
+            },
+            spec: {
+                type: 'service',
+                lifecycle: 'production',
+                owner: teams[i % teams.length],
+                dependsOn: i > 0 ? [services[i-1]] : []
+            }
+        });
+    });
+    
+    require('fs').writeFileSync('demo-data/catalog-entities.json', JSON.stringify({entities}, null, 2));
+    console.log('✅ Catalog entities generated');
+    "
+fi
+
+# Generate sample plugins data
+if [ ! -f "demo-data/plugins.json" ]; then
+    echo -e "${BLUE}Generating plugins data...${NC}"
+    node -e "
+    const plugins = [
+        { id: 'github-actions', title: 'GitHub Actions', category: 'CI/CD', state: 'installed', vendor: 'GitHub' },
+        { id: 'kubernetes', title: 'Kubernetes', category: 'Infrastructure', state: 'installed', vendor: 'CNCF' },
+        { id: 'prometheus', title: 'Prometheus', category: 'Monitoring', state: 'installed', vendor: 'Prometheus' },
+        { id: 'grafana', title: 'Grafana', category: 'Monitoring', state: 'installed', vendor: 'Grafana Labs' },
+        { id: 'datadog', title: 'Datadog', category: 'Monitoring', state: 'available', vendor: 'Datadog' },
+        { id: 'jenkins', title: 'Jenkins', category: 'CI/CD', state: 'available', vendor: 'Jenkins' },
+        { id: 'sonarqube', title: 'SonarQube', category: 'Code Quality', state: 'available', vendor: 'SonarSource' },
+        { id: 'jira', title: 'Jira', category: 'Project Management', state: 'installed', vendor: 'Atlassian' },
+        { id: 'slack', title: 'Slack', category: 'Communication', state: 'installed', vendor: 'Slack' },
+        { id: 'pagerduty', title: 'PagerDuty', category: 'Incident Management', state: 'available', vendor: 'PagerDuty' }
+    ];
+    
+    require('fs').writeFileSync('demo-data/plugins.json', JSON.stringify({plugins}, null, 2));
+    console.log('✅ Plugins data generated');
+    "
+fi
+
+# Create environment file for local production
+echo -e "${BLUE}Creating local environment configuration...${NC}"
+cat > .env.production-local << EOF
+# Production-like local environment variables
+NODE_ENV=production
+PORT=4400
+
+# Database
+DATABASE_URL=postgresql://saas_idp_user:local_dev_password_123@localhost:5432/saas_idp?schema=public
+
+# Redis
+REDIS_URL=redis://:local_redis_password_123@localhost:6379
+
+# NextAuth
+NEXTAUTH_SECRET=super_secret_nextauth_key_for_local_development_only_32chars
+NEXTAUTH_URL=http://localhost:4400
+
+# GitHub OAuth (replace with your own)
+GITHUB_CLIENT_ID=your_github_client_id
+GITHUB_CLIENT_SECRET=your_github_client_secret
+
+# Backstage
+BACKSTAGE_BASE_URL=http://localhost:4402
+
+# Features
+ENABLE_PLUGIN_INSTALLATION=true
+ENABLE_COST_OPTIMIZATION=true
+ENABLE_ANALYTICS=true
+ENABLE_MONITORING=true
+
+# Security
+CORS_ORIGIN=http://localhost:4400,http://127.0.0.1:4400
+RATE_LIMIT_MAX=30
+RATE_LIMIT_WINDOW=60000
+
+# Cache
+CACHE_TTL=300
+ENABLE_REDIS_CACHE=true
+
+# Demo
+DEMO_MODE=true
+DEMO_COMPANY=TechCorp
+EOF
+
+echo -e "${GREEN}✅ Environment configuration created${NC}"
+
+# Install dependencies if needed
+if [ ! -d "node_modules" ]; then
+    echo -e "${BLUE}Installing dependencies...${NC}"
+    npm install
+fi
+
+# Build the application
+echo -e "${BLUE}Building application...${NC}"
+npm run build
+
+echo -e "${BLUE}Building Docker images...${NC}"
+docker-compose -f docker-compose.production-local.yml build --no-cache
+
+# Start the environment
+echo -e "${BLUE}Starting production-like environment...${NC}"
+docker-compose -f docker-compose.production-local.yml up -d
+
+# Wait for services to be ready
+echo -e "${BLUE}Waiting for services to be ready...${NC}"
+sleep 30
+
+# Run database migrations
+echo -e "${BLUE}Running database migrations...${NC}"
+docker-compose -f docker-compose.production-local.yml exec -T app npx prisma db push
+
+# Check service health
+echo -e "${BLUE}Checking service health...${NC}"
+for service in app postgres redis mock-backstage nginx; do
+    if docker-compose -f docker-compose.production-local.yml ps $service | grep -q "Up"; then
+        echo -e "${GREEN}✅ $service is running${NC}"
+    else
+        echo -e "${RED}❌ $service failed to start${NC}"
+    fi
+done
+
+echo ""
+echo -e "${GREEN}=========================================${NC}"
+echo -e "${GREEN}🎉 Production-Like Environment Ready!${NC}"
+echo -e "${GREEN}=========================================${NC}"
+echo ""
+echo -e "${BLUE}Access Points:${NC}"
+echo -e "• Main App: ${GREEN}http://localhost:4400${NC}"
+echo -e "• Mock Backstage: ${GREEN}http://localhost:4402${NC}"
+echo -e "• Prometheus: ${GREEN}http://localhost:9090${NC}"
+echo -e "• Grafana: ${GREEN}http://localhost:3000${NC} (admin/admin123)"
+echo -e "• Database: ${GREEN}localhost:5432${NC} (saas_idp_user/local_dev_password_123)"
+echo -e "• Redis: ${GREEN}localhost:6379${NC} (password: local_redis_password_123)"
+echo ""
+echo -e "${YELLOW}Commands:${NC}"
+echo -e "• View logs: ${GREEN}docker-compose -f docker-compose.production-local.yml logs -f${NC}"
+echo -e "• Stop all: ${GREEN}docker-compose -f docker-compose.production-local.yml down${NC}"
+echo -e "• Restart: ${GREEN}docker-compose -f docker-compose.production-local.yml restart${NC}"
+echo ""
+echo -e "${BLUE}Next steps:${NC}"
+echo -e "1. Configure GitHub OAuth credentials in .env.production-local"
+echo -e "2. Access the app at http://localhost:4400"
+echo -e "3. Test all 29 enterprise features"
+echo -e "4. Monitor performance in Grafana"
+echo ""

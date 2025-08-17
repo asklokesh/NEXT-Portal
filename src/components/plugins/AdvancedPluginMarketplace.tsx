@@ -82,6 +82,7 @@ export default function AdvancedPluginMarketplace() {
   
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const [selectedPlugin, setSelectedPlugin] = useState<Plugin | null>(null);
+  const [configurePlugin, setConfigurePlugin] = useState<Plugin | null>(null);
   const [installingPlugins, setInstallingPlugins] = useState<Set<string>>(new Set());
   const [showFilters, setShowFilters] = useState(false);
   const [selectedForAnalysis, setSelectedForAnalysis] = useState<Set<string>>(new Set());
@@ -100,7 +101,7 @@ export default function AdvancedPluginMarketplace() {
         offset: reset ? '0' : state.offset.toString()
       });
       
-      const response = await fetch(`/api/backstage-plugins-real?${params}`);
+      const response = await fetch(`/api/plugins/marketplace?${params}`);
       const data = await response.json();
       
       if (data.success) {
@@ -179,15 +180,34 @@ export default function AdvancedPluginMarketplace() {
   };
   
   const handleSetupComplete = async (plugin: Plugin, config: any) => {
-    // Simulate installation
-    await new Promise(resolve => setTimeout(resolve, 2000));
-    
-    setState(prev => ({
-      ...prev,
-      plugins: prev.plugins.map(p => 
-        p.id === plugin.id ? { ...p, installed: true, enabled: true } : p
-      )
-    }));
+    try {
+      // Call the simple state-tracking install API
+      const installResponse = await fetch('/api/plugins/install-simple', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          pluginId: plugin.id,
+          version: plugin.version,
+          configuration: config,
+          validateFirst: true,
+          environment: 'production'
+        })
+      });
+
+      if (installResponse.ok) {
+        // Update local state to reflect installation
+        setState(prev => ({
+          ...prev,
+          plugins: prev.plugins.map(p => 
+            p.id === plugin.id ? { ...p, installed: true, enabled: true } : p
+          )
+        }));
+      } else {
+        console.error('Installation failed:', await installResponse.text());
+      }
+    } catch (error) {
+      console.error('Installation error:', error);
+    }
     
     setInstallingPlugins(prev => {
       const newSet = new Set(prev);
@@ -198,13 +218,33 @@ export default function AdvancedPluginMarketplace() {
     setSelectedPlugin(null);
   };
   
-  const handleTogglePlugin = (plugin: Plugin) => {
-    setState(prev => ({
-      ...prev,
-      plugins: prev.plugins.map(p => 
-        p.id === plugin.id ? { ...p, enabled: !p.enabled } : p
-      )
-    }));
+  const handleTogglePlugin = async (plugin: Plugin) => {
+    try {
+      // Call the database-integrated toggle API
+      const toggleResponse = await fetch('/api/plugins/toggle', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          pluginId: plugin.id,
+          enabled: !plugin.enabled,
+          environment: 'production'
+        })
+      });
+
+      if (toggleResponse.ok) {
+        // Update local state
+        setState(prev => ({
+          ...prev,
+          plugins: prev.plugins.map(p => 
+            p.id === plugin.id ? { ...p, enabled: !p.enabled } : p
+          )
+        }));
+      } else {
+        console.error('Toggle failed:', await toggleResponse.text());
+      }
+    } catch (error) {
+      console.error('Toggle error:', error);
+    }
   };
   
   const updateFilter = (key: keyof PluginFilters, value: any) => {
@@ -609,7 +649,7 @@ export default function AdvancedPluginMarketplace() {
               plugin={plugin}
               onInstall={() => handleInstall(plugin)}
               onToggle={() => handleTogglePlugin(plugin)}
-              onConfigure={() => setSelectedPlugin(plugin)}
+              onConfigure={() => setConfigurePlugin(plugin)}
               onSelect={handlePluginSelect}
               isInstalling={installingPlugins.has(plugin.id)}
               isSelected={selectedForAnalysis.has(plugin.id)}
@@ -627,7 +667,7 @@ export default function AdvancedPluginMarketplace() {
               plugin={plugin}
               onInstall={() => handleInstall(plugin)}
               onToggle={() => handleTogglePlugin(plugin)}
-              onConfigure={() => setSelectedPlugin(plugin)}
+              onConfigure={() => setConfigurePlugin(plugin)}
               onSelect={handlePluginSelect}
               isInstalling={installingPlugins.has(plugin.id)}
               isSelected={selectedForAnalysis.has(plugin.id)}
@@ -670,6 +710,38 @@ export default function AdvancedPluginMarketplace() {
           onComplete={(config) => handleSetupComplete(selectedPlugin, config)}
         />
       )}
+
+      {/* Plugin Configuration Modal */}
+      {configurePlugin && (
+        <PluginConfigurationModal
+          plugin={configurePlugin}
+          onClose={() => setConfigurePlugin(null)}
+          onSave={async (config) => {
+            try {
+              // Call the database-integrated config API
+              const configResponse = await fetch('/api/plugins/config', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  pluginId: configurePlugin.id,
+                  environment: 'production',
+                  config: config,
+                  isActive: true
+                })
+              });
+
+              if (configResponse.ok) {
+                console.log('Configuration saved successfully');
+                setConfigurePlugin(null);
+              } else {
+                console.error('Configuration save failed:', await configResponse.text());
+              }
+            } catch (error) {
+              console.error('Configuration save error:', error);
+            }
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -685,25 +757,25 @@ const PluginCard = ({ plugin, onInstall, onToggle, onConfigure, onSelect, isInst
     }`}
   >
     <div className="flex items-start justify-between mb-4">
-      <div className="flex items-center">
+      <div className="flex items-center min-w-0 flex-1 mr-2">
         <input
           type="checkbox"
           checked={isSelected}
           onChange={() => onSelect(plugin.id)}
-          className="mr-3 rounded border-gray-300 dark:border-gray-600 text-blue-600 focus:ring-blue-500"
+          className="mr-3 flex-shrink-0 rounded border-gray-300 dark:border-gray-600 text-blue-600 focus:ring-blue-500"
         />
-        {getPluginIcon(plugin.category)}
-        <div className="ml-3 min-w-0">
+        <div className="flex-shrink-0">{getPluginIcon(plugin.category)}</div>
+        <div className="ml-3 min-w-0 flex-1">
           <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100 truncate">
             {plugin.title}
           </h3>
-          <p className="text-sm text-gray-500 dark:text-gray-400">
+          <p className="text-sm text-gray-500 dark:text-gray-400 truncate">
             v{plugin.version} by {plugin.author}
           </p>
         </div>
       </div>
       
-      <div className="flex flex-col items-end gap-1">
+      <div className="flex flex-col items-end gap-1 flex-shrink-0">
         {plugin.featured && (
           <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200">
             <Star className="w-3 h-3 mr-1" />
@@ -876,7 +948,7 @@ const PluginListItem = ({ plugin, onInstall, onToggle, onConfigure, onSelect, is
   </motion.div>
 );
 
-// Plugin Setup Modal Component (simplified for space)
+// Plugin Setup Modal Component (for installation)
 const PluginSetupModal = ({ plugin, onClose, onComplete }: any) => (
   <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
     <motion.div 
@@ -887,7 +959,7 @@ const PluginSetupModal = ({ plugin, onClose, onComplete }: any) => (
       <div className="p-6 border-b border-gray-200 dark:border-gray-700">
         <div className="flex items-center justify-between">
           <h2 className="text-2xl font-bold text-gray-900 dark:text-gray-100">
-            Configure {plugin.title}
+            Install {plugin.title}
           </h2>
           <button onClick={onClose} className="text-gray-500 hover:text-gray-700">
             <X className="w-6 h-6" />
@@ -900,7 +972,7 @@ const PluginSetupModal = ({ plugin, onClose, onComplete }: any) => (
         </p>
         <div className="bg-blue-50 dark:bg-blue-900/20 rounded-lg p-4 mb-6">
           <p className="text-sm text-blue-800 dark:text-blue-200">
-            This plugin will be configured with default settings. You can modify the configuration later.
+            This plugin will be installed with default settings. You can modify the configuration after installation.
           </p>
         </div>
         <div className="flex gap-4">
@@ -909,6 +981,255 @@ const PluginSetupModal = ({ plugin, onClose, onComplete }: any) => (
             className="flex-1 px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
           >
             Install Plugin
+          </button>
+          <button
+            onClick={onClose}
+            className="px-6 py-3 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700"
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
+    </motion.div>
+  </div>
+);
+
+// Plugin Configuration Modal Component (for installed plugins)
+const PluginConfigurationModal = ({ plugin, onClose, onSave }: any) => (
+  <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+    <motion.div 
+      initial={{ opacity: 0, scale: 0.95 }}
+      animate={{ opacity: 1, scale: 1 }}
+      className="bg-white dark:bg-gray-800 rounded-lg max-w-4xl w-full max-h-[80vh] overflow-hidden"
+    >
+      <div className="p-6 border-b border-gray-200 dark:border-gray-700">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-2xl font-bold text-gray-900 dark:text-gray-100">
+              Configure {plugin.title}
+            </h2>
+            <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
+              Manage settings and preferences for this plugin
+            </p>
+          </div>
+          <button onClick={onClose} className="text-gray-500 hover:text-gray-700">
+            <X className="w-6 h-6" />
+          </button>
+        </div>
+      </div>
+      
+      <div className="p-6 overflow-y-auto max-h-[60vh]">
+        <div className="space-y-6">
+          {/* Plugin Info */}
+          <div className="bg-gray-50 dark:bg-gray-700 rounded-lg p-4">
+            <div className="flex items-start gap-4">
+              <div className="p-2 bg-blue-100 dark:bg-blue-900/20 rounded-lg">
+                <Package className="w-6 h-6 text-blue-600 dark:text-blue-400" />
+              </div>
+              <div className="flex-1">
+                <h3 className="font-semibold text-gray-900 dark:text-gray-100">
+                  {plugin.title} v{plugin.version}
+                </h3>
+                <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
+                  {plugin.description}
+                </p>
+                <div className="flex items-center gap-4 mt-2 text-xs text-gray-500">
+                  <span>by {plugin.author}</span>
+                  <span className="px-2 py-1 bg-gray-200 dark:bg-gray-600 rounded">
+                    {plugin.category}
+                  </span>
+                  {plugin.premium && (
+                    <span className="px-2 py-1 bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200 rounded">
+                      Premium
+                    </span>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Configuration Sections */}
+          <div className="space-y-4">
+            <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
+              Configuration Settings
+            </h3>
+            
+            {/* General Settings */}
+            <div className="border border-gray-200 dark:border-gray-700 rounded-lg p-4">
+              <h4 className="font-medium text-gray-900 dark:text-gray-100 mb-3">
+                General Settings
+              </h4>
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <label className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                      Enable Plugin
+                    </label>
+                    <p className="text-xs text-gray-500 dark:text-gray-400">
+                      Toggle plugin functionality on/off
+                    </p>
+                  </div>
+                  <input
+                    type="checkbox"
+                    defaultChecked={plugin.enabled}
+                    className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                  />
+                </div>
+                
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                    Display Name
+                  </label>
+                  <input
+                    type="text"
+                    defaultValue={plugin.title}
+                    className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                    Description
+                  </label>
+                  <textarea
+                    defaultValue={plugin.description}
+                    rows={3}
+                    className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Plugin-specific Settings */}
+            <div className="border border-gray-200 dark:border-gray-700 rounded-lg p-4">
+              <h4 className="font-medium text-gray-900 dark:text-gray-100 mb-3">
+                Plugin-Specific Settings
+              </h4>
+              <div className="space-y-3">
+                {plugin.category === 'analytics' && (
+                  <>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                        Reporting Interval (days)
+                      </label>
+                      <select className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg">
+                        <option value="1">Daily</option>
+                        <option value="7">Weekly</option>
+                        <option value="30">Monthly</option>
+                      </select>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <label className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                          Enable Email Reports
+                        </label>
+                        <p className="text-xs text-gray-500 dark:text-gray-400">
+                          Send periodic analytics reports via email
+                        </p>
+                      </div>
+                      <input
+                        type="checkbox"
+                        className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                      />
+                    </div>
+                  </>
+                )}
+                
+                {plugin.category === 'security' && (
+                  <>
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <label className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                          Enforce Multi-Factor Authentication
+                        </label>
+                        <p className="text-xs text-gray-500 dark:text-gray-400">
+                          Require MFA for sensitive operations
+                        </p>
+                      </div>
+                      <input
+                        type="checkbox"
+                        defaultChecked
+                        className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                        Session Timeout (minutes)
+                      </label>
+                      <input
+                        type="number"
+                        defaultValue="30"
+                        min="5"
+                        max="480"
+                        className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      />
+                    </div>
+                  </>
+                )}
+
+                {['core', 'infrastructure', 'ci-cd', 'monitoring'].includes(plugin.category) && (
+                  <div className="bg-blue-50 dark:bg-blue-900/20 rounded-lg p-3">
+                    <p className="text-sm text-blue-800 dark:text-blue-200">
+                      Advanced configuration options for {plugin.category} plugins are available in the plugin's dedicated settings page.
+                    </p>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Links & Documentation */}
+            <div className="border border-gray-200 dark:border-gray-700 rounded-lg p-4">
+              <h4 className="font-medium text-gray-900 dark:text-gray-100 mb-3">
+                Resources
+              </h4>
+              <div className="flex flex-wrap gap-2">
+                {plugin.npm && (
+                  <a
+                    href={plugin.npm}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center px-3 py-1 bg-orange-100 text-orange-800 dark:bg-orange-900/20 dark:text-orange-200 rounded-full text-sm hover:bg-orange-200"
+                  >
+                    <Package className="w-3 h-3 mr-1" />
+                    NPM Package
+                  </a>
+                )}
+                {plugin.repository && (
+                  <a
+                    href={plugin.repository}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center px-3 py-1 bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200 rounded-full text-sm hover:bg-gray-200"
+                  >
+                    <GitBranch className="w-3 h-3 mr-1" />
+                    Repository
+                  </a>
+                )}
+                {plugin.homepage && (
+                  <a
+                    href={plugin.homepage}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center px-3 py-1 bg-blue-100 text-blue-800 dark:bg-blue-900/20 dark:text-blue-200 rounded-full text-sm hover:bg-blue-200"
+                  >
+                    <ExternalLink className="w-3 h-3 mr-1" />
+                    Documentation
+                  </a>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      
+      <div className="p-6 border-t border-gray-200 dark:border-gray-700">
+        <div className="flex gap-4">
+          <button
+            onClick={() => onSave({})}
+            className="flex-1 px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center justify-center"
+          >
+            <Save className="w-4 h-4 mr-2" />
+            Save Configuration
           </button>
           <button
             onClick={onClose}

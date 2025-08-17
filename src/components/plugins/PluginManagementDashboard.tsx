@@ -23,6 +23,12 @@ interface PluginInstance {
   startedAt: string;
   lastCheck: string;
   metrics?: PluginMetrics;
+  updateInfo?: {
+    hasUpdate: boolean;
+    latestVersion: string;
+    updateUrgency?: 'low' | 'medium' | 'high' | 'critical';
+    changelog?: string;
+  };
 }
 
 interface PluginMetrics {
@@ -109,9 +115,10 @@ export default function PluginManagementDashboard() {
         const data = await response.json();
         const installations = data.installations || [];
         
-        // Load metrics for each running instance
+        // Load metrics and version info for each instance
         const instancesWithMetrics = await Promise.all(
           installations.map(async (installation: any) => {
+            // Load metrics if running
             if (installation.status === 'running') {
               try {
                 const metricsResponse = await fetch(`/api/plugin-monitor?installId=${installation.installId}`);
@@ -123,6 +130,28 @@ export default function PluginManagementDashboard() {
                 console.error(`Failed to load metrics for ${installation.installId}:`, error);
               }
             }
+            
+            // Load version check info - use single plugin endpoint
+            try {
+              const versionResponse = await fetch(`/api/plugin-version-check?action=single&pluginName=${encodeURIComponent(installation.pluginId)}&currentVersion=${encodeURIComponent(installation.version || '1.0.0')}`);
+              if (versionResponse.ok) {
+                const versionData = await versionResponse.json();
+                installation.updateInfo = {
+                  hasUpdate: versionData.hasUpdate,
+                  latestVersion: versionData.latestVersion,
+                  updateUrgency: versionData.updateUrgency,
+                  changelog: versionData.changelog
+                };
+              }
+            } catch (error) {
+              console.error(`Failed to load version info for ${installation.installId}:`, error);
+              // Set default - assume no update available on error
+              installation.updateInfo = {
+                hasUpdate: false,
+                latestVersion: installation.version || '1.0.0'
+              };
+            }
+            
             return installation;
           })
         );
@@ -136,32 +165,73 @@ export default function PluginManagementDashboard() {
     }
   };
 
-  const handleInstanceAction = async (installId: string, action: 'start' | 'stop' | 'restart' | 'delete') => {
+  const handleInstanceAction = async (installId: string, action: 'start' | 'stop' | 'restart' | 'delete' | 'update') => {
     try {
+      // Find the plugin name for user feedback
+      const plugin = instances.find(i => i.installId === installId);
+      const pluginName = plugin?.pluginName || 'Plugin';
+      
       let endpoint = '';
       let method = 'POST';
+      let requestBody: any = null;
       
       switch (action) {
-        case 'stop':
         case 'delete':
+          if (!confirm(`Are you sure you want to delete ${pluginName}?`)) {
+            return;
+          }
           endpoint = `/api/plugin-installer?installId=${installId}`;
           method = 'DELETE';
           break;
+        case 'stop':
+        case 'start':
         case 'restart':
-          // Stop then start
-          await fetch(`/api/plugin-installer?installId=${installId}`, { method: 'DELETE' });
-          // The start would need to be implemented separately
+          endpoint = `/api/plugin-actions`;
+          method = 'POST';
+          requestBody = {
+            installId,
+            action: action === 'restart' ? 'restart' : action === 'stop' ? 'stop' : 'start'
+          };
+          break;
+        case 'update':
+          endpoint = `/api/plugin-actions`;
+          method = 'POST';
+          requestBody = {
+            installId,
+            action: 'update',
+            version: 'latest' // Could be made configurable
+          };
           break;
         default:
           return;
       }
       
-      const response = await fetch(endpoint, { method });
+      const fetchOptions: RequestInit = { method };
+      if (requestBody) {
+        fetchOptions.headers = { 'Content-Type': 'application/json' };
+        fetchOptions.body = JSON.stringify(requestBody);
+      }
+      
+      const response = await fetch(endpoint, fetchOptions);
       if (response.ok) {
+        const data = await response.json();
+        console.log(`${action} action successful:`, data.message);
+        
+        // Show success feedback to user
+        if (data.message) {
+          // You could add a toast notification here
+          alert(`Success: ${data.message}`);
+        }
+        
         loadInstances(); // Refresh the list
+      } else {
+        const errorData = await response.json();
+        console.error(`Failed to ${action} plugin:`, errorData.error);
+        alert(`Error: ${errorData.error || `Failed to ${action} ${pluginName}`}`);
       }
     } catch (error) {
       console.error(`Failed to ${action} plugin:`, error);
+      alert(`Error: Failed to ${action} plugin. Please check the console for details.`);
     }
   };
 
@@ -270,9 +340,22 @@ export default function PluginManagementDashboard() {
                     }`}
                   >
                     <div className="flex items-center justify-between mb-2">
-                      <span className="font-medium text-gray-900 dark:text-gray-100">
-                        {instance.pluginName || instance.pluginId}
-                      </span>
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium text-gray-900 dark:text-gray-100">
+                          {instance.pluginName || instance.pluginId}
+                        </span>
+                        {instance.updateInfo?.hasUpdate && (
+                          <span className={`px-1.5 py-0.5 text-xs rounded-full font-medium ${
+                            instance.updateInfo.updateUrgency === 'critical' 
+                              ? 'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400' 
+                              : instance.updateInfo.updateUrgency === 'high'
+                              ? 'bg-orange-100 text-orange-800 dark:bg-orange-900/20 dark:text-orange-400'
+                              : 'bg-blue-100 text-blue-800 dark:bg-blue-900/20 dark:text-blue-400'
+                          }`}>
+                            Update Available
+                          </span>
+                        )}
+                      </div>
                       {getStatusIcon(instance.status)}
                     </div>
                     
@@ -311,11 +394,30 @@ export default function PluginManagementDashboard() {
               {/* Instance Header */}
               <div className="flex items-center justify-between mb-6">
                 <div>
-                  <h3 className="text-xl font-semibold text-gray-900 dark:text-gray-100">
-                    {selectedInstanceData.pluginName || selectedInstanceData.pluginId}
-                  </h3>
+                  <div className="flex items-center gap-2 mb-1">
+                    <h3 className="text-xl font-semibold text-gray-900 dark:text-gray-100">
+                      {selectedInstanceData.pluginName || selectedInstanceData.pluginId}
+                    </h3>
+                    {selectedInstanceData.updateInfo?.hasUpdate && (
+                      <span className={`px-2 py-1 text-xs rounded-full font-medium ${
+                        selectedInstanceData.updateInfo.updateUrgency === 'critical' 
+                          ? 'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400' 
+                          : selectedInstanceData.updateInfo.updateUrgency === 'high'
+                          ? 'bg-orange-100 text-orange-800 dark:bg-orange-900/20 dark:text-orange-400'
+                          : 'bg-blue-100 text-blue-800 dark:bg-blue-900/20 dark:text-blue-400'
+                      }`}>
+                        {selectedInstanceData.updateInfo.updateUrgency === 'critical' && '🚨 '}
+                        Update to {selectedInstanceData.updateInfo.latestVersion}
+                      </span>
+                    )}
+                  </div>
                   <p className="text-gray-600 dark:text-gray-400">
                     {selectedInstanceData.pluginId}@{selectedInstanceData.version}
+                    {selectedInstanceData.updateInfo?.hasUpdate && selectedInstanceData.updateInfo.latestVersion !== selectedInstanceData.version && (
+                      <span className="text-gray-500 ml-2">
+                        (Latest: {selectedInstanceData.updateInfo.latestVersion})
+                      </span>
+                    )}
                   </p>
                 </div>
                 
@@ -332,13 +434,51 @@ export default function PluginManagementDashboard() {
                     </a>
                   )}
                   
-                  {selectedInstanceData.status === 'running' && (
+                  {selectedInstanceData.status === 'running' ? (
+                    <>
+                      <button
+                        onClick={() => handleInstanceAction(selectedInstanceData.installId, 'stop')}
+                        className="px-3 py-1 bg-red-600 text-white rounded text-sm hover:bg-red-700 flex items-center"
+                      >
+                        <Square className="w-4 h-4 mr-1" />
+                        Stop
+                      </button>
+                      <button
+                        onClick={() => handleInstanceAction(selectedInstanceData.installId, 'restart')}
+                        className="px-3 py-1 bg-yellow-600 text-white rounded text-sm hover:bg-yellow-700 flex items-center"
+                      >
+                        <RotateCcw className="w-4 h-4 mr-1" />
+                        Restart
+                      </button>
+                    </>
+                  ) : selectedInstanceData.status === 'stopped' && (
                     <button
-                      onClick={() => handleInstanceAction(selectedInstanceData.installId, 'stop')}
-                      className="px-3 py-1 bg-red-600 text-white rounded text-sm hover:bg-red-700 flex items-center"
+                      onClick={() => handleInstanceAction(selectedInstanceData.installId, 'start')}
+                      className="px-3 py-1 bg-green-600 text-white rounded text-sm hover:bg-green-700 flex items-center"
                     >
-                      <Square className="w-4 h-4 mr-1" />
-                      Stop
+                      <Play className="w-4 h-4 mr-1" />
+                      Start
+                    </button>
+                  )}
+                  
+                  {/* Only show Update button if update is available */}
+                  {selectedInstanceData.updateInfo?.hasUpdate && (
+                    <button
+                      onClick={() => handleInstanceAction(selectedInstanceData.installId, 'update')}
+                      className={`px-3 py-1 text-white rounded text-sm hover:opacity-90 flex items-center ${
+                        selectedInstanceData.updateInfo.updateUrgency === 'critical' 
+                          ? 'bg-red-600 hover:bg-red-700' 
+                          : selectedInstanceData.updateInfo.updateUrgency === 'high'
+                          ? 'bg-orange-600 hover:bg-orange-700'
+                          : 'bg-blue-600 hover:bg-blue-700'
+                      }`}
+                      title={`Update available: ${selectedInstanceData.updateInfo.latestVersion}${selectedInstanceData.updateInfo.changelog ? ` - ${selectedInstanceData.updateInfo.changelog}` : ''}`}
+                    >
+                      <TrendingUp className="w-4 h-4 mr-1" />
+                      Update to {selectedInstanceData.updateInfo.latestVersion}
+                      {selectedInstanceData.updateInfo.updateUrgency === 'critical' && (
+                        <span className="ml-1 text-xs">!</span>
+                      )}
                     </button>
                   )}
                   

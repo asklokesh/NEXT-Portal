@@ -140,6 +140,7 @@ class TenantContextManager {
   }
 }
 
+export { TenantContextManager };
 export const tenantContextManager = TenantContextManager.getInstance();
 
 /**

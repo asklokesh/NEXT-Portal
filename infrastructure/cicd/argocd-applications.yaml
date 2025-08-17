@@ -1,0 +1,358 @@
+# ArgoCD Applications for Enterprise SaaS IDP Platform
+# Multi-environment deployment with GitOps workflow
+
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: saas-idp-staging
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: enterprise-saas-idp
+  source:
+    repoURL: https://github.com/your-org/saas-idp-gitops.git
+    targetRevision: HEAD
+    path: environments/staging
+    helm:
+      valueFiles:
+        - values-staging.yaml
+      parameters:
+        - name: image.tag
+          value: "latest"
+        - name: replicaCount
+          value: "3"
+        - name: resources.requests.memory
+          value: "2Gi"
+        - name: resources.requests.cpu
+          value: "1000m"
+        - name: ingress.enabled
+          value: "true"
+        - name: ingress.hostname
+          value: "staging.saas-idp.company.com"
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: saas-idp-staging
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+      allowEmpty: false
+    syncOptions:
+      - CreateNamespace=true
+      - ApplyOutOfSyncOnly=true
+      - RespectIgnoreDifferences=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
+  revisionHistoryLimit: 10
+  ignoreDifferences:
+    - group: apps
+      kind: Deployment
+      jsonPointers:
+        - /spec/replicas
+
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: saas-idp-production
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+    notifications.argoproj.io/subscribe.on-sync-succeeded.slack: "platform-team"
+    notifications.argoproj.io/subscribe.on-sync-failed.slack: "platform-team"
+    notifications.argoproj.io/subscribe.on-health-degraded.pagerduty: "platform-oncall"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: enterprise-saas-idp
+  source:
+    repoURL: https://github.com/your-org/saas-idp-gitops.git
+    targetRevision: HEAD
+    path: environments/production
+    helm:
+      valueFiles:
+        - values-production.yaml
+      parameters:
+        - name: image.tag
+          value: "stable"
+        - name: replicaCount
+          value: "6"
+        - name: resources.requests.memory
+          value: "4Gi"
+        - name: resources.requests.cpu
+          value: "2000m"
+        - name: ingress.enabled
+          value: "true"
+        - name: ingress.hostname
+          value: "app.saas-idp.company.com"
+        - name: hpa.enabled
+          value: "true"
+        - name: hpa.minReplicas
+          value: "6"
+        - name: hpa.maxReplicas
+          value: "50"
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: saas-idp-production
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: false  # Manual approval required for production
+      allowEmpty: false
+    syncOptions:
+      - CreateNamespace=true
+      - ApplyOutOfSyncOnly=true
+      - RespectIgnoreDifferences=true
+    retry:
+      limit: 3
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 5m
+  revisionHistoryLimit: 20
+  ignoreDifferences:
+    - group: apps
+      kind: Deployment
+      jsonPointers:
+        - /spec/replicas
+    - group: autoscaling
+      kind: HorizontalPodAutoscaler
+      jsonPointers:
+        - /spec/metrics
+
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: saas-idp-monitoring
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  project: enterprise-saas-idp
+  source:
+    repoURL: https://github.com/your-org/saas-idp-gitops.git
+    targetRevision: HEAD
+    path: monitoring
+    helm:
+      valueFiles:
+        - values-monitoring.yaml
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: saas-idp-monitoring
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+      allowEmpty: false
+    syncOptions:
+      - CreateNamespace=true
+  revisionHistoryLimit: 10
+
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: saas-idp-security
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  project: enterprise-saas-idp
+  source:
+    repoURL: https://github.com/your-org/saas-idp-gitops.git
+    targetRevision: HEAD
+    path: security
+    helm:
+      valueFiles:
+        - values-security.yaml
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: saas-idp-security
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+      allowEmpty: false
+    syncOptions:
+      - CreateNamespace=true
+  revisionHistoryLimit: 10
+
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: enterprise-saas-idp
+  namespace: argocd
+spec:
+  description: Enterprise SaaS Internal Developer Portal Platform
+  
+  # Source repositories
+  sourceRepos:
+    - 'https://github.com/your-org/saas-idp.git'
+    - 'https://github.com/your-org/saas-idp-gitops.git'
+    - 'https://helm.releases.hashicorp.com'
+    - 'https://prometheus-community.github.io/helm-charts'
+    - 'https://kubernetes.github.io/ingress-nginx'
+    - 'https://charts.bitnami.com/bitnami'
+  
+  # Destination clusters and namespaces
+  destinations:
+    - namespace: 'saas-idp-*'
+      server: https://kubernetes.default.svc
+    - namespace: 'argocd'
+      server: https://kubernetes.default.svc
+  
+  # Cluster resource allow list
+  clusterResourceWhitelist:
+    - group: ''
+      kind: Namespace
+    - group: 'rbac.authorization.k8s.io'
+      kind: ClusterRole
+    - group: 'rbac.authorization.k8s.io'
+      kind: ClusterRoleBinding
+    - group: 'apiextensions.k8s.io'
+      kind: CustomResourceDefinition
+    - group: 'admissionregistration.k8s.io'
+      kind: ValidatingAdmissionWebhook
+    - group: 'admissionregistration.k8s.io'
+      kind: MutatingAdmissionWebhook
+  
+  # Namespace resource allow list
+  namespaceResourceWhitelist:
+    - group: ''
+      kind: ConfigMap
+    - group: ''
+      kind: Secret
+    - group: ''
+      kind: Service
+    - group: ''
+      kind: ServiceAccount
+    - group: ''
+      kind: PersistentVolumeClaim
+    - group: 'apps'
+      kind: Deployment
+    - group: 'apps'
+      kind: StatefulSet
+    - group: 'apps'
+      kind: DaemonSet
+    - group: 'apps'
+      kind: ReplicaSet
+    - group: 'autoscaling'
+      kind: HorizontalPodAutoscaler
+    - group: 'networking.k8s.io'
+      kind: Ingress
+    - group: 'networking.k8s.io'
+      kind: NetworkPolicy
+    - group: 'rbac.authorization.k8s.io'
+      kind: Role
+    - group: 'rbac.authorization.k8s.io'
+      kind: RoleBinding
+    - group: 'batch'
+      kind: Job
+    - group: 'batch'
+      kind: CronJob
+    - group: 'monitoring.coreos.com'
+      kind: ServiceMonitor
+    - group: 'monitoring.coreos.com'
+      kind: PrometheusRule
+  
+  # RBAC policies
+  roles:
+    - name: admin
+      description: Full access to all resources in the project
+      policies:
+        - p, proj:enterprise-saas-idp:admin, applications, *, enterprise-saas-idp/*, allow
+        - p, proj:enterprise-saas-idp:admin, repositories, *, *, allow
+      groups:
+        - platform-admins
+        - devops-team
+    
+    - name: developer
+      description: Limited access for developers
+      policies:
+        - p, proj:enterprise-saas-idp:developer, applications, get, enterprise-saas-idp/*, allow
+        - p, proj:enterprise-saas-idp:developer, applications, sync, enterprise-saas-idp/saas-idp-staging, allow
+        - p, proj:enterprise-saas-idp:developer, repositories, get, *, allow
+      groups:
+        - developers
+        - qa-team
+    
+    - name: viewer
+      description: Read-only access
+      policies:
+        - p, proj:enterprise-saas-idp:viewer, applications, get, enterprise-saas-idp/*, allow
+        - p, proj:enterprise-saas-idp:viewer, repositories, get, *, allow
+      groups:
+        - stakeholders
+        - security-team
+
+---
+# Rollback Application for Emergency Scenarios
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: saas-idp-rollback
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "999"  # Last priority
+spec:
+  project: enterprise-saas-idp
+  source:
+    repoURL: https://github.com/your-org/saas-idp-gitops.git
+    targetRevision: HEAD
+    path: rollback
+    helm:
+      valueFiles:
+        - values-rollback.yaml
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: saas-idp-rollback
+  syncPolicy:
+    manual: {}  # Manual sync only for rollback scenarios
+    syncOptions:
+      - CreateNamespace=true
+  revisionHistoryLimit: 50  # Keep more history for rollback scenarios
+
+---
+# Application Set for Multi-Cluster Deployment
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: saas-idp-multi-cluster
+  namespace: argocd
+spec:
+  generators:
+    - clusters:
+        selector:
+          matchLabels:
+            environment: production
+  template:
+    metadata:
+      name: '{{name}}-saas-idp'
+    spec:
+      project: enterprise-saas-idp
+      source:
+        repoURL: https://github.com/your-org/saas-idp-gitops.git
+        targetRevision: HEAD
+        path: environments/{{metadata.labels.environment}}
+        helm:
+          valueFiles:
+            - values-{{metadata.labels.environment}}.yaml
+            - values-{{name}}.yaml
+      destination:
+        server: '{{server}}'
+        namespace: saas-idp
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: false
+        syncOptions:
+          - CreateNamespace=true

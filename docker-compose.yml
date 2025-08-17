@@ -8,14 +8,15 @@ services:
       dockerfile: Dockerfile
       target: runner
       args:
-        NEXT_PUBLIC_BACKSTAGE_API_URL: ${NEXT_PUBLIC_BACKSTAGE_API_URL:-http://backstage-backend:4402}
+        NEXT_PUBLIC_BACKSTAGE_API_URL: ${NEXT_PUBLIC_BACKSTAGE_API_URL:-http://localhost:4402}
         NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:-http://localhost:4400}
     ports:
       - '4400:4400'
     environment:
       - NODE_ENV=production
       - PORT=4400
-      - BACKSTAGE_API_URL=${BACKSTAGE_API_URL:-http://backstage-backend:4402}
+      - BACKSTAGE_API_URL=${BACKSTAGE_API_URL:-http://localhost:4402}
+      - BACKSTAGE_BACKEND_URL=${BACKSTAGE_BACKEND_URL:-http://localhost:7007}
       - DATABASE_URL=${DATABASE_URL:-postgresql://postgres:postgres@db:5432/idp_wrapper}
       - REDIS_URL=${REDIS_URL:-redis://redis:6379}
     depends_on:

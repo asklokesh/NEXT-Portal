@@ -1,0 +1,494 @@
+# Tekton CI/CD Pipeline for Enterprise SaaS IDP
+# Supports Fortune 500 enterprise requirements with 99.99% uptime SLA
+
+apiVersion: tekton.dev/v1beta1
+kind: Pipeline
+metadata:
+  name: enterprise-saas-idp-pipeline
+  namespace: tekton-pipelines
+  annotations:
+    description: "Enterprise-grade CI/CD pipeline for SaaS IDP with security scanning, testing, and deployment"
+    version: "v1.0.0"
+spec:
+  params:
+    - name: git-url
+      type: string
+      description: Git repository URL
+      default: https://github.com/your-org/saas-idp.git
+    - name: git-revision
+      type: string
+      description: Git revision to build
+      default: main
+    - name: deployment-environment
+      type: string
+      description: Target deployment environment
+      default: production
+    - name: enable-canary
+      type: string
+      description: Enable canary deployment
+      default: "true"
+    - name: security-scan-level
+      type: string
+      description: Security scanning level (basic/enterprise)
+      default: enterprise
+    - name: performance-test-enabled
+      type: string
+      description: Enable performance testing
+      default: "true"
+    - name: approval-required
+      type: string
+      description: Require manual approval for production
+      default: "true"
+
+  workspaces:
+    - name: shared-data
+      description: Shared workspace for pipeline data
+    - name: git-credentials
+      description: Git credentials for private repositories
+    - name: registry-credentials
+      description: Container registry credentials
+    - name: kubeconfig
+      description: Kubernetes configuration for deployments
+
+  tasks:
+    # 1. Source Code Checkout and Validation
+    - name: git-clone
+      taskRef:
+        name: git-clone
+        kind: ClusterTask
+      workspaces:
+        - name: output
+          workspace: shared-data
+        - name: ssh-directory
+          workspace: git-credentials
+      params:
+        - name: url
+          value: $(params.git-url)
+        - name: revision
+          value: $(params.git-revision)
+        - name: deleteExisting
+          value: "true"
+        - name: verbose
+          value: "true"
+
+    # 2. Code Quality and Compliance Checks
+    - name: code-quality-scan
+      runAfter: ["git-clone"]
+      taskRef:
+        name: sonarqube-scanner
+      workspaces:
+        - name: source
+          workspace: shared-data
+      params:
+        - name: SONAR_HOST_URL
+          value: "https://sonarqube.company.com"
+        - name: SONAR_PROJECT_KEY
+          value: "enterprise-saas-idp"
+        - name: quality-gate-timeout
+          value: "300"
+
+    # 3. Dependency Security Scan
+    - name: dependency-security-scan
+      runAfter: ["git-clone"]
+      taskRef:
+        name: snyk-security-scan
+      workspaces:
+        - name: source
+          workspace: shared-data
+      params:
+        - name: SNYK_TOKEN_SECRET
+          value: snyk-token
+        - name: severity-threshold
+          value: "high"
+        - name: fail-on-issues
+          value: "true"
+        - name: monitor
+          value: "true"
+
+    # 4. License Compliance Check
+    - name: license-compliance
+      runAfter: ["git-clone"]
+      taskRef:
+        name: fossa-scan
+      workspaces:
+        - name: source
+          workspace: shared-data
+      params:
+        - name: FOSSA_API_KEY_SECRET
+          value: fossa-api-key
+        - name: project-name
+          value: "enterprise-saas-idp"
+
+    # 5. Unit and Integration Tests
+    - name: unit-tests
+      runAfter: ["code-quality-scan"]
+      taskRef:
+        name: npm-test
+      workspaces:
+        - name: source
+          workspace: shared-data
+      params:
+        - name: ARGS
+          value: ["test", "--coverage", "--ci", "--watchAll=false"]
+        - name: coverage-threshold
+          value: "90"
+
+    # 6. Build Application and Dependencies
+    - name: build-application
+      runAfter: ["unit-tests", "dependency-security-scan", "license-compliance"]
+      taskRef:
+        name: npm-build
+      workspaces:
+        - name: source
+          workspace: shared-data
+      params:
+        - name: BUILD_ARGS
+          value: ["build:production"]
+        - name: NODE_ENV
+          value: "production"
+        - name: BUILD_MEMORY_LIMIT
+          value: "20GB"
+
+    # 7. Build and Push Container Images
+    - name: build-and-push-images
+      runAfter: ["build-application"]
+      taskRef:
+        name: kaniko
+      workspaces:
+        - name: source
+          workspace: shared-data
+        - name: dockerconfig
+          workspace: registry-credentials
+      params:
+        - name: IMAGE
+          value: "registry.company.com/saas-idp:$(params.git-revision)"
+        - name: DOCKERFILE
+          value: "./Dockerfile.production"
+        - name: CONTEXT
+          value: "."
+        - name: EXTRA_ARGS
+          value: 
+            - "--cache=true"
+            - "--cache-ttl=24h"
+            - "--build-arg=BUILD_VERSION=$(params.git-revision)"
+            - "--build-arg=BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+
+    # 8. Container Security Scan
+    - name: container-security-scan
+      runAfter: ["build-and-push-images"]
+      taskRef:
+        name: trivy-scanner
+      params:
+        - name: IMAGE
+          value: "registry.company.com/saas-idp:$(params.git-revision)"
+        - name: severity
+          value: "HIGH,CRITICAL"
+        - name: exit-code
+          value: "1"
+        - name: format
+          value: "sarif"
+        - name: output
+          value: "/workspace/trivy-results.sarif"
+
+    # 9. Infrastructure as Code Validation
+    - name: iac-validation
+      runAfter: ["git-clone"]
+      taskRef:
+        name: terraform-validate
+      workspaces:
+        - name: source
+          workspace: shared-data
+      params:
+        - name: terraform-dir
+          value: "./infrastructure/terraform"
+        - name: checkov-scan
+          value: "true"
+        - name: tfsec-scan
+          value: "true"
+
+    # 10. Performance and Load Testing
+    - name: performance-testing
+      runAfter: ["container-security-scan"]
+      when:
+        - input: $(params.performance-test-enabled)
+          operator: in
+          values: ["true"]
+      taskRef:
+        name: k6-performance-test
+      workspaces:
+        - name: source
+          workspace: shared-data
+      params:
+        - name: test-script
+          value: "./tests/performance/load-test.js"
+        - name: target-url
+          value: "https://staging.saas-idp.company.com"
+        - name: virtual-users
+          value: "1000"
+        - name: duration
+          value: "10m"
+        - name: success-rate-threshold
+          value: "99.5"
+
+    # 11. End-to-End Testing
+    - name: e2e-testing
+      runAfter: ["performance-testing"]
+      taskRef:
+        name: playwright-e2e
+      workspaces:
+        - name: source
+          workspace: shared-data
+      params:
+        - name: test-command
+          value: "npm run test:e2e:ci"
+        - name: browser
+          value: "chromium,firefox,webkit"
+        - name: workers
+          value: "4"
+        - name: retries
+          value: "2"
+
+    # 12. Manual Approval Gate (Production Only)
+    - name: manual-approval
+      runAfter: ["e2e-testing"]
+      when:
+        - input: $(params.approval-required)
+          operator: in
+          values: ["true"]
+        - input: $(params.deployment-environment)
+          operator: in
+          values: ["production"]
+      taskRef:
+        name: manual-approval-task
+      params:
+        - name: message
+          value: "Production deployment ready. Approve to continue with deployment to $(params.deployment-environment)"
+        - name: timeout
+          value: "24h"
+        - name: approvers
+          value: "platform-team,devops-team,security-team"
+
+    # 13. Deploy to Staging (Blue-Green)
+    - name: deploy-to-staging
+      runAfter: ["e2e-testing"]
+      when:
+        - input: $(params.deployment-environment)
+          operator: in
+          values: ["staging"]
+      taskRef:
+        name: argocd-deploy
+      workspaces:
+        - name: kubeconfig
+          workspace: kubeconfig
+      params:
+        - name: application-name
+          value: "saas-idp-staging"
+        - name: image-tag
+          value: $(params.git-revision)
+        - name: deployment-strategy
+          value: "blue-green"
+        - name: auto-sync
+          value: "true"
+        - name: health-check-timeout
+          value: "600s"
+
+    # 14. Canary Deployment to Production
+    - name: canary-deployment
+      runAfter: ["manual-approval"]
+      when:
+        - input: $(params.enable-canary)
+          operator: in
+          values: ["true"]
+        - input: $(params.deployment-environment)
+          operator: in
+          values: ["production"]
+      taskRef:
+        name: flagger-canary-deploy
+      workspaces:
+        - name: kubeconfig
+          workspace: kubeconfig
+      params:
+        - name: application-name
+          value: "saas-idp-production"
+        - name: image-tag
+          value: $(params.git-revision)
+        - name: canary-percentage
+          value: "10"
+        - name: promotion-interval
+          value: "1m"
+        - name: success-threshold
+          value: "99"
+        - name: max-weight
+          value: "50"
+
+    # 15. Full Production Deployment
+    - name: production-deployment
+      runAfter: ["canary-deployment"]
+      when:
+        - input: $(params.deployment-environment)
+          operator: in
+          values: ["production"]
+      taskRef:
+        name: argocd-deploy
+      workspaces:
+        - name: kubeconfig
+          workspace: kubeconfig
+      params:
+        - name: application-name
+          value: "saas-idp-production"
+        - name: image-tag
+          value: $(params.git-revision)
+        - name: deployment-strategy
+          value: "rolling-update"
+        - name: auto-sync
+          value: "true"
+        - name: health-check-timeout
+          value: "900s"
+
+    # 16. Post-Deployment Smoke Tests
+    - name: smoke-tests
+      runAfter: ["deploy-to-staging", "production-deployment"]
+      taskRef:
+        name: smoke-test-runner
+      params:
+        - name: target-url
+          value: "https://$(params.deployment-environment).saas-idp.company.com"
+        - name: test-suite
+          value: "smoke"
+        - name: timeout
+          value: "300s"
+        - name: retry-count
+          value: "3"
+
+    # 17. Update Deployment Status and Notifications
+    - name: deployment-notifications
+      runAfter: ["smoke-tests"]
+      taskRef:
+        name: notification-sender
+      params:
+        - name: channels
+          value: "slack,email,teams"
+        - name: deployment-status
+          value: "$(tasks.smoke-tests.results.status)"
+        - name: environment
+          value: "$(params.deployment-environment)"
+        - name: git-revision
+          value: "$(params.git-revision)"
+        - name: deployment-url
+          value: "https://$(params.deployment-environment).saas-idp.company.com"
+
+  finally:
+    # Cleanup and Reporting
+    - name: cleanup-and-report
+      taskRef:
+        name: cleanup-task
+      workspaces:
+        - name: shared-data
+          workspace: shared-data
+      params:
+        - name: pipeline-status
+          value: "$(tasks.status)"
+        - name: generate-report
+          value: "true"
+        - name: upload-artifacts
+          value: "true"
+        - name: retention-days
+          value: "90"
+
+---
+apiVersion: tekton.dev/v1beta1
+kind: TriggerTemplate
+metadata:
+  name: enterprise-saas-idp-trigger-template
+  namespace: tekton-pipelines
+spec:
+  params:
+    - name: git-url
+      description: Git repository URL
+    - name: git-revision
+      description: Git revision
+      default: main
+    - name: deployment-environment
+      description: Deployment environment
+      default: staging
+  resourcetemplates:
+    - apiVersion: tekton.dev/v1beta1
+      kind: PipelineRun
+      metadata:
+        generateName: enterprise-saas-idp-run-
+        namespace: tekton-pipelines
+      spec:
+        pipelineRef:
+          name: enterprise-saas-idp-pipeline
+        params:
+          - name: git-url
+            value: $(tt.params.git-url)
+          - name: git-revision
+            value: $(tt.params.git-revision)
+          - name: deployment-environment
+            value: $(tt.params.deployment-environment)
+        workspaces:
+          - name: shared-data
+            volumeClaimTemplate:
+              spec:
+                accessModes:
+                  - ReadWriteOnce
+                resources:
+                  requests:
+                    storage: 10Gi
+                storageClassName: fast-ssd
+          - name: git-credentials
+            secret:
+              secretName: git-ssh-credentials
+          - name: registry-credentials
+            secret:
+              secretName: registry-credentials
+          - name: kubeconfig
+            secret:
+              secretName: kubeconfig-secret
+
+---
+apiVersion: triggers.tekton.dev/v1beta1
+kind: EventListener
+metadata:
+  name: enterprise-saas-idp-listener
+  namespace: tekton-pipelines
+spec:
+  serviceAccountName: tekton-triggers-sa
+  triggers:
+    - name: github-push-trigger
+      interceptors:
+        - name: github
+          params:
+            - name: secretRef
+              value:
+                secretName: github-webhook-secret
+                secretKey: secret
+            - name: eventTypes
+              value: ["push", "pull_request"]
+        - name: cel
+          params:
+            - name: filter
+              value: >
+                (header.match('X-GitHub-Event', 'push') && body.ref == 'refs/heads/main') ||
+                (header.match('X-GitHub-Event', 'pull_request') && body.action in ['opened', 'synchronize'])
+      bindings:
+        - ref: github-push-binding
+      template:
+        ref: enterprise-saas-idp-trigger-template
+
+---
+apiVersion: triggers.tekton.dev/v1beta1
+kind: TriggerBinding
+metadata:
+  name: github-push-binding
+  namespace: tekton-pipelines
+spec:
+  params:
+    - name: git-url
+      value: $(body.repository.clone_url)
+    - name: git-revision
+      value: $(body.head_commit.id)
+    - name: deployment-environment
+      value: >
+        $(body.ref == 'refs/heads/main' ? 'production' : 'staging')

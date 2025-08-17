@@ -1,0 +1,1470 @@
+# Global Monitoring and Observability Infrastructure
+# Prometheus, Grafana, Jaeger, ELK Stack, and Custom Metrics
+
+---
+# Multi-Region Prometheus Federation
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus-global-federation
+  namespace: saas-idp-monitoring
+  labels:
+    app: saas-idp
+    component: prometheus-federation
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app: saas-idp
+      component: prometheus-federation
+  template:
+    metadata:
+      labels:
+        app: saas-idp
+        component: prometheus-federation
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+    spec:
+      serviceAccountName: prometheus-federation
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        fsGroup: 65534
+      containers:
+      - name: prometheus
+        image: prom/prometheus:v2.47.0
+        args:
+          - '--config.file=/etc/prometheus/prometheus.yml'
+          - '--storage.tsdb.path=/prometheus/'
+          - '--web.console.libraries=/etc/prometheus/console_libraries'
+          - '--web.console.templates=/etc/prometheus/consoles'
+          - '--storage.tsdb.retention.time=720h'
+          - '--storage.tsdb.retention.size=100GB'
+          - '--web.enable-lifecycle'
+          - '--web.enable-admin-api'
+          - '--web.enable-remote-write-receiver'
+          - '--query.max-concurrency=50'
+          - '--query.max-samples=50000000'
+          - '--web.max-connections=512'
+        ports:
+        - name: http
+          containerPort: 9090
+        volumeMounts:
+        - name: prometheus-config
+          mountPath: /etc/prometheus
+        - name: prometheus-storage
+          mountPath: /prometheus
+        resources:
+          requests:
+            memory: "8Gi"
+            cpu: "2000m"
+          limits:
+            memory: "32Gi"
+            cpu: "8000m"
+        livenessProbe:
+          httpGet:
+            path: /-/healthy
+            port: http
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /-/ready
+            port: http
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+      volumes:
+      - name: prometheus-config
+        configMap:
+          name: prometheus-federation-config
+      - name: prometheus-storage
+        persistentVolumeClaim:
+          claimName: prometheus-federation-pvc
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-federation-config
+  namespace: saas-idp-monitoring
+  labels:
+    app: saas-idp
+    component: prometheus-federation
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+      evaluation_interval: 15s
+      external_labels:
+        cluster: 'global-federation'
+        replica: '$(POD_NAME)'
+        region: 'global'
+    
+    rule_files:
+      - "/etc/prometheus/rules/*.yml"
+    
+    alerting:
+      alertmanagers:
+        - static_configs:
+            - targets:
+              - alertmanager-global:9093
+    
+    scrape_configs:
+      # Federate from regional Prometheus instances
+      - job_name: 'federate-us-east'
+        scrape_interval: 30s
+        honor_labels: true
+        metrics_path: '/federate'
+        params:
+          'match[]':
+            - '{job=~"kubernetes-.*"}'
+            - '{job=~"saas-idp-.*"}'
+            - '{__name__=~"up|cluster:.*|instance:.*"}'
+            - '{__name__=~".*:rate5m|.*:rate1h"}'
+            - 'prometheus_build_info'
+            - 'prometheus_config_last_reload_successful'
+        static_configs:
+          - targets:
+            - 'prometheus-us-east.saas-idp-monitoring.svc.cluster.local:9090'
+        relabel_configs:
+          - source_labels: [__address__]
+            target_label: __param_target
+          - source_labels: [__param_target]
+            target_label: instance
+          - target_label: __address__
+            replacement: prometheus-us-east.saas-idp-monitoring.svc.cluster.local:9090
+          - target_label: region
+            replacement: us-east-1
+      
+      - job_name: 'federate-eu-west'
+        scrape_interval: 30s
+        honor_labels: true
+        metrics_path: '/federate'
+        params:
+          'match[]':
+            - '{job=~"kubernetes-.*"}'
+            - '{job=~"saas-idp-.*"}'
+            - '{__name__=~"up|cluster:.*|instance:.*"}'
+            - '{__name__=~".*:rate5m|.*:rate1h"}'
+        static_configs:
+          - targets:
+            - 'prometheus-eu-west.saas-idp-monitoring.svc.cluster.local:9090'
+        relabel_configs:
+          - target_label: region
+            replacement: eu-west-1
+      
+      - job_name: 'federate-ap-southeast'
+        scrape_interval: 30s
+        honor_labels: true
+        metrics_path: '/federate'
+        params:
+          'match[]':
+            - '{job=~"kubernetes-.*"}'
+            - '{job=~"saas-idp-.*"}'
+            - '{__name__=~"up|cluster:.*|instance:.*"}'
+            - '{__name__=~".*:rate5m|.*:rate1h"}'
+        static_configs:
+          - targets:
+            - 'prometheus-ap-southeast.saas-idp-monitoring.svc.cluster.local:9090'
+        relabel_configs:
+          - target_label: region
+            replacement: ap-southeast-1
+      
+      # Global infrastructure metrics
+      - job_name: 'cloudfront-exporter'
+        static_configs:
+          - targets:
+            - 'cloudfront-exporter:9100'
+      
+      - job_name: 'aws-load-balancer-controller'
+        kubernetes_sd_configs:
+        - role: pod
+          namespaces:
+            names:
+            - kube-system
+        relabel_configs:
+        - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_name]
+          action: keep
+          regex: aws-load-balancer-controller
+      
+      # Custom business metrics
+      - job_name: 'business-metrics'
+        scrape_interval: 60s
+        static_configs:
+          - targets:
+            - 'saas-idp-app:4400'
+        metrics_path: '/api/metrics/business'
+        scrape_timeout: 30s
+      
+      # CDN metrics
+      - job_name: 'cdn-metrics'
+        scrape_interval: 300s
+        static_configs:
+          - targets:
+            - 'cdn-metrics-collector:8080'
+    
+    remote_write:
+      - url: "https://prometheus-remote-write.saas-idp.com/api/v1/write"
+        queue_config:
+          capacity: 10000
+          max_shards: 50
+          min_shards: 1
+          max_samples_per_send: 2000
+          batch_send_deadline: 10s
+        metadata_config:
+          send: true
+          send_interval: 30s
+        write_relabel_configs:
+          - source_labels: [__name__]
+            regex: 'go_.*|prometheus_.*|up'
+            action: drop
+    
+    recording_rules:
+      - name: "global_aggregations"
+        interval: 30s
+        rules:
+        - record: saas_idp:request_rate_5m
+          expr: sum(rate(http_requests_total{job="saas-idp-app"}[5m])) by (region, method, status)
+        - record: saas_idp:error_rate_5m
+          expr: sum(rate(http_requests_total{job="saas-idp-app",status=~"5.."}[5m])) / sum(rate(http_requests_total{job="saas-idp-app"}[5m]))
+        - record: saas_idp:latency_p95_5m
+          expr: histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{job="saas-idp-app"}[5m])) by (le, region))
+        - record: saas_idp:active_users_total
+          expr: sum(saas_idp_active_users) by (region)
+        - record: saas_idp:plugin_installations_rate_1h
+          expr: sum(rate(saas_idp_plugin_installations_total[1h])) by (region)
+
+  global-alerts.yml: |
+    groups:
+    - name: global-infrastructure
+      rules:
+      - alert: GlobalHighErrorRate
+        expr: saas_idp:error_rate_5m > 0.05
+        for: 5m
+        labels:
+          severity: critical
+          team: platform
+        annotations:
+          summary: "Global error rate is high"
+          description: "Error rate is {{ $value | humanizePercentage }} across all regions"
+          runbook_url: "https://runbooks.saas-idp.com/global-high-error-rate"
+      
+      - alert: GlobalHighLatency
+        expr: saas_idp:latency_p95_5m > 1
+        for: 10m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "Global P95 latency is high"
+          description: "P95 latency is {{ $value }}s in region {{ $labels.region }}"
+      
+      - alert: RegionDown
+        expr: up{job=~"federate-.*"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          team: sre
+        annotations:
+          summary: "Region {{ $labels.job }} is down"
+          description: "Cannot scrape metrics from {{ $labels.job }}"
+      
+      - alert: DatabaseReplicationLag
+        expr: postgres_replication_lag_seconds > 10
+        for: 5m
+        labels:
+          severity: critical
+          team: database
+        annotations:
+          summary: "Database replication lag is high"
+          description: "Replication lag is {{ $value }}s for replica {{ $labels.instance }}"
+      
+      - alert: CDNHighErrorRate
+        expr: cloudfront_error_rate_5m > 0.02
+        for: 5m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "CDN error rate is high"
+          description: "CloudFront error rate is {{ $value | humanizePercentage }}"
+
+---
+# Global Alertmanager
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alertmanager-global
+  namespace: saas-idp-monitoring
+  labels:
+    app: saas-idp
+    component: alertmanager-global
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: saas-idp
+      component: alertmanager-global
+  template:
+    metadata:
+      labels:
+        app: saas-idp
+        component: alertmanager-global
+    spec:
+      serviceAccountName: alertmanager-global
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        fsGroup: 65534
+      containers:
+      - name: alertmanager
+        image: prom/alertmanager:v0.26.0
+        args:
+          - '--config.file=/etc/alertmanager/alertmanager.yml'
+          - '--storage.path=/alertmanager'
+          - '--web.listen-address=0.0.0.0:9093'
+          - '--web.external-url=https://alerts.saas-idp.com'
+          - '--cluster.listen-address=0.0.0.0:9094'
+          - '--cluster.peer=alertmanager-global-0.alertmanager-global:9094'
+          - '--cluster.peer=alertmanager-global-1.alertmanager-global:9094'
+          - '--cluster.peer=alertmanager-global-2.alertmanager-global:9094'
+          - '--log.level=info'
+        ports:
+        - name: http
+          containerPort: 9093
+        - name: cluster
+          containerPort: 9094
+        volumeMounts:
+        - name: alertmanager-config
+          mountPath: /etc/alertmanager
+        - name: alertmanager-storage
+          mountPath: /alertmanager
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "200m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+        livenessProbe:
+          httpGet:
+            path: /-/healthy
+            port: http
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /-/ready
+            port: http
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+      volumes:
+      - name: alertmanager-config
+        configMap:
+          name: alertmanager-global-config
+      - name: alertmanager-storage
+        persistentVolumeClaim:
+          claimName: alertmanager-global-pvc
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: alertmanager-global-config
+  namespace: saas-idp-monitoring
+  labels:
+    app: saas-idp
+    component: alertmanager-global
+data:
+  alertmanager.yml: |
+    global:
+      smtp_smarthost: 'smtp.sendgrid.net:587'
+      smtp_from: 'alerts@saas-idp.com'
+      smtp_auth_username: 'apikey'
+      smtp_auth_password_file: '/etc/alertmanager/secrets/smtp_password'
+      slack_api_url_file: '/etc/alertmanager/secrets/slack_webhook'
+    
+    templates:
+      - '/etc/alertmanager/templates/*.tmpl'
+    
+    route:
+      group_by: ['alertname', 'cluster', 'service']
+      group_wait: 30s
+      group_interval: 5m
+      repeat_interval: 4h
+      receiver: 'default'
+      routes:
+      - match:
+          severity: critical
+        receiver: 'critical-alerts'
+        group_wait: 10s
+        repeat_interval: 1h
+      - match:
+          team: sre
+        receiver: 'sre-team'
+      - match:
+          team: database
+        receiver: 'database-team'
+      - match:
+          team: platform
+        receiver: 'platform-team'
+      - match_re:
+          alertname: '.*Test.*'
+        receiver: 'null'
+    
+    inhibit_rules:
+    - source_match:
+        severity: 'critical'
+      target_match:
+        severity: 'warning'
+      equal: ['alertname', 'cluster', 'service']
+    - source_match:
+        alertname: 'RegionDown'
+      target_match_re:
+        alertname: '.*'
+      equal: ['region']
+    
+    receivers:
+    - name: 'default'
+      slack_configs:
+      - channel: '#alerts'
+        title: 'SaaS IDP Alert'
+        text: >
+          {{ range .Alerts }}
+          *Alert:* {{ .Annotations.summary }}
+          *Description:* {{ .Annotations.description }}
+          *Details:* {{ range .Labels.SortedPairs }} • *{{ .Name }}:* `{{ .Value }}`{{ end }}
+          {{ end }}
+        send_resolved: true
+    
+    - name: 'critical-alerts'
+      slack_configs:
+      - channel: '#critical-alerts'
+        title: 'CRITICAL: SaaS IDP Alert'
+        color: 'danger'
+        text: >
+          <!channel>
+          {{ range .Alerts }}
+          *Alert:* {{ .Annotations.summary }}
+          *Description:* {{ .Annotations.description }}
+          *Runbook:* {{ .Annotations.runbook_url }}
+          *Details:* {{ range .Labels.SortedPairs }} • *{{ .Name }}:* `{{ .Value }}`{{ end }}
+          {{ end }}
+        send_resolved: true
+      pagerduty_configs:
+      - service_key_file: '/etc/alertmanager/secrets/pagerduty_key'
+        description: '{{ .CommonAnnotations.summary }}'
+        details:
+          summary: '{{ .CommonAnnotations.summary }}'
+          description: '{{ .CommonAnnotations.description }}'
+          num_alerts: '{{ .Alerts | len }}'
+      email_configs:
+      - to: 'sre-oncall@saas-idp.com'
+        subject: 'CRITICAL: {{ .CommonAnnotations.summary }}'
+        body: |
+          Alert Details:
+          {{ range .Alerts }}
+          - Summary: {{ .Annotations.summary }}
+          - Description: {{ .Annotations.description }}
+          - Labels: {{ range .Labels.SortedPairs }}{{ .Name }}={{ .Value }} {{ end }}
+          - Started: {{ .StartsAt }}
+          {{ end }}
+    
+    - name: 'sre-team'
+      slack_configs:
+      - channel: '#sre-team'
+        title: 'SRE Alert: {{ .CommonAnnotations.summary }}'
+        send_resolved: true
+      email_configs:
+      - to: 'sre@saas-idp.com'
+        subject: 'SRE Alert: {{ .CommonAnnotations.summary }}'
+    
+    - name: 'database-team'
+      slack_configs:
+      - channel: '#database-team'
+        title: 'Database Alert: {{ .CommonAnnotations.summary }}'
+        send_resolved: true
+      email_configs:
+      - to: 'database@saas-idp.com'
+        subject: 'Database Alert: {{ .CommonAnnotations.summary }}'
+    
+    - name: 'platform-team'
+      slack_configs:
+      - channel: '#platform-team'
+        title: 'Platform Alert: {{ .CommonAnnotations.summary }}'
+        send_resolved: true
+    
+    - name: 'null'
+
+---
+# Global Grafana with Multi-Region Datasources
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana-global
+  namespace: saas-idp-monitoring
+  labels:
+    app: saas-idp
+    component: grafana-global
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app: saas-idp
+      component: grafana-global
+  template:
+    metadata:
+      labels:
+        app: saas-idp
+        component: grafana-global
+    spec:
+      serviceAccountName: grafana-global
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 472
+        fsGroup: 472
+      containers:
+      - name: grafana
+        image: grafana/grafana:10.1.0
+        ports:
+        - name: http
+          containerPort: 3000
+        env:
+        - name: GF_SECURITY_ADMIN_USER
+          valueFrom:
+            secretKeyRef:
+              name: grafana-credentials
+              key: admin-user
+        - name: GF_SECURITY_ADMIN_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: grafana-credentials
+              key: admin-password
+        - name: GF_DATABASE_TYPE
+          value: postgres
+        - name: GF_DATABASE_HOST
+          value: postgres-read-us:5432
+        - name: GF_DATABASE_NAME
+          value: grafana
+        - name: GF_DATABASE_USER
+          valueFrom:
+            secretKeyRef:
+              name: grafana-db-credentials
+              key: username
+        - name: GF_DATABASE_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: grafana-db-credentials
+              key: password
+        - name: GF_SESSION_PROVIDER
+          value: redis
+        - name: GF_SESSION_PROVIDER_CONFIG
+          value: addr=redis-master:6379,pool_size=100,prefix=grafana
+        - name: GF_AUTH_GENERIC_OAUTH_ENABLED
+          value: "true"
+        - name: GF_AUTH_GENERIC_OAUTH_CLIENT_ID
+          valueFrom:
+            secretKeyRef:
+              name: oauth-credentials
+              key: client-id
+        - name: GF_AUTH_GENERIC_OAUTH_CLIENT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: oauth-credentials
+              key: client-secret
+        - name: GF_INSTALL_PLUGINS
+          value: >-
+            grafana-worldmap-panel,
+            grafana-piechart-panel,
+            briangann-gauge-panel,
+            natel-discrete-panel,
+            vonage-status-panel,
+            flant-statusmap-panel
+        volumeMounts:
+        - name: grafana-storage
+          mountPath: /var/lib/grafana
+        - name: grafana-datasources
+          mountPath: /etc/grafana/provisioning/datasources
+        - name: grafana-dashboards-config
+          mountPath: /etc/grafana/provisioning/dashboards
+        - name: grafana-dashboards
+          mountPath: /var/lib/grafana/dashboards
+        resources:
+          requests:
+            memory: "2Gi"
+            cpu: "500m"
+          limits:
+            memory: "8Gi"
+            cpu: "2000m"
+        livenessProbe:
+          httpGet:
+            path: /api/health
+            port: http
+          initialDelaySeconds: 60
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /api/health
+            port: http
+          initialDelaySeconds: 30
+          periodSeconds: 5
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+      volumes:
+      - name: grafana-storage
+        persistentVolumeClaim:
+          claimName: grafana-global-pvc
+      - name: grafana-datasources
+        configMap:
+          name: grafana-global-datasources
+      - name: grafana-dashboards-config
+        configMap:
+          name: grafana-global-dashboards-config
+      - name: grafana-dashboards
+        configMap:
+          name: grafana-global-dashboards
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-global-datasources
+  namespace: saas-idp-monitoring
+  labels:
+    app: saas-idp
+    component: grafana-global
+data:
+  datasources.yaml: |
+    apiVersion: 1
+    datasources:
+    - name: Prometheus-Global-Federation
+      type: prometheus
+      access: proxy
+      url: http://prometheus-global-federation:9090
+      isDefault: true
+      editable: false
+      jsonData:
+        timeInterval: "30s"
+        queryTimeout: "300s"
+        httpMethod: POST
+        manageAlerts: true
+        alertmanagerUid: alertmanager-global
+    
+    - name: Prometheus-US-East
+      type: prometheus
+      access: proxy
+      url: http://prometheus-us-east:9090
+      editable: false
+      jsonData:
+        timeInterval: "15s"
+        queryTimeout: "60s"
+        httpMethod: POST
+    
+    - name: Prometheus-EU-West
+      type: prometheus
+      access: proxy
+      url: http://prometheus-eu-west:9090
+      editable: false
+      jsonData:
+        timeInterval: "15s"
+        queryTimeout: "60s"
+        httpMethod: POST
+    
+    - name: Prometheus-AP-Southeast
+      type: prometheus
+      access: proxy
+      url: http://prometheus-ap-southeast:9090
+      editable: false
+      jsonData:
+        timeInterval: "15s"
+        queryTimeout: "60s"
+        httpMethod: POST
+    
+    - name: Jaeger
+      type: jaeger
+      access: proxy
+      url: http://jaeger-query:16686
+      editable: false
+    
+    - name: Loki-Global
+      type: loki
+      access: proxy
+      url: http://loki-gateway:3100
+      editable: false
+      jsonData:
+        maxLines: 5000
+        derivedFields:
+        - datasourceUid: jaeger
+          matcherRegex: "traceID=(\\w+)"
+          name: "TraceID"
+          url: "$${__value.raw}"
+    
+    - name: ElasticSearch
+      type: elasticsearch
+      access: proxy
+      url: http://elasticsearch:9200
+      database: "saas-idp-logs-*"
+      editable: false
+      jsonData:
+        interval: "Daily"
+        timeField: "@timestamp"
+        esVersion: "8.0.0"
+        includeFrozen: false
+        logLevelField: "level"
+        logMessageField: "message"
+
+---
+# Jaeger Distributed Tracing
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jaeger-all-in-one
+  namespace: saas-idp-monitoring
+  labels:
+    app: saas-idp
+    component: jaeger
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: saas-idp
+      component: jaeger
+  template:
+    metadata:
+      labels:
+        app: saas-idp
+        component: jaeger
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "14269"
+    spec:
+      containers:
+      - name: jaeger
+        image: jaegertracing/all-in-one:1.49
+        ports:
+        - name: jaeger-ui
+          containerPort: 16686
+        - name: jaeger-grpc
+          containerPort: 14250
+        - name: jaeger-thrift
+          containerPort: 14268
+        - name: jaeger-metrics
+          containerPort: 14269
+        - name: jaeger-config
+          containerPort: 5778
+        env:
+        - name: COLLECTOR_ZIPKIN_HOST_PORT
+          value: ":9411"
+        - name: SPAN_STORAGE_TYPE
+          value: "elasticsearch"
+        - name: ES_SERVER_URLS
+          value: "http://elasticsearch:9200"
+        - name: ES_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: elasticsearch-credentials
+              key: username
+        - name: ES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: elasticsearch-credentials
+              key: password
+        - name: JAEGER_DISABLED
+          value: "false"
+        - name: JAEGER_SAMPLER_TYPE
+          value: "probabilistic"
+        - name: JAEGER_SAMPLER_PARAM
+          value: "0.1"
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "4Gi"
+            cpu: "2000m"
+        livenessProbe:
+          httpGet:
+            path: /
+            port: jaeger-ui
+          initialDelaySeconds: 60
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /
+            port: jaeger-ui
+          initialDelaySeconds: 30
+          periodSeconds: 10
+
+---
+# Custom Metrics Collector
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: custom-metrics-collector
+  namespace: saas-idp-monitoring
+  labels:
+    app: saas-idp
+    component: custom-metrics-collector
+spec:
+  replicas: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app: saas-idp
+      component: custom-metrics-collector
+  template:
+    metadata:
+      labels:
+        app: saas-idp
+        component: custom-metrics-collector
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: custom-metrics-collector
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        fsGroup: 1001
+      containers:
+      - name: metrics-collector
+        image: saas-idp/custom-metrics-collector:latest
+        ports:
+        - name: http
+          containerPort: 8080
+        - name: metrics
+          containerPort: 9090
+        env:
+        - name: PROMETHEUS_URL
+          value: "http://prometheus-global-federation:9090"
+        - name: CLOUDWATCH_REGION
+          value: "us-east-1"
+        - name: BUSINESS_METRICS_INTERVAL
+          value: "60s"
+        - name: CDN_METRICS_INTERVAL
+          value: "300s"
+        - name: CUSTOM_METRICS_NAMESPACE
+          value: "SaaS-IDP/Custom"
+        envFrom:
+        - configMapRef:
+            name: custom-metrics-config
+        - secretRef:
+            name: aws-credentials
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "200m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: http
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: custom-metrics-config
+  namespace: saas-idp-monitoring
+  labels:
+    app: saas-idp
+    component: custom-metrics-collector
+data:
+  config.yaml: |
+    metrics_collectors:
+      business_metrics:
+        enabled: true
+        interval: 60s
+        endpoints:
+          - name: "active_users"
+            url: "http://saas-idp-app:4400/api/metrics/active-users"
+            method: "GET"
+            timeout: "30s"
+          - name: "plugin_installations"
+            url: "http://saas-idp-app:4400/api/metrics/plugin-installations"
+            method: "GET"
+            timeout: "30s"
+          - name: "revenue_metrics"
+            url: "http://saas-idp-app:4400/api/metrics/revenue"
+            method: "GET"
+            timeout: "30s"
+            headers:
+              Authorization: "Bearer ${METRICS_API_TOKEN}"
+      
+      cdn_metrics:
+        enabled: true
+        interval: 300s
+        cloudfront:
+          distributions:
+            - "E1234567890ABC"  # US-East distribution
+            - "E1234567890DEF"  # EU-West distribution
+            - "E1234567890GHI"  # AP-Southeast distribution
+          metrics:
+            - "Requests"
+            - "BytesDownloaded"
+            - "BytesUploaded"
+            - "4xxErrorRate"
+            - "5xxErrorRate"
+            - "OriginLatency"
+        fastly:
+          service_ids:
+            - "abc123"
+            - "def456"
+            - "ghi789"
+          metrics:
+            - "requests"
+            - "hits"
+            - "miss"
+            - "pass"
+            - "synth"
+            - "errors"
+            - "restarts"
+      
+      infrastructure_metrics:
+        enabled: true
+        interval: 30s
+        aws:
+          regions:
+            - "us-east-1"
+            - "eu-west-1"
+            - "ap-southeast-1"
+          services:
+            - "ELB"
+            - "RDS"
+            - "ElastiCache"
+            - "EKS"
+            - "EC2"
+        
+      performance_metrics:
+        enabled: true
+        interval: 15s
+        synthetic_monitoring:
+          endpoints:
+            - name: "api_health_us"
+              url: "https://api-us-east.saas-idp.com/api/health"
+              expected_status: 200
+              timeout: "10s"
+              region: "us-east-1"
+            - name: "api_health_eu"
+              url: "https://api-eu-west.saas-idp.com/api/health"
+              expected_status: 200
+              timeout: "10s"
+              region: "eu-west-1"
+            - name: "api_health_ap"
+              url: "https://api-ap-southeast.saas-idp.com/api/health"
+              expected_status: 200
+              timeout: "10s"
+              region: "ap-southeast-1"
+
+---
+# OpenTelemetry Collector for Unified Observability
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: otel-collector
+  namespace: saas-idp-monitoring
+  labels:
+    app: saas-idp
+    component: otel-collector
+spec:
+  selector:
+    matchLabels:
+      app: saas-idp
+      component: otel-collector
+  template:
+    metadata:
+      labels:
+        app: saas-idp
+        component: otel-collector
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8888"
+    spec:
+      serviceAccountName: otel-collector
+      hostNetwork: true
+      hostPID: true
+      tolerations:
+      - key: node-role.kubernetes.io/control-plane
+        effect: NoSchedule
+      - key: node-role.kubernetes.io/master
+        effect: NoSchedule
+      containers:
+      - name: otel-collector
+        image: otel/opentelemetry-collector-contrib:0.85.0
+        command:
+          - "/otelcol-contrib"
+          - "--config=/etc/otel-collector-config/otel-collector.yaml"
+        ports:
+        - name: otlp-grpc
+          containerPort: 4317
+          hostPort: 4317
+        - name: otlp-http
+          containerPort: 4318
+          hostPort: 4318
+        - name: jaeger-grpc
+          containerPort: 14250
+          hostPort: 14250
+        - name: jaeger-thrift
+          containerPort: 14268
+          hostPort: 14268
+        - name: zipkin
+          containerPort: 9411
+          hostPort: 9411
+        - name: metrics
+          containerPort: 8888
+        - name: prometheus
+          containerPort: 8889
+        env:
+        - name: K8S_NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        volumeMounts:
+        - name: otel-collector-config
+          mountPath: /etc/otel-collector-config
+        - name: varlog
+          mountPath: /var/log
+          readOnly: true
+        - name: varlibdockercontainers
+          mountPath: /var/lib/docker/containers
+          readOnly: true
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "200m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+        securityContext:
+          runAsUser: 0
+          privileged: true
+      volumes:
+      - name: otel-collector-config
+        configMap:
+          name: otel-collector-config
+      - name: varlog
+        hostPath:
+          path: /var/log
+      - name: varlibdockercontainers
+        hostPath:
+          path: /var/lib/docker/containers
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: otel-collector-config
+  namespace: saas-idp-monitoring
+  labels:
+    app: saas-idp
+    component: otel-collector
+data:
+  otel-collector.yaml: |
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+          http:
+            endpoint: 0.0.0.0:4318
+      
+      jaeger:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:14250
+          thrift_http:
+            endpoint: 0.0.0.0:14268
+      
+      zipkin:
+        endpoint: 0.0.0.0:9411
+      
+      prometheus:
+        config:
+          scrape_configs:
+          - job_name: 'otel-collector'
+            scrape_interval: 10s
+            static_configs:
+            - targets: ['0.0.0.0:8888']
+      
+      filelog:
+        include:
+          - /var/log/pods/*/*/*.log
+        exclude:
+          - /var/log/pods/*/otel-collector/*/*.log
+        start_at: end
+        include_file_path: true
+        include_file_name: false
+        operators:
+          - type: router
+            id: get-format
+            routes:
+              - output: parser-docker
+                expr: 'body matches "^\\{"'
+              - output: parser-crio
+                expr: 'body matches "^[^ Z]+ "'
+              - output: parser-containerd
+                expr: 'body matches "^[^ Z]+Z"'
+          - type: json_parser
+            id: parser-docker
+            output: extract_metadata_from_filepath
+            timestamp:
+              parse_from: attributes.time
+              layout: '%Y-%m-%dT%H:%M:%S.%LZ'
+          - type: regex_parser
+            id: parser-crio
+            regex: '^(?P<time>[^ Z]+) (?P<stream>stdout|stderr) (?P<logtag>[^ ]*) ?(?P<log>.*)$'
+            output: extract_metadata_from_filepath
+            timestamp:
+              parse_from: attributes.time
+              layout: '%Y-%m-%dT%H:%M:%S.%L%z'
+          - type: regex_parser
+            id: parser-containerd
+            regex: '^(?P<time>[^ ^Z]+Z) (?P<stream>stdout|stderr) (?P<logtag>[^ ]*) ?(?P<log>.*)$'
+            output: extract_metadata_from_filepath
+            timestamp:
+              parse_from: attributes.time
+              layout: '%Y-%m-%dT%H:%M:%S.%LZ'
+          - type: regex_parser
+            id: extract_metadata_from_filepath
+            regex: '^.*\/(?P<namespace>[^_]+)_(?P<pod_name>[^_]+)_(?P<uid>[a-f0-9\-]{36})\/(?P<container_name>[^\._]+)\/(?P<restart_count>\d+)\.log$'
+            parse_from: attributes["log.file.path"]
+            cache:
+              size: 128
+          - type: move
+            from: attributes.log
+            to: body
+          - type: move
+            from: attributes.stream
+            to: attributes["log.iostream"]
+          - type: move
+            from: attributes.container_name
+            to: resource["k8s.container.name"]
+          - type: move
+            from: attributes.namespace
+            to: resource["k8s.namespace.name"]
+          - type: move
+            from: attributes.pod_name
+            to: resource["k8s.pod.name"]
+          - type: move
+            from: attributes.restart_count
+            to: resource["k8s.container.restart_count"]
+          - type: move
+            from: attributes.uid
+            to: resource["k8s.pod.uid"]
+    
+    processors:
+      batch:
+        timeout: 1s
+        send_batch_size: 1024
+      
+      memory_limiter:
+        limit_mib: 1000
+      
+      resource:
+        attributes:
+          - key: deployment.environment
+            value: production
+            action: insert
+          - key: service.namespace
+            value: saas-idp
+            action: insert
+          - key: k8s.node.name
+            from_attribute: k8s.node.name
+            action: insert
+      
+      resourcedetection:
+        detectors: [env, system, k8s_node, aws]
+        timeout: 2s
+        override: false
+      
+      k8sattributes:
+        auth_type: "serviceAccount"
+        passthrough: false
+        filter:
+          node_from_env_var: K8S_NODE_NAME
+        extract:
+          metadata:
+            - k8s.pod.name
+            - k8s.pod.uid
+            - k8s.deployment.name
+            - k8s.namespace.name
+            - k8s.node.name
+            - k8s.service.name
+          labels:
+            - tag_name: app
+              key: app.kubernetes.io/name
+              from: pod
+            - tag_name: version
+              key: app.kubernetes.io/version
+              from: pod
+        pod_association:
+          - sources:
+            - from: resource_attribute
+              name: k8s.pod.ip
+          - sources:
+            - from: resource_attribute
+              name: k8s.pod.uid
+          - sources:
+            - from: connection
+    
+    exporters:
+      prometheus:
+        endpoint: "0.0.0.0:8889"
+        namespace: saas_idp
+        const_labels:
+          environment: production
+      
+      jaeger:
+        endpoint: jaeger-collector:14250
+        tls:
+          insecure: true
+      
+      loki:
+        endpoint: http://loki-distributor:3100/loki/api/v1/push
+        tenant_id: "saas-idp"
+        labels:
+          attributes:
+            k8s.container.name: "container"
+            k8s.pod.name: "pod"
+            k8s.namespace.name: "namespace"
+            log.iostream: "stream"
+          resource:
+            k8s.cluster.name: "cluster"
+      
+      elasticsearch:
+        endpoints:
+          - http://elasticsearch:9200
+        index: saas-idp-traces
+        mapping:
+          mode: raw
+        auth:
+          authenticator: basicauth/elasticsearch
+      
+      otlphttp:
+        endpoint: http://jaeger-collector:14268/api/traces
+        headers:
+          X-Scope-OrgID: "saas-idp"
+    
+    extensions:
+      basicauth/elasticsearch:
+        client_auth:
+          username: elastic
+          password_file: /etc/elasticsearch/password
+      
+      health_check:
+        endpoint: 0.0.0.0:13133
+      
+      pprof:
+        endpoint: 0.0.0.0:1777
+      
+      zpages:
+        endpoint: 0.0.0.0:55679
+    
+    service:
+      extensions: [health_check, pprof, zpages, basicauth/elasticsearch]
+      pipelines:
+        traces:
+          receivers: [otlp, jaeger, zipkin]
+          processors: [memory_limiter, k8sattributes, resourcedetection, resource, batch]
+          exporters: [jaeger, elasticsearch]
+        
+        metrics:
+          receivers: [otlp, prometheus]
+          processors: [memory_limiter, k8sattributes, resourcedetection, resource, batch]
+          exporters: [prometheus]
+        
+        logs:
+          receivers: [otlp, filelog]
+          processors: [memory_limiter, k8sattributes, resourcedetection, resource, batch]
+          exporters: [loki]
+      
+      telemetry:
+        logs:
+          level: "info"
+        metrics:
+          address: 0.0.0.0:8888
+
+---
+# Service Accounts and RBAC
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: prometheus-federation
+  namespace: saas-idp-monitoring
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: alertmanager-global
+  namespace: saas-idp-monitoring
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: grafana-global
+  namespace: saas-idp-monitoring
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: custom-metrics-collector
+  namespace: saas-idp-monitoring
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: otel-collector
+  namespace: saas-idp-monitoring
+
+---
+# Services
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus-global-federation
+  namespace: saas-idp-monitoring
+  labels:
+    app: saas-idp
+    component: prometheus-federation
+spec:
+  type: ClusterIP
+  ports:
+  - name: http
+    port: 9090
+    targetPort: http
+  selector:
+    app: saas-idp
+    component: prometheus-federation
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: alertmanager-global
+  namespace: saas-idp-monitoring
+  labels:
+    app: saas-idp
+    component: alertmanager-global
+spec:
+  type: ClusterIP
+  ports:
+  - name: http
+    port: 9093
+    targetPort: http
+  selector:
+    app: saas-idp
+    component: alertmanager-global
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana-global
+  namespace: saas-idp-monitoring
+  labels:
+    app: saas-idp
+    component: grafana-global
+spec:
+  type: LoadBalancer
+  ports:
+  - name: http
+    port: 80
+    targetPort: http
+  selector:
+    app: saas-idp
+    component: grafana-global
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: jaeger-query
+  namespace: saas-idp-monitoring
+  labels:
+    app: saas-idp
+    component: jaeger
+spec:
+  type: ClusterIP
+  ports:
+  - name: jaeger-ui
+    port: 16686
+    targetPort: jaeger-ui
+  - name: jaeger-grpc
+    port: 14250
+    targetPort: jaeger-grpc
+  - name: jaeger-thrift
+    port: 14268
+    targetPort: jaeger-thrift
+  selector:
+    app: saas-idp
+    component: jaeger
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: custom-metrics-collector
+  namespace: saas-idp-monitoring
+  labels:
+    app: saas-idp
+    component: custom-metrics-collector
+spec:
+  type: ClusterIP
+  ports:
+  - name: http
+    port: 8080
+    targetPort: http
+  - name: metrics
+    port: 9090
+    targetPort: metrics
+  selector:
+    app: saas-idp
+    component: custom-metrics-collector
