@@ -6,7 +6,7 @@ describe('JWT Token Management', () => {
  id: 'test-user-id',
  email: 'test@example.com',
  name: 'Test User',
- role: 'USER' as const,
+  role: 'USER',
  isActive: true,
  createdAt: new Date(),
  updatedAt: new Date(),
