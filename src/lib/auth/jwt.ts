@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-unused-vars, @typescript-eslint/consistent-type-imports, import/order, @typescript-eslint/no-misused-promises, @typescript-eslint/no-floating-promises, @typescript-eslint/require-await, no-console, no-dupe-else-if, no-return-await, import/no-self-import */
 import jwt from 'jsonwebtoken';
+import { randomBytes } from 'crypto';
 import type { User } from '@prisma/client';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'fallback-secret-for-development-only';
@@ -124,11 +125,9 @@ export const extractTokenFromHeader = (authHeader: string | null): string | null
  */
 export const generateApiKey = (): string => {
  const prefix = 'bk_';
- const randomBytes = Array.from(crypto.getRandomValues(new Uint8Array(32)))
- .map(b => b.toString(16).padStart(2, '0'))
- .join('');
- 
- return `${prefix}${randomBytes}`;
+ const randomPart = randomBytes(32).toString('hex');
+
+ return `${prefix}${randomPart}`;
 };
 
 /**
