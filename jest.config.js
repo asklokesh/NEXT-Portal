@@ -96,6 +96,10 @@ const customJestConfig = {
  '<rootDir>/tests/visual/',
  '<rootDir>/tests/accessibility/',
  ],
+ modulePathIgnorePatterns: [
+ '<rootDir>/backstage/',
+ '<rootDir>/config/docker/backstage/',
+ ],
  watchPathIgnorePatterns: [
  '<rootDir>/backstage/',
  '<rootDir>/docs/',
@@ -128,6 +132,7 @@ const customJestConfig = {
  {
  displayName: 'unit',
  testMatch: ['<rootDir>/src/**/*.{test,spec}.{js,jsx,ts,tsx}'],
+ testEnvironment: 'jsdom',
  },
  {
  displayName: 'integration',
