@@ -107,9 +107,7 @@ const customJestConfig = {
  ],
  transform: {
  '^.+\\.(ts|tsx)$': ['ts-jest', {
- tsconfig: {
- jsx: 'react-jsx',
- },
+ tsconfig: '<rootDir>/tsconfig.jest.json',
  }],
  '^.+\\.(js|jsx)$': 'babel-jest',
  },
@@ -128,16 +126,35 @@ const customJestConfig = {
  {
  displayName: 'unit',
  testMatch: ['<rootDir>/src/**/*.{test,spec}.{js,jsx,ts,tsx}'],
+ transform: {
+ '^.+\\.(ts|tsx)$': ['ts-jest', {
+ tsconfig: '<rootDir>/tsconfig.jest.json',
+ }],
+ '^.+\\.(js|jsx)$': 'babel-jest',
+ },
  },
  {
  displayName: 'integration',
  testMatch: ['<rootDir>/tests/integration/**/*.{test,spec}.{js,jsx,ts,tsx}'],
  testEnvironment: 'node',
+ transform: {
+ '^.+\\.(ts|tsx)$': ['ts-jest', {
+ tsconfig: '<rootDir>/tsconfig.jest.json',
+ }],
+ '^.+\\.(js|jsx)$': 'babel-jest',
+ },
  },
  {
  displayName: 'contracts',
  testMatch: ['<rootDir>/tests/contracts/**/*.{test,spec}.{js,jsx,ts,tsx}'],
  testEnvironment: 'node',
+ transform: {
+ '^.+\\.(ts|tsx)$': ['ts-jest', {
+ tsconfig: '<rootDir>/tsconfig.jest.json',
+ isolatedModules: true,
+ }],
+ '^.+\\.(js|jsx)$': 'babel-jest',
+ },
  },
  ],
  
