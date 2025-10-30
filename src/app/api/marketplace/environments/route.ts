@@ -30,4 +30,587 @@ const EnvironmentConfigSchema = z.object({
     timeout: z.number().min(1).default(10),
     retries: z.number().min(1).default(3)
   }).optional()
-});\n\nconst PromotionRequestSchema = z.object({\n  pluginId: z.string().min(1),\n  fromEnvironment: z.enum(['development', 'staging']),\n  toEnvironment: z.enum(['staging', 'production']),\n  version: z.string().min(1),\n  notes: z.string().optional(),\n  skipApproval: z.boolean().default(false),\n  rollbackPlan: z.object({\n    enabled: z.boolean().default(true),\n    autoRollbackOnFailure: z.boolean().default(false),\n    healthCheckGracePeriod: z.number().min(60).default(300) // 5 minutes\n  }).optional()\n});\n\nconst EnvironmentFiltersSchema = z.object({\n  pluginId: z.string().optional(),\n  environment: z.enum(['development', 'staging', 'production']).optional(),\n  isActive: z.coerce.boolean().optional(),\n  page: z.coerce.number().min(1).default(1),\n  limit: z.coerce.number().min(1).max(50).default(20)\n});\n\n// GET /api/marketplace/environments - Get environment configurations\nexport async function GET(request: NextRequest) {\n  try {\n    const session = await auth();\n    if (!session?.user?.email) {\n      return NextResponse.json({ \n        success: false, \n        error: 'Authentication required' \n      }, { status: 401 });\n    }\n\n    const { searchParams } = new URL(request.url);\n    const rawFilters = Object.fromEntries(searchParams.entries());\n    const filters = EnvironmentFiltersSchema.parse(rawFilters);\n\n    // Get user\n    const user = await prisma.user.findUnique({\n      where: { email: session.user.email },\n      select: { id: true, role: true }\n    });\n\n    if (!user) {\n      return NextResponse.json({ \n        success: false, \n        error: 'User not found' \n      }, { status: 404 });\n    }\n\n    // Build where clause based on filters and permissions\n    let where: any = {};\n    \n    if (filters.pluginId) {\n      where.pluginId = filters.pluginId;\n    }\n    \n    if (filters.environment) {\n      where.environment = filters.environment;\n    }\n    \n    if (filters.isActive !== undefined) {\n      where.isActive = filters.isActive;\n    }\n\n    // If not admin, only show environments for user's plugins\n    if (user.role !== 'ADMIN') {\n      const userPlugins = await prisma.plugin.findMany({\n        where: { author: user.id },\n        select: { id: true }\n      });\n      const userPluginIds = userPlugins.map(p => p.id);\n      where.pluginId = { in: userPluginIds };\n    }\n\n    const [environments, totalCount] = await Promise.all([\n      prisma.pluginEnvironment.findMany({\n        where,\n        skip: (filters.page - 1) * filters.limit,\n        take: filters.limit,\n        include: {\n          plugin: {\n            select: {\n              id: true,\n              name: true,\n              displayName: true,\n              author: true\n            }\n          }\n        },\n        orderBy: [{ environment: 'asc' }, { createdAt: 'desc' }]\n      }),\n      prisma.pluginEnvironment.count({ where })\n    ]);\n\n    // Get deployment status for each environment\n    const environmentsWithStatus = await Promise.all(\n      environments.map(async (env) => {\n        // Get latest deployment for this environment\n        const latestDeployment = await prisma.pluginDeployment.findFirst({\n          where: {\n            pluginVersion: {\n              pluginId: env.pluginId\n            },\n            environment: env.environment\n          },\n          orderBy: { startedAt: 'desc' },\n          include: {\n            pluginVersion: {\n              select: {\n                version: true,\n                status: true\n              }\n            }\n          }\n        });\n\n        // Get environment health metrics\n        const healthMetrics = await prisma.pluginMetrics.findMany({\n          where: {\n            pluginId: env.pluginId,\n            environment: env.environment,\n            metricName: { in: ['cpu_usage', 'memory_usage', 'error_rate', 'response_time'] },\n            timestamp: {\n              gte: new Date(Date.now() - 5 * 60 * 1000) // Last 5 minutes\n            }\n          },\n          orderBy: { timestamp: 'desc' },\n          take: 20\n        });\n\n        return {\n          id: env.id,\n          pluginId: env.pluginId,\n          environment: env.environment,\n          isActive: env.isActive,\n          configuration: env.configuration,\n          resources: env.resources,\n          scaling: env.scaling,\n          health: env.health,\n          createdBy: env.createdBy,\n          createdAt: env.createdAt.toISOString(),\n          updatedAt: env.updatedAt.toISOString(),\n          plugin: env.plugin,\n          deployment: latestDeployment ? {\n            id: latestDeployment.id,\n            version: latestDeployment.pluginVersion.version,\n            status: latestDeployment.status,\n            progress: latestDeployment.progress,\n            startedAt: latestDeployment.startedAt.toISOString(),\n            completedAt: latestDeployment.completedAt?.toISOString()\n          } : null,\n          metrics: {\n            cpu: healthMetrics.filter(m => m.metricName === 'cpu_usage').slice(0, 5),\n            memory: healthMetrics.filter(m => m.metricName === 'memory_usage').slice(0, 5),\n            errorRate: healthMetrics.filter(m => m.metricName === 'error_rate').slice(0, 5),\n            responseTime: healthMetrics.filter(m => m.metricName === 'response_time').slice(0, 5)\n          }\n        };\n      })\n    );\n\n    // Get environment summary statistics\n    const environmentStats = await prisma.pluginEnvironment.groupBy({\n      by: ['environment'],\n      where: user.role === 'ADMIN' ? {} : {\n        plugin: { author: user.id }\n      },\n      _count: { environment: true }\n    });\n\n    const summary = {\n      total: totalCount,\n      byEnvironment: environmentStats.reduce((acc, stat) => {\n        acc[stat.environment] = stat._count.environment;\n        return acc;\n      }, {} as Record<string, number>),\n      active: environments.filter(env => env.isActive).length\n    };\n\n    return NextResponse.json({\n      success: true,\n      data: {\n        environments: environmentsWithStatus,\n        pagination: {\n          page: filters.page,\n          limit: filters.limit,\n          total: totalCount,\n          totalPages: Math.ceil(totalCount / filters.limit),\n          hasNext: filters.page * filters.limit < totalCount,\n          hasPrev: filters.page > 1\n        },\n        summary\n      }\n    });\n\n  } catch (error) {\n    console.error('Environments API Error:', error);\n    \n    if (error instanceof z.ZodError) {\n      return NextResponse.json({\n        success: false,\n        error: 'Invalid request parameters',\n        details: error.errors\n      }, { status: 400 });\n    }\n\n    return NextResponse.json({\n      success: false,\n      error: 'Failed to fetch environment configurations',\n      message: error instanceof Error ? error.message : 'Unknown error'\n    }, { status: 500 });\n  } finally {\n    await prisma.$disconnect();\n  }\n}\n\n// POST /api/marketplace/environments - Create or update environment configuration\nexport async function POST(request: NextRequest) {\n  try {\n    const session = await auth();\n    if (!session?.user?.email) {\n      return NextResponse.json({ \n        success: false, \n        error: 'Authentication required' \n      }, { status: 401 });\n    }\n\n    const body = await request.json();\n    const action = body.action || 'configure';\n\n    // Get user\n    const user = await prisma.user.findUnique({\n      where: { email: session.user.email },\n      select: { id: true, role: true }\n    });\n\n    if (!user) {\n      return NextResponse.json({ \n        success: false, \n        error: 'User not found' \n      }, { status: 404 });\n    }\n\n    if (action === 'configure') {\n      const envConfig = EnvironmentConfigSchema.parse(body);\n\n      // Verify user owns the plugin or has admin rights\n      const plugin = await prisma.plugin.findFirst({\n        where: {\n          id: envConfig.pluginId,\n          ...(user.role !== 'ADMIN' ? { author: user.id } : {})\n        }\n      });\n\n      if (!plugin) {\n        return NextResponse.json({\n          success: false,\n          error: 'Plugin not found or access denied'\n        }, { status: 404 });\n      }\n\n      // Create or update environment configuration\n      const environment = await prisma.pluginEnvironment.upsert({\n        where: {\n          pluginId_environment: {\n            pluginId: envConfig.pluginId,\n            environment: envConfig.environment\n          }\n        },\n        create: {\n          pluginId: envConfig.pluginId,\n          environment: envConfig.environment,\n          isActive: true,\n          configuration: envConfig.configuration || {},\n          secrets: envConfig.secrets ? JSON.stringify(envConfig.secrets) : null,\n          variables: envConfig.variables || {},\n          resources: envConfig.resources || {},\n          scaling: envConfig.scaling || {},\n          health: envConfig.health || {},\n          deployment: 'ROLLING', // Default deployment strategy\n          createdBy: user.id\n        },\n        update: {\n          configuration: envConfig.configuration || {},\n          secrets: envConfig.secrets ? JSON.stringify(envConfig.secrets) : undefined,\n          variables: envConfig.variables || {},\n          resources: envConfig.resources || {},\n          scaling: envConfig.scaling || {},\n          health: envConfig.health || {},\n          updatedAt: new Date()\n        },\n        include: {\n          plugin: {\n            select: {\n              name: true,\n              displayName: true\n            }\n          }\n        }\n      });\n\n      return NextResponse.json({\n        success: true,\n        data: {\n          environmentId: environment.id,\n          pluginId: environment.pluginId,\n          environment: environment.environment,\n          isActive: environment.isActive,\n          message: 'Environment configuration updated successfully'\n        }\n      });\n\n    } else if (action === 'promote') {\n      const promotionRequest = PromotionRequestSchema.parse(body);\n\n      // Verify user owns the plugin or has admin rights\n      const plugin = await prisma.plugin.findFirst({\n        where: {\n          id: promotionRequest.pluginId,\n          ...(user.role !== 'ADMIN' ? { author: user.id } : {})\n        },\n        include: {\n          versions: {\n            where: { version: promotionRequest.version },\n            take: 1\n          }\n        }\n      });\n\n      if (!plugin || plugin.versions.length === 0) {\n        return NextResponse.json({\n          success: false,\n          error: 'Plugin or version not found, or access denied'\n        }, { status: 404 });\n      }\n\n      const pluginVersion = plugin.versions[0];\n\n      // Check if source environment deployment exists and is successful\n      const sourceDeployment = await prisma.pluginDeployment.findFirst({\n        where: {\n          pluginVersionId: pluginVersion.id,\n          environment: promotionRequest.fromEnvironment,\n          status: 'DEPLOYED'\n        },\n        orderBy: { startedAt: 'desc' }\n      });\n\n      if (!sourceDeployment) {\n        return NextResponse.json({\n          success: false,\n          error: `No successful deployment found in ${promotionRequest.fromEnvironment} environment`\n        }, { status: 400 });\n      }\n\n      // Check if approval is required for production promotions\n      const requiresApproval = promotionRequest.toEnvironment === 'production' && !promotionRequest.skipApproval;\n      \n      if (requiresApproval && user.role !== 'ADMIN') {\n        // Create approval request\n        const governance = await prisma.pluginGovernance.findFirst({\n          where: {\n            pluginId: promotionRequest.pluginId,\n            isActive: true\n          }\n        });\n\n        if (governance) {\n          const approval = await prisma.pluginApproval.create({\n            data: {\n              governanceId: governance.id,\n              pluginId: promotionRequest.pluginId,\n              pluginVersionId: pluginVersion.id,\n              requestType: 'CONFIGURATION_CHANGE',\n              requestedBy: user.id,\n              priority: 'MEDIUM',\n              reason: `Promote plugin from ${promotionRequest.fromEnvironment} to ${promotionRequest.toEnvironment}`,\n              comments: promotionRequest.notes ? JSON.stringify([{\n                text: promotionRequest.notes,\n                author: user.id,\n                timestamp: new Date()\n              }]) : null,\n              requirements: JSON.stringify({\n                fromEnvironment: promotionRequest.fromEnvironment,\n                toEnvironment: promotionRequest.toEnvironment,\n                version: promotionRequest.version,\n                rollbackPlan: promotionRequest.rollbackPlan\n              })\n            }\n          });\n\n          return NextResponse.json({\n            success: true,\n            data: {\n              approvalId: approval.id,\n              status: 'pending_approval',\n              message: 'Promotion request submitted for approval'\n            }\n          });\n        }\n      }\n\n      // Create promotion deployment\n      const deployment = await prisma.pluginDeployment.create({\n        data: {\n          pluginVersionId: pluginVersion.id,\n          environment: promotionRequest.toEnvironment,\n          status: 'PENDING',\n          strategy: 'ROLLING',\n          progress: 0,\n          deployedBy: user.id,\n          rollbackPlan: promotionRequest.rollbackPlan ? JSON.stringify(promotionRequest.rollbackPlan) : null\n        }\n      });\n\n      // Start the deployment process (this would integrate with your deployment system)\n      // For now, we'll simulate it\n      setTimeout(async () => {\n        try {\n          await simulateDeployment(deployment.id);\n        } catch (error) {\n          console.error('Deployment simulation error:', error);\n        }\n      }, 1000);\n\n      return NextResponse.json({\n        success: true,\n        data: {\n          deploymentId: deployment.id,\n          status: 'deploying',\n          environment: promotionRequest.toEnvironment,\n          version: promotionRequest.version,\n          message: 'Plugin promotion started'\n        }\n      });\n\n    } else {\n      return NextResponse.json({\n        success: false,\n        error: 'Invalid action. Use \"configure\" or \"promote\"'\n      }, { status: 400 });\n    }\n\n  } catch (error) {\n    console.error('Environment action error:', error);\n    \n    if (error instanceof z.ZodError) {\n      return NextResponse.json({\n        success: false,\n        error: 'Invalid request data',\n        details: error.errors\n      }, { status: 400 });\n    }\n\n    return NextResponse.json({\n      success: false,\n      error: 'Failed to process environment action',\n      message: error instanceof Error ? error.message : 'Unknown error'\n    }, { status: 500 });\n  } finally {\n    await prisma.$disconnect();\n  }\n}\n\n// DELETE /api/marketplace/environments - Delete environment configuration\nexport async function DELETE(request: NextRequest) {\n  try {\n    const session = await auth();\n    if (!session?.user?.email) {\n      return NextResponse.json({ \n        success: false, \n        error: 'Authentication required' \n      }, { status: 401 });\n    }\n\n    const { searchParams } = new URL(request.url);\n    const environmentId = searchParams.get('environmentId');\n    const pluginId = searchParams.get('pluginId');\n    const environment = searchParams.get('environment');\n\n    if (!environmentId && !(pluginId && environment)) {\n      return NextResponse.json({\n        success: false,\n        error: 'Either environmentId or (pluginId + environment) is required'\n      }, { status: 400 });\n    }\n\n    // Get user\n    const user = await prisma.user.findUnique({\n      where: { email: session.user.email },\n      select: { id: true, role: true }\n    });\n\n    if (!user) {\n      return NextResponse.json({ \n        success: false, \n        error: 'User not found' \n      }, { status: 404 });\n    }\n\n    // Find environment configuration\n    const where: any = environmentId ? { id: environmentId } : {\n      pluginId,\n      environment\n    };\n\n    const envConfig = await prisma.pluginEnvironment.findFirst({\n      where,\n      include: {\n        plugin: {\n          select: { author: true }\n        }\n      }\n    });\n\n    if (!envConfig) {\n      return NextResponse.json({\n        success: false,\n        error: 'Environment configuration not found'\n      }, { status: 404 });\n    }\n\n    // Check permissions\n    if (user.role !== 'ADMIN' && envConfig.plugin.author !== user.id) {\n      return NextResponse.json({\n        success: false,\n        error: 'Access denied'\n      }, { status: 403 });\n    }\n\n    // Don't allow deletion of production environments without special permission\n    if (envConfig.environment === 'production' && user.role !== 'ADMIN') {\n      return NextResponse.json({\n        success: false,\n        error: 'Production environment configurations cannot be deleted without admin privileges'\n      }, { status: 403 });\n    }\n\n    // Delete the environment configuration\n    await prisma.pluginEnvironment.delete({\n      where: { id: envConfig.id }\n    });\n\n    return NextResponse.json({\n      success: true,\n      message: 'Environment configuration deleted successfully'\n    });\n\n  } catch (error) {\n    console.error('Environment deletion error:', error);\n    \n    return NextResponse.json({\n      success: false,\n      error: 'Failed to delete environment configuration',\n      message: error instanceof Error ? error.message : 'Unknown error'\n    }, { status: 500 });\n  } finally {\n    await prisma.$disconnect();\n  }\n}\n\n// Helper function to simulate deployment process\nasync function simulateDeployment(deploymentId: string) {\n  const stages = ['PENDING', 'DEPLOYING', 'DEPLOYED'];\n  \n  for (let i = 0; i < stages.length; i++) {\n    const status = stages[i] as any;\n    const progress = ((i + 1) / stages.length) * 100;\n    \n    await new Promise(resolve => setTimeout(resolve, 2000)); // 2 second delay between stages\n    \n    await prisma.pluginDeployment.update({\n      where: { id: deploymentId },\n      data: {\n        status,\n        progress,\n        ...(status === 'DEPLOYED' ? { completedAt: new Date() } : {})\n      }\n    });\n  }\n}
+});
+
+const PromotionRequestSchema = z.object({
+  pluginId: z.string().min(1),
+  fromEnvironment: z.enum(['development', 'staging']),
+  toEnvironment: z.enum(['staging', 'production']),
+  version: z.string().min(1),
+  notes: z.string().optional(),
+  skipApproval: z.boolean().default(false),
+  rollbackPlan: z.object({
+    enabled: z.boolean().default(true),
+    autoRollbackOnFailure: z.boolean().default(false),
+    healthCheckGracePeriod: z.number().min(60).default(300) // 5 minutes
+  }).optional()
+});
+
+const EnvironmentFiltersSchema = z.object({
+  pluginId: z.string().optional(),
+  environment: z.enum(['development', 'staging', 'production']).optional(),
+  isActive: z.coerce.boolean().optional(),
+  page: z.coerce.number().min(1).default(1),
+  limit: z.coerce.number().min(1).max(50).default(20)
+});
+
+// GET /api/marketplace/environments - Get environment configurations
+export async function GET(request: NextRequest) {
+  try {
+    const session = await auth();
+    if (!session?.user?.email) {
+      return NextResponse.json({ 
+        success: false, 
+        error: 'Authentication required' 
+      }, { status: 401 });
+    }
+
+    const { searchParams } = new URL(request.url);
+    const rawFilters = Object.fromEntries(searchParams.entries());
+    const filters = EnvironmentFiltersSchema.parse(rawFilters);
+
+    // Get user
+    const user = await prisma.user.findUnique({
+      where: { email: session.user.email },
+      select: { id: true, role: true }
+    });
+
+    if (!user) {
+      return NextResponse.json({ 
+        success: false, 
+        error: 'User not found' 
+      }, { status: 404 });
+    }
+
+    // Build where clause based on filters and permissions
+    let where: any = {};
+    
+    if (filters.pluginId) {
+      where.pluginId = filters.pluginId;
+    }
+    
+    if (filters.environment) {
+      where.environment = filters.environment;
+    }
+    
+    if (filters.isActive !== undefined) {
+      where.isActive = filters.isActive;
+    }
+
+    // If not admin, only show environments for user's plugins
+    if (user.role !== 'ADMIN') {
+      const userPlugins = await prisma.plugin.findMany({
+        where: { author: user.id },
+        select: { id: true }
+      });
+      const userPluginIds = userPlugins.map(p => p.id);
+      where.pluginId = { in: userPluginIds };
+    }
+
+    const [environments, totalCount] = await Promise.all([
+      prisma.pluginEnvironment.findMany({
+        where,
+        skip: (filters.page - 1) * filters.limit,
+        take: filters.limit,
+        include: {
+          plugin: {
+            select: {
+              id: true,
+              name: true,
+              displayName: true,
+              author: true
+            }
+          }
+        },
+        orderBy: [{ environment: 'asc' }, { createdAt: 'desc' }]
+      }),
+      prisma.pluginEnvironment.count({ where })
+    ]);
+
+    // Get deployment status for each environment
+    const environmentsWithStatus = await Promise.all(
+      environments.map(async (env) => {
+        // Get latest deployment for this environment
+        const latestDeployment = await prisma.pluginDeployment.findFirst({
+          where: {
+            pluginVersion: {
+              pluginId: env.pluginId
+            },
+            environment: env.environment
+          },
+          orderBy: { startedAt: 'desc' },
+          include: {
+            pluginVersion: {
+              select: {
+                version: true,
+                status: true
+              }
+            }
+          }
+        });
+
+        // Get environment health metrics
+        const healthMetrics = await prisma.pluginMetrics.findMany({
+          where: {
+            pluginId: env.pluginId,
+            environment: env.environment,
+            metricName: { in: ['cpu_usage', 'memory_usage', 'error_rate', 'response_time'] },
+            timestamp: {
+              gte: new Date(Date.now() - 5 * 60 * 1000) // Last 5 minutes
+            }
+          },
+          orderBy: { timestamp: 'desc' },
+          take: 20
+        });
+
+        return {
+          id: env.id,
+          pluginId: env.pluginId,
+          environment: env.environment,
+          isActive: env.isActive,
+          configuration: env.configuration,
+          resources: env.resources,
+          scaling: env.scaling,
+          health: env.health,
+          createdBy: env.createdBy,
+          createdAt: env.createdAt.toISOString(),
+          updatedAt: env.updatedAt.toISOString(),
+          plugin: env.plugin,
+          deployment: latestDeployment ? {
+            id: latestDeployment.id,
+            version: latestDeployment.pluginVersion.version,
+            status: latestDeployment.status,
+            progress: latestDeployment.progress,
+            startedAt: latestDeployment.startedAt.toISOString(),
+            completedAt: latestDeployment.completedAt?.toISOString()
+          } : null,
+          metrics: {
+            cpu: healthMetrics.filter(m => m.metricName === 'cpu_usage').slice(0, 5),
+            memory: healthMetrics.filter(m => m.metricName === 'memory_usage').slice(0, 5),
+            errorRate: healthMetrics.filter(m => m.metricName === 'error_rate').slice(0, 5),
+            responseTime: healthMetrics.filter(m => m.metricName === 'response_time').slice(0, 5)
+          }
+        };
+      })
+    );
+
+    // Get environment summary statistics
+    const environmentStats = await prisma.pluginEnvironment.groupBy({
+      by: ['environment'],
+      where: user.role === 'ADMIN' ? {} : {
+        plugin: { author: user.id }
+      },
+      _count: { environment: true }
+    });
+
+    const summary = {
+      total: totalCount,
+      byEnvironment: environmentStats.reduce((acc, stat) => {
+        acc[stat.environment] = stat._count.environment;
+        return acc;
+      }, {} as Record<string, number>),
+      active: environments.filter(env => env.isActive).length
+    };
+
+    return NextResponse.json({
+      success: true,
+      data: {
+        environments: environmentsWithStatus,
+        pagination: {
+          page: filters.page,
+          limit: filters.limit,
+          total: totalCount,
+          totalPages: Math.ceil(totalCount / filters.limit),
+          hasNext: filters.page * filters.limit < totalCount,
+          hasPrev: filters.page > 1
+        },
+        summary
+      }
+    });
+
+  } catch (error) {
+    console.error('Environments API Error:', error);
+    
+    if (error instanceof z.ZodError) {
+      return NextResponse.json({
+        success: false,
+        error: 'Invalid request parameters',
+        details: error.errors
+      }, { status: 400 });
+    }
+
+    return NextResponse.json({
+      success: false,
+      error: 'Failed to fetch environment configurations',
+      message: error instanceof Error ? error.message : 'Unknown error'
+    }, { status: 500 });
+  } finally {
+    await prisma.$disconnect();
+  }
+}
+
+// POST /api/marketplace/environments - Create or update environment configuration
+export async function POST(request: NextRequest) {
+  try {
+    const session = await auth();
+    if (!session?.user?.email) {
+      return NextResponse.json({ 
+        success: false, 
+        error: 'Authentication required' 
+      }, { status: 401 });
+    }
+
+    const body = await request.json();
+    const action = body.action || 'configure';
+
+    // Get user
+    const user = await prisma.user.findUnique({
+      where: { email: session.user.email },
+      select: { id: true, role: true }
+    });
+
+    if (!user) {
+      return NextResponse.json({ 
+        success: false, 
+        error: 'User not found' 
+      }, { status: 404 });
+    }
+
+    if (action === 'configure') {
+      const envConfig = EnvironmentConfigSchema.parse(body);
+
+      // Verify user owns the plugin or has admin rights
+      const plugin = await prisma.plugin.findFirst({
+        where: {
+          id: envConfig.pluginId,
+          ...(user.role !== 'ADMIN' ? { author: user.id } : {})
+        }
+      });
+
+      if (!plugin) {
+        return NextResponse.json({
+          success: false,
+          error: 'Plugin not found or access denied'
+        }, { status: 404 });
+      }
+
+      // Create or update environment configuration
+      const environment = await prisma.pluginEnvironment.upsert({
+        where: {
+          pluginId_environment: {
+            pluginId: envConfig.pluginId,
+            environment: envConfig.environment
+          }
+        },
+        create: {
+          pluginId: envConfig.pluginId,
+          environment: envConfig.environment,
+          isActive: true,
+          configuration: envConfig.configuration || {},
+          secrets: envConfig.secrets ? JSON.stringify(envConfig.secrets) : null,
+          variables: envConfig.variables || {},
+          resources: envConfig.resources || {},
+          scaling: envConfig.scaling || {},
+          health: envConfig.health || {},
+          deployment: 'ROLLING', // Default deployment strategy
+          createdBy: user.id
+        },
+        update: {
+          configuration: envConfig.configuration || {},
+          secrets: envConfig.secrets ? JSON.stringify(envConfig.secrets) : undefined,
+          variables: envConfig.variables || {},
+          resources: envConfig.resources || {},
+          scaling: envConfig.scaling || {},
+          health: envConfig.health || {},
+          updatedAt: new Date()
+        },
+        include: {
+          plugin: {
+            select: {
+              name: true,
+              displayName: true
+            }
+          }
+        }
+      });
+
+      return NextResponse.json({
+        success: true,
+        data: {
+          environmentId: environment.id,
+          pluginId: environment.pluginId,
+          environment: environment.environment,
+          isActive: environment.isActive,
+          message: 'Environment configuration updated successfully'
+        }
+      });
+
+    } else if (action === 'promote') {
+      const promotionRequest = PromotionRequestSchema.parse(body);
+
+      // Verify user owns the plugin or has admin rights
+      const plugin = await prisma.plugin.findFirst({
+        where: {
+          id: promotionRequest.pluginId,
+          ...(user.role !== 'ADMIN' ? { author: user.id } : {})
+        },
+        include: {
+          versions: {
+            where: { version: promotionRequest.version },
+            take: 1
+          }
+        }
+      });
+
+      if (!plugin || plugin.versions.length === 0) {
+        return NextResponse.json({
+          success: false,
+          error: 'Plugin or version not found, or access denied'
+        }, { status: 404 });
+      }
+
+      const pluginVersion = plugin.versions[0];
+
+      // Check if source environment deployment exists and is successful
+      const sourceDeployment = await prisma.pluginDeployment.findFirst({
+        where: {
+          pluginVersionId: pluginVersion.id,
+          environment: promotionRequest.fromEnvironment,
+          status: 'DEPLOYED'
+        },
+        orderBy: { startedAt: 'desc' }
+      });
+
+      if (!sourceDeployment) {
+        return NextResponse.json({
+          success: false,
+          error: `No successful deployment found in ${promotionRequest.fromEnvironment} environment`
+        }, { status: 400 });
+      }
+
+      // Check if approval is required for production promotions
+      const requiresApproval = promotionRequest.toEnvironment === 'production' && !promotionRequest.skipApproval;
+      
+      if (requiresApproval && user.role !== 'ADMIN') {
+        // Create approval request
+        const governance = await prisma.pluginGovernance.findFirst({
+          where: {
+            pluginId: promotionRequest.pluginId,
+            isActive: true
+          }
+        });
+
+        if (governance) {
+          const approval = await prisma.pluginApproval.create({
+            data: {
+              governanceId: governance.id,
+              pluginId: promotionRequest.pluginId,
+              pluginVersionId: pluginVersion.id,
+              requestType: 'CONFIGURATION_CHANGE',
+              requestedBy: user.id,
+              priority: 'MEDIUM',
+              reason: `Promote plugin from ${promotionRequest.fromEnvironment} to ${promotionRequest.toEnvironment}`,
+              comments: promotionRequest.notes ? JSON.stringify([{
+                text: promotionRequest.notes,
+                author: user.id,
+                timestamp: new Date()
+              }]) : null,
+              requirements: JSON.stringify({
+                fromEnvironment: promotionRequest.fromEnvironment,
+                toEnvironment: promotionRequest.toEnvironment,
+                version: promotionRequest.version,
+                rollbackPlan: promotionRequest.rollbackPlan
+              })
+            }
+          });
+
+          return NextResponse.json({
+            success: true,
+            data: {
+              approvalId: approval.id,
+              status: 'pending_approval',
+              message: 'Promotion request submitted for approval'
+            }
+          });
+        }
+      }
+
+      // Create promotion deployment
+      const deployment = await prisma.pluginDeployment.create({
+        data: {
+          pluginVersionId: pluginVersion.id,
+          environment: promotionRequest.toEnvironment,
+          status: 'PENDING',
+          strategy: 'ROLLING',
+          progress: 0,
+          deployedBy: user.id,
+          rollbackPlan: promotionRequest.rollbackPlan ? JSON.stringify(promotionRequest.rollbackPlan) : null
+        }
+      });
+
+      // Start the deployment process (this would integrate with your deployment system)
+      // For now, we'll simulate it
+      setTimeout(async () => {
+        try {
+          await simulateDeployment(deployment.id);
+        } catch (error) {
+          console.error('Deployment simulation error:', error);
+        }
+      }, 1000);
+
+      return NextResponse.json({
+        success: true,
+        data: {
+          deploymentId: deployment.id,
+          status: 'deploying',
+          environment: promotionRequest.toEnvironment,
+          version: promotionRequest.version,
+          message: 'Plugin promotion started'
+        }
+      });
+
+    } else {
+      return NextResponse.json({
+        success: false,
+        error: 'Invalid action. Use \"configure\" or \"promote\"'
+      }, { status: 400 });
+    }
+
+  } catch (error) {
+    console.error('Environment action error:', error);
+    
+    if (error instanceof z.ZodError) {
+      return NextResponse.json({
+        success: false,
+        error: 'Invalid request data',
+        details: error.errors
+      }, { status: 400 });
+    }
+
+    return NextResponse.json({
+      success: false,
+      error: 'Failed to process environment action',
+      message: error instanceof Error ? error.message : 'Unknown error'
+    }, { status: 500 });
+  } finally {
+    await prisma.$disconnect();
+  }
+}
+
+// DELETE /api/marketplace/environments - Delete environment configuration
+export async function DELETE(request: NextRequest) {
+  try {
+    const session = await auth();
+    if (!session?.user?.email) {
+      return NextResponse.json({ 
+        success: false, 
+        error: 'Authentication required' 
+      }, { status: 401 });
+    }
+
+    const { searchParams } = new URL(request.url);
+    const environmentId = searchParams.get('environmentId');
+    const pluginId = searchParams.get('pluginId');
+    const environment = searchParams.get('environment');
+
+    if (!environmentId && !(pluginId && environment)) {
+      return NextResponse.json({
+        success: false,
+        error: 'Either environmentId or (pluginId + environment) is required'
+      }, { status: 400 });
+    }
+
+    // Get user
+    const user = await prisma.user.findUnique({
+      where: { email: session.user.email },
+      select: { id: true, role: true }
+    });
+
+    if (!user) {
+      return NextResponse.json({ 
+        success: false, 
+        error: 'User not found' 
+      }, { status: 404 });
+    }
+
+    // Find environment configuration
+    const where: any = environmentId ? { id: environmentId } : {
+      pluginId,
+      environment
+    };
+
+    const envConfig = await prisma.pluginEnvironment.findFirst({
+      where,
+      include: {
+        plugin: {
+          select: { author: true }
+        }
+      }
+    });
+
+    if (!envConfig) {
+      return NextResponse.json({
+        success: false,
+        error: 'Environment configuration not found'
+      }, { status: 404 });
+    }
+
+    // Check permissions
+    if (user.role !== 'ADMIN' && envConfig.plugin.author !== user.id) {
+      return NextResponse.json({
+        success: false,
+        error: 'Access denied'
+      }, { status: 403 });
+    }
+
+    // Don't allow deletion of production environments without special permission
+    if (envConfig.environment === 'production' && user.role !== 'ADMIN') {
+      return NextResponse.json({
+        success: false,
+        error: 'Production environment configurations cannot be deleted without admin privileges'
+      }, { status: 403 });
+    }
+
+    // Delete the environment configuration
+    await prisma.pluginEnvironment.delete({
+      where: { id: envConfig.id }
+    });
+
+    return NextResponse.json({
+      success: true,
+      message: 'Environment configuration deleted successfully'
+    });
+
+  } catch (error) {
+    console.error('Environment deletion error:', error);
+    
+    return NextResponse.json({
+      success: false,
+      error: 'Failed to delete environment configuration',
+      message: error instanceof Error ? error.message : 'Unknown error'
+    }, { status: 500 });
+  } finally {
+    await prisma.$disconnect();
+  }
+}
+
+// Helper function to simulate deployment process
+async function simulateDeployment(deploymentId: string) {
+  const stages = ['PENDING', 'DEPLOYING', 'DEPLOYED'];
+  
+  for (let i = 0; i < stages.length; i++) {
+    const status = stages[i] as any;
+    const progress = ((i + 1) / stages.length) * 100;
+    
+    await new Promise(resolve => setTimeout(resolve, 2000)); // 2 second delay between stages
+    
+    await prisma.pluginDeployment.update({
+      where: { id: deploymentId },
+      data: {
+        status,
+        progress,
+        ...(status === 'DEPLOYED' ? { completedAt: new Date() } : {})
+      }
+    });
+  }
+}
