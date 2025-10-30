@@ -7,6 +7,7 @@ interface SkeletonProps {
  height?: string | number;
  circle?: boolean;
  lines?: number;
+ 'data-testid'?: string;
 }
 
 export const Skeleton = ({ 
@@ -14,7 +15,8 @@ export const Skeleton = ({
  width, 
  height, 
  circle = false,
- lines = 1
+ lines = 1,
+ 'data-testid': testId
 }: SkeletonProps) => {
  const baseClasses = 'animate-pulse bg-gray-200 dark:bg-gray-700';
  const circleClasses = circle ? 'rounded-full' : 'rounded';
@@ -28,12 +30,13 @@ export const Skeleton = ({
  <div 
  className={`${baseClasses} ${circleClasses} ${className}`}
  style={style}
+ data-testid={testId}
  />
  );
  }
 
  return (
- <div className={className}>
+ <div className={className} data-testid={testId}>
  {Array.from({ length: lines }).map((_, index) => (
  <div
  key={index}
