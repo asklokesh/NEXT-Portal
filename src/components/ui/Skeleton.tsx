@@ -144,7 +144,7 @@ export const ServiceTableSkeleton = () => {
 export const ErrorState = ({ 
  title = 'Something went wrong',
  message = 'An error occurred while loading data.',
- onRetry,
+ onRetry = () => {},
  retryLabel = 'Try again',
  showRetry = true
 }: {
@@ -167,7 +167,7 @@ export const ErrorState = ({
  <p className="text-gray-500 dark:text-gray-400 mb-6 max-w-md mx-auto">
  {message}
  </p>
- {showRetry && onRetry && (
+ {showRetry && onRetry !== undefined && onRetry !== null && (
  <button
  data-testid="retry-button"
  onClick={onRetry}
