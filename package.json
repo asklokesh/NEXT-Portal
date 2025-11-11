@@ -263,7 +263,7 @@
   "unist-util-visit": "5.0.0",
   "use-immer": "^0.9.0",
   "uuid": "11.1.0",
-  "validator": "13.15.15",
+  "validator": "13.15.20",
   "web-vitals": "^3.5.1",
   "webrtc-adapter": "^9.0.0",
   "winston": "3.17.0",

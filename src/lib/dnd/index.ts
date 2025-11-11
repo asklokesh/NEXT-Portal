@@ -28,11 +28,11 @@ export const createDropZone = (
 
 // Type guards
 export const isDragItem = (item: any): item is DragItem => {
-  return item && typeof item.id === 'string' && typeof item.type === 'string';
+  return Boolean(item && typeof item.id === 'string' && typeof item.type === 'string');
 };
 
 export const isDropZone = (zone: any): zone is DropZone => {
-  return zone && typeof zone.id === 'string' && typeof zone.type === 'string' && Array.isArray(zone.accepts);
+  return Boolean(zone && typeof zone.id === 'string' && typeof zone.type === 'string' && Array.isArray(zone.accepts));
 };
 
 // Common drop zone configurations
