@@ -1,0 +1,430 @@
+# =============================================================================
+# NEXT Portal - Full Stack Docker Compose
+# =============================================================================
+# This file contains all services needed to run the complete NEXT Portal stack.
+#
+# Usage:
+#   docker-compose -f docker-compose.full.yml up -d          # Start all services
+#   docker-compose -f docker-compose.full.yml down           # Stop all services
+#   docker-compose -f docker-compose.full.yml logs -f        # View logs
+#   docker-compose -f docker-compose.full.yml ps             # Check status
+#
+# =============================================================================
+
+version: '3.8'
+
+services:
+  # ===========================================================================
+  # Core Application Services
+  # ===========================================================================
+
+  # Main NEXT Portal Application
+  portal:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runner
+      args:
+        NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:-http://localhost:4400}
+        NEXT_PUBLIC_BACKSTAGE_API_URL: ${NEXT_PUBLIC_BACKSTAGE_API_URL:-http://localhost:7007}
+    container_name: next-portal
+    ports:
+      - '4400:4400'
+    environment:
+      - NODE_ENV=${NODE_ENV:-production}
+      - PORT=4400
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/next_portal
+      - REDIS_URL=redis://redis:6379
+      - NEXTAUTH_URL=http://localhost:4400
+      - NEXTAUTH_SECRET=${NEXTAUTH_SECRET:-your-secret-key-change-in-production}
+      - BACKSTAGE_API_URL=http://backstage:7007
+      - ENABLE_AI_ASSISTANT=${ENABLE_AI_ASSISTANT:-true}
+      - ENABLE_PORTAL_BUILDER=${ENABLE_PORTAL_BUILDER:-true}
+      - ENABLE_SCORECARDS=${ENABLE_SCORECARDS:-true}
+      - ENABLE_TEMPLATES=${ENABLE_TEMPLATES:-true}
+      - ENABLE_ACTIONS=${ENABLE_ACTIONS:-true}
+      - ENABLE_ANALYTICS=${ENABLE_ANALYTICS:-true}
+      - ENABLE_ENTERPRISE=${ENABLE_ENTERPRISE:-true}
+      - ENABLE_WEBSOCKET=${ENABLE_WEBSOCKET:-true}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - portal-network
+    restart: unless-stopped
+    healthcheck:
+      test: ['CMD', 'wget', '--quiet', '--tries=1', '--spider', 'http://localhost:4400/api/health']
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.portal.rule=Host(`portal.localhost`)"
+      - "traefik.http.services.portal.loadbalancer.server.port=4400"
+
+  # Portal Development Server (alternative to production build)
+  portal-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: development
+    container_name: next-portal-dev
+    profiles:
+      - development
+    ports:
+      - '4400:4400'
+      - '6006:6006'  # Storybook
+    environment:
+      - NODE_ENV=development
+      - PORT=4400
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/next_portal
+      - REDIS_URL=redis://redis:6379
+    volumes:
+      - .:/app
+      - /app/node_modules
+      - /app/.next
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - portal-network
+
+  # WebSocket Server for Real-time Updates
+  websocket:
+    build:
+      context: .
+      dockerfile: Dockerfile.websocket
+    container_name: next-portal-ws
+    ports:
+      - '3001:3001'
+    environment:
+      - PORT=3001
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      - redis
+    networks:
+      - portal-network
+    restart: unless-stopped
+    healthcheck:
+      test: ['CMD', 'nc', '-z', 'localhost', '3001']
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # ===========================================================================
+  # Database Services
+  # ===========================================================================
+
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: next-portal-postgres
+    ports:
+      - '5432:5432'
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: next_portal
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    networks:
+      - portal-network
+    restart: unless-stopped
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U postgres -d next_portal']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # Redis Cache & Session Store
+  redis:
+    image: redis:7-alpine
+    container_name: next-portal-redis
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    ports:
+      - '6379:6379'
+    volumes:
+      - redis_data:/data
+    networks:
+      - portal-network
+    restart: unless-stopped
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ===========================================================================
+  # Search & Analytics Services
+  # ===========================================================================
+
+  # Elasticsearch for Full-Text Search
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.11.0
+    container_name: next-portal-elasticsearch
+    profiles:
+      - full
+      - search
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+    ports:
+      - '9200:9200'
+      - '9300:9300'
+    volumes:
+      - elasticsearch_data:/usr/share/elasticsearch/data
+    networks:
+      - portal-network
+    restart: unless-stopped
+    healthcheck:
+      test: ['CMD-SHELL', 'curl -s http://localhost:9200/_cluster/health | grep -q "status.*green\\|yellow"']
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # ===========================================================================
+  # Monitoring & Observability
+  # ===========================================================================
+
+  # Prometheus for Metrics
+  prometheus:
+    image: prom/prometheus:v2.48.0
+    container_name: next-portal-prometheus
+    profiles:
+      - full
+      - monitoring
+    ports:
+      - '9090:9090'
+    volumes:
+      - ./config/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.enable-lifecycle'
+      - '--storage.tsdb.retention.time=15d'
+    networks:
+      - portal-network
+    restart: unless-stopped
+
+  # Grafana for Dashboards
+  grafana:
+    image: grafana/grafana:10.2.0
+    container_name: next-portal-grafana
+    profiles:
+      - full
+      - monitoring
+    ports:
+      - '3000:3000'
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - ./config/grafana/provisioning:/etc/grafana/provisioning:ro
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    networks:
+      - portal-network
+    restart: unless-stopped
+
+  # Jaeger for Distributed Tracing
+  jaeger:
+    image: jaegertracing/all-in-one:1.52
+    container_name: next-portal-jaeger
+    profiles:
+      - full
+      - monitoring
+    ports:
+      - '5775:5775/udp'
+      - '6831:6831/udp'
+      - '6832:6832/udp'
+      - '5778:5778'
+      - '16686:16686'
+      - '14250:14250'
+      - '14268:14268'
+      - '14269:14269'
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+    networks:
+      - portal-network
+    restart: unless-stopped
+
+  # ===========================================================================
+  # Message Queue (for async processing)
+  # ===========================================================================
+
+  # RabbitMQ for Message Queue
+  rabbitmq:
+    image: rabbitmq:3.12-management-alpine
+    container_name: next-portal-rabbitmq
+    profiles:
+      - full
+      - queue
+    ports:
+      - '5672:5672'
+      - '15672:15672'
+    environment:
+      RABBITMQ_DEFAULT_USER: portal
+      RABBITMQ_DEFAULT_PASS: portal
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    networks:
+      - portal-network
+    restart: unless-stopped
+    healthcheck:
+      test: ['CMD', 'rabbitmq-diagnostics', 'check_running']
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # ===========================================================================
+  # Reverse Proxy & Load Balancer
+  # ===========================================================================
+
+  # Traefik Reverse Proxy
+  traefik:
+    image: traefik:v3.0
+    container_name: next-portal-traefik
+    profiles:
+      - full
+      - proxy
+    command:
+      - "--api.insecure=true"
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.websecure.address=:443"
+    ports:
+      - '80:80'
+      - '443:443'
+      - '8080:8080'  # Traefik dashboard
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - portal-network
+    restart: unless-stopped
+
+  # ===========================================================================
+  # Development Tools
+  # ===========================================================================
+
+  # Adminer for Database Management
+  adminer:
+    image: adminer:4.8.1
+    container_name: next-portal-adminer
+    profiles:
+      - development
+      - tools
+    ports:
+      - '8081:8080'
+    depends_on:
+      - postgres
+    networks:
+      - portal-network
+    restart: unless-stopped
+
+  # Redis Commander for Redis Management
+  redis-commander:
+    image: rediscommander/redis-commander:latest
+    container_name: next-portal-redis-commander
+    profiles:
+      - development
+      - tools
+    ports:
+      - '8082:8081'
+    environment:
+      - REDIS_HOSTS=local:redis:6379
+    depends_on:
+      - redis
+    networks:
+      - portal-network
+    restart: unless-stopped
+
+  # MailHog for Email Testing
+  mailhog:
+    image: mailhog/mailhog:v1.0.1
+    container_name: next-portal-mailhog
+    profiles:
+      - development
+      - tools
+    ports:
+      - '1025:1025'
+      - '8025:8025'
+    networks:
+      - portal-network
+    restart: unless-stopped
+
+  # ===========================================================================
+  # Database Migrations (one-time job)
+  # ===========================================================================
+
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: builder
+    container_name: next-portal-migrate
+    profiles:
+      - setup
+    command: npx prisma db push --accept-data-loss
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/next_portal
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - portal-network
+
+  # Database Seeder (one-time job)
+  seed:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: builder
+    container_name: next-portal-seed
+    profiles:
+      - setup
+    command: npx tsx prisma/seed.ts
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/next_portal
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - portal-network
+
+# =============================================================================
+# Networks
+# =============================================================================
+
+networks:
+  portal-network:
+    driver: bridge
+    name: next-portal-network
+
+# =============================================================================
+# Volumes
+# =============================================================================
+
+volumes:
+  postgres_data:
+    name: next-portal-postgres-data
+  redis_data:
+    name: next-portal-redis-data
+  elasticsearch_data:
+    name: next-portal-elasticsearch-data
+  prometheus_data:
+    name: next-portal-prometheus-data
+  grafana_data:
+    name: next-portal-grafana-data
+  rabbitmq_data:
+    name: next-portal-rabbitmq-data
