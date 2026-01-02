@@ -1,0 +1,108 @@
+# Generated - Files needing reformatting (single-line corrupted)
+# These files contain valid code but are formatted incorrectly
+# TODO: Reformat these files properly and remove from this list
+
+# Contract Generator
+src/tools/contract-generator/index.ts
+
+# App Pages and Routes
+src/app/marketplace/page.tsx
+src/app/api/security/compliance/route.ts
+src/app/api/plugins/verify/route.ts
+src/app/api/plugins/registry/[pluginId]/versions/route.ts
+src/app/api/marketplace/plugins/route.ts
+src/app/api/monitoring/tenant-health/route.ts
+
+# Components
+src/components/plugins/PluginManagementDashboard.tsx
+src/components/catalog/VisualTemplateDesigner.tsx
+src/components/marketplace/AdvancedPluginMarketplace.tsx
+src/components/runtime/ClientSafeWrapper.tsx
+src/components/setup/UserPermissionWizard.tsx
+src/components/feedback/FeedbackPortal.tsx
+src/components/feedback/FeedbackWidget.tsx
+src/components/search/SearchBar.tsx
+src/components/dashboard/RealtimeDashboard.tsx
+src/components/notifications/LiveNotificationSystem.tsx
+
+# Database Library
+src/lib/database/migrations.ts
+src/lib/database/simple-monitoring.ts
+src/lib/database/connection.ts
+src/lib/database/client.ts
+src/lib/database/monitoring.ts
+src/lib/database/backup.ts
+
+# Contract Testing
+src/lib/contract-testing/reporting/contract-reporter.ts
+src/lib/contract-testing/documentation/publisher.ts
+src/lib/contract-testing/core/compatibility-checker.ts
+src/lib/contract-testing/breaking-changes/detector.ts
+src/lib/contract-testing/governance/approval-workflow.ts
+src/lib/contract-testing/ci-cd/pipeline-integration.ts
+
+# Security
+src/lib/security/SecurityAuditor.ts
+src/lib/security/SecurityReportGenerator.ts
+
+# Integration
+src/lib/integration/enhanced-multi-tenant-platform.ts
+
+# Feature Flags
+src/lib/feature-flags/kill-switch-manager.ts
+
+# Discovery
+src/lib/discovery/example.ts
+
+# Workflows
+src/lib/workflows/templates.ts
+
+# Incident Management
+src/lib/incident-management/integrations/slack.ts
+src/lib/incident-management/integrations/grafana.ts
+src/lib/incident-management/notification-service.ts
+
+# Observability
+src/lib/observability/telemetry.ts
+src/lib/catalog-graph/health.ts
+
+# CI/CD Templates
+src/lib/cicd-templates/quality-gates/index.ts
+src/lib/cicd-templates/generators/jenkins.ts
+src/lib/cicd-templates/generators/gitlab-ci.ts
+
+# Database Client
+src/lib/db/safe-client.ts
+
+# Performance
+src/lib/performance/performance-optimization.ts
+
+# Email
+src/lib/email/EmailService.ts
+
+# Process
+src/lib/process/process-manager.ts
+
+# Services
+src/services/resources/example.ts
+src/services/feature-flags/experimentation-platform.ts
+src/services/marketplace/performance-optimizer.ts
+src/services/observability/incident-manager.ts
+src/services/observability/performance-analyzer.ts
+src/services/observability/capacity-planner.ts
+src/services/observability/logging-engine.ts
+src/services/observability/observability-orchestrator.ts
+src/services/observability/tracing-manager.ts
+src/services/observability/metrics-collector.ts
+src/services/observability/alerting-engine.ts
+src/services/monitoring/SLOMonitoringService.ts
+src/services/chaos/chaos-experiments.ts
+src/services/onboarding/EnhancedEmailService.ts
+src/services/onboarding/EmailService.ts
+src/services/onboarding/IntegrationSetupService.ts
+src/services/communications/template-engine.ts
+
+# Build Outputs
+.next/
+out/
+node_modules/

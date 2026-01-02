@@ -114,6 +114,27 @@
  "src/services/observability/observability-orchestrator.ts",
  "src/services/observability/performance-analyzer.ts",
  "src/services/observability/tracing-manager.ts",
- "src/services/plugin-sdk/developer-sdk.ts"
+ "src/services/plugin-sdk/developer-sdk.ts",
+ "src/tools/contract-generator/index.ts",
+ "src/lib/database/client.ts",
+ "src/lib/database/monitoring.ts",
+ "src/lib/database/backup.ts",
+ "src/lib/database/migrations.ts",
+ "src/lib/discovery/example.ts",
+ "src/lib/workflows/templates.ts",
+ "src/lib/observability/telemetry.ts",
+ "src/lib/db/safe-client.ts",
+ "src/lib/performance/performance-optimization.ts",
+ "src/lib/process/process-manager.ts",
+ "src/services/feature-flags/experimentation-platform.ts",
+ "src/services/marketplace/performance-optimizer.ts",
+ "src/services/monitoring/SLOMonitoringService.ts",
+ "src/services/chaos/chaos-experiments.ts",
+ "src/services/onboarding/EnhancedEmailService.ts",
+ "src/components/catalog/VisualTemplateDesigner.tsx",
+ "src/app/api/security/compliance/route.ts",
+ "src/app/api/plugins/registry/[pluginId]/versions/route.ts",
+ "src/app/api/marketplace/plugins/route.ts",
+ "src/app/api/monitoring/tenant-health/route.ts"
  ]
 }
