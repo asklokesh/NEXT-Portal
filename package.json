@@ -1,6 +1,6 @@
 {
  "name": "next-portal",
- "version": "1.1.1",
+ "version": "1.1.2",
  "description": "NEXT - Modern Internal Developer Portal for Enterprise Teams",
  "private": true,
  "scripts": {

@@ -1,5 +1,34 @@
 /* eslint-disable @typescript-eslint/no-unused-vars, @typescript-eslint/consistent-type-imports, import/order, @typescript-eslint/no-misused-promises, @typescript-eslint/no-floating-promises, @typescript-eslint/require-await, no-console, no-dupe-else-if, no-return-await, import/no-self-import */
-import { rest } from 'msw';
+import { http, HttpResponse } from 'msw';
+
+// Compatibility layer for rest -> http migration
+const rest = {
+  get: (path: string, handler: (req: Request, res: unknown, ctx: unknown) => unknown) =>
+    http.get(path, async ({ request }) => {
+      const result = await handler(request, null, null);
+      return result;
+    }),
+  post: (path: string, handler: (req: Request, res: unknown, ctx: unknown) => unknown) =>
+    http.post(path, async ({ request }) => {
+      const result = await handler(request, null, null);
+      return result;
+    }),
+  put: (path: string, handler: (req: Request, res: unknown, ctx: unknown) => unknown) =>
+    http.put(path, async ({ request }) => {
+      const result = await handler(request, null, null);
+      return result;
+    }),
+  delete: (path: string, handler: (req: Request, res: unknown, ctx: unknown) => unknown) =>
+    http.delete(path, async ({ request }) => {
+      const result = await handler(request, null, null);
+      return result;
+    }),
+  patch: (path: string, handler: (req: Request, res: unknown, ctx: unknown) => unknown) =>
+    http.patch(path, async ({ request }) => {
+      const result = await handler(request, null, null);
+      return result;
+    }),
+};
 
 import type { 
  UserInfo, 

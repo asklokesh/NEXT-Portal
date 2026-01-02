@@ -9,6 +9,31 @@ const { TextEncoder, TextDecoder } = require('util');
 global.TextEncoder = TextEncoder;
 global.TextDecoder = TextDecoder;
 
+// BroadcastChannel polyfill for MSW
+class BroadcastChannelPolyfill {
+  constructor(name) {
+    this.name = name;
+    this.listeners = [];
+  }
+  postMessage(message) {
+    this.listeners.forEach(listener => listener({ data: message }));
+  }
+  addEventListener(type, listener) {
+    if (type === 'message') {
+      this.listeners.push(listener);
+    }
+  }
+  removeEventListener(type, listener) {
+    if (type === 'message') {
+      this.listeners = this.listeners.filter(l => l !== listener);
+    }
+  }
+  close() {
+    this.listeners = [];
+  }
+}
+global.BroadcastChannel = BroadcastChannelPolyfill;
+
 // URL polyfill (usually available in Node.js but ensure it's global)
 const { URL, URLSearchParams } = require('url');
 global.URL = URL;
