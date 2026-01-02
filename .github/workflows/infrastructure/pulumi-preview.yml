@@ -110,7 +110,7 @@ jobs:
             });
 
       - name: Upload Preview Artifacts
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: pulumi-preview-${{ matrix.stack }}
           path: |

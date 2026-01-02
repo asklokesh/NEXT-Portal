@@ -55,7 +55,7 @@ jobs:
           npx pact-js validate-pacts --pact-dirs ./pacts
 
       - name: Upload contract artifacts
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         if: always()
         with:
           name: pact-contracts
@@ -70,7 +70,7 @@ jobs:
         if: github.ref == 'refs/heads/main'
 
       - name: Upload documentation
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         if: github.ref == 'refs/heads/main'
         with:
           name: contract-docs
@@ -102,7 +102,7 @@ jobs:
         run: npm ci
 
       - name: Download contract artifacts
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: pact-contracts
           path: pacts
@@ -128,7 +128,7 @@ jobs:
           PACT_PROVIDER_BRANCH: ${{ github.ref_name }}
 
       - name: Upload verification results
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         if: always()
         with:
           name: verification-results-${{ matrix.provider }}
@@ -190,7 +190,7 @@ jobs:
             --output reports/compatibility-report.html
 
       - name: Comment PR with compatibility results
-        uses: actions/github-script@v6
+        uses: actions/github-script@v7
         if: github.event_name == 'pull_request'
         with:
           script: |
@@ -233,7 +233,7 @@ jobs:
             }
 
       - name: Upload compatibility artifacts
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         if: always()
         with:
           name: compatibility-results
@@ -310,7 +310,7 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
 
       - name: Download contract artifacts
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: pact-contracts
           path: pacts
@@ -359,7 +359,7 @@ jobs:
         run: npm ci
 
       - name: Download all artifacts
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
 
       - name: Generate comprehensive report
         run: |
@@ -370,7 +370,7 @@ jobs:
             --format html,json,junit
 
       - name: Upload reports
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         if: always()
         with:
           name: contract-test-reports
@@ -432,7 +432,7 @@ jobs:
 
       - name: Create issue on failure
         if: failure() && github.ref == 'refs/heads/main'
-        uses: actions/github-script@v6
+        uses: actions/github-script@v7
         with:
           script: |
             const title = `Contract tests failed on main branch`;

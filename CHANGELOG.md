@@ -5,6 +5,22 @@ All notable changes to NEXT Portal will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.4] - 2026-01-02
+
+### Fixed
+- Updated all GitHub Actions workflows to use latest action versions
+- Replaced deprecated actions/upload-artifact@v3 with v4
+- Replaced deprecated actions/download-artifact@v3 with v4
+- Updated actions/checkout@v3 to v4
+- Updated actions/setup-node@v3 to v4
+- Updated actions/cache@v3 to v4
+- Updated codecov/codecov-action@v3 to v4
+- Updated actions/github-script@v6 to v7
+
+### Changed
+- All workflow files now use latest GitHub Actions versions
+- Ensured CI/CD pipeline compatibility with GitHub Actions deprecation timeline
+
 ## [1.1.3] - 2026-01-02
 
 ### Added

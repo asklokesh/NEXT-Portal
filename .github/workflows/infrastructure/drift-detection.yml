@@ -167,7 +167,7 @@ jobs:
 
       - name: Upload Drift Report
         if: steps.drift.outputs.drift_detected == 'true'
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: drift-report-${{ matrix.stack }}
           path: |
