@@ -77,7 +77,7 @@ describe('CatalogIngestionOrchestrator', () => {
         connect: jest.fn().mockResolvedValue({
           query: jest.fn().mockResolvedValue({ rows: [] }),
           release: jest.fn(),
-        })),
+        }),
       })),
     }));
 

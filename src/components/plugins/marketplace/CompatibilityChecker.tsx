@@ -25,6 +25,7 @@ import {
   ChevronUp,
   AlertCircle,
   RefreshCw,
+  Lightbulb,
 } from 'lucide-react';
 import type { BackstagePlugin } from '@/services/backstage/plugin-registry';
 

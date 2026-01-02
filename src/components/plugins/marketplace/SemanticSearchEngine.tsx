@@ -73,7 +73,7 @@ const INTENT_PATTERNS = {
   'find-recent': ['new', 'recent', 'latest', 'updated', 'fresh'],
 };
 
-class SemanticSearchEngine {
+class SemanticSearchEngineCore {
   private functionalities: Map<string, string[]> = new Map();
   private pluginEmbeddings: Map<string, number[]> = new Map();
 
@@ -336,7 +336,7 @@ export function SemanticSearchEngine({ plugins, onResults, onSuggestionSelect }:
   const [searchHistory, setSearchHistory] = useState<string[]>([]);
   
   const debouncedQuery = useDebounce(query, 300);
-  const searchEngine = useMemo(() => new SemanticSearchEngine(), []);
+  const searchEngine = useMemo(() => new SemanticSearchEngineCore(), []);
 
   // Perform search
   useEffect(() => {

@@ -1,9 +1,5 @@
 // Jest setup file for global test configuration
-const { TextEncoder, TextDecoder } = require('util');
-
-// Polyfills
-global.TextEncoder = TextEncoder;
-global.TextDecoder = TextDecoder;
+// Note: Polyfills are now in jest.polyfills.js which runs via setupFiles
 
 // Only add DOM mocks if window exists (jsdom environment)
 if (typeof window !== 'undefined') {

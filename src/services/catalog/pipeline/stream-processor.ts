@@ -173,30 +173,31 @@ export class StreamProcessor extends EventEmitter {
    * Create source stream that reads from Redis queues
    */
   private createSourceStream(): Readable {
-    return new Readable({
+    const self = this;
+    const readable = new Readable({
       objectMode: true,
       highWaterMark: this.config.processing.batchSize,
-      
+
       async read() {
-        if (!this.isRunning) {
+        if (!self.isRunning) {
           this.push(null);
           return;
         }
 
         try {
           // Get queue keys for all sources
-          const queueKeys = await this.redis.keys('processing:queue:*');
-          
+          const queueKeys = await self.redis.keys('processing:queue:*');
+
           if (queueKeys.length === 0) {
             // No work available, wait and try again
-            setTimeout(() => this._read(), 1000);
+            setTimeout(() => this.read(), 1000);
             return;
           }
 
           // Process items from queues in round-robin fashion
           for (const queueKey of queueKeys) {
-            const entityData = await this.redis.brpop(queueKey, 1);
-            
+            const entityData = await self.redis.brpop(queueKey, 1);
+
             if (entityData) {
               const [, jsonData] = entityData;
               const entity = JSON.parse(jsonData) as RawEntityData;
@@ -206,24 +207,26 @@ export class StreamProcessor extends EventEmitter {
         } catch (error) {
           this.emit('error', error);
         }
-      }.bind(this),
+      },
     });
+    return readable;
   }
 
   /**
    * Create transformation stream
    */
   private createTransformStream(): Transform {
+    const self = this;
     return new Transform({
       objectMode: true,
       highWaterMark: this.config.processing.batchSize,
-      
+
       async transform(entity: RawEntityData, encoding, callback) {
         const startTime = Date.now();
-        
+
         try {
           // Find appropriate transformer
-          const transformer = Array.from(this.transformers.values())
+          const transformer = Array.from(self.transformers.values())
             .find(t => t.canTransform(entity));
 
           if (!transformer) {
@@ -232,17 +235,17 @@ export class StreamProcessor extends EventEmitter {
           }
 
           const transformedEntity = await transformer.transform(entity);
-          
+
           // Track processing time
           const processingTime = Date.now() - startTime;
-          this.updateProcessingMetrics(processingTime);
-          
-          this.emit('entityTransformed', {
+          self.updateProcessingMetrics(processingTime);
+
+          self.emit('entityTransformed', {
             type: 'entity.transformed',
             sourceId: entity.sourceId,
             entityRef: transformedEntity.entityRef,
             timestamp: new Date(),
-            data: { 
+            data: {
               transformerId: transformer.id,
               processingTime,
             },
@@ -250,10 +253,10 @@ export class StreamProcessor extends EventEmitter {
 
           callback(null, transformedEntity);
         } catch (error) {
-          this.updateErrorMetrics();
-          callback(error);
+          self.updateErrorMetrics();
+          callback(error as Error);
         }
-      }.bind(this),
+      },
     });
   }
 
@@ -261,10 +264,11 @@ export class StreamProcessor extends EventEmitter {
    * Create validation stream
    */
   private createValidationStream(): Transform {
+    const self = this;
     return new Transform({
       objectMode: true,
       highWaterMark: this.config.processing.batchSize,
-      
+
       async transform(entity: TransformedEntityData, encoding, callback) {
         try {
           let hasErrors = false;
@@ -272,32 +276,32 @@ export class StreamProcessor extends EventEmitter {
           const allWarnings: string[] = [];
 
           // Run all validators
-          for (const validator of this.validators.values()) {
+          for (const validator of self.validators.values()) {
             const result = await validator.validate(entity);
-            
+
             if (!result.valid) {
               hasErrors = true;
               allErrors.push(...result.errors.map(e => e.message));
             }
-            
+
             allWarnings.push(...result.warnings.map(w => w.message));
           }
 
           if (hasErrors) {
-            this.emit('validationFailed', {
+            self.emit('validationFailed', {
               type: 'entity.validationFailed',
               sourceId: entity.sourceId,
               entityRef: entity.entityRef,
               timestamp: new Date(),
               data: { errors: allErrors, warnings: allWarnings },
             });
-            
+
             callback(new Error(`Validation failed for entity ${entity.entityRef}: ${allErrors.join(', ')}`));
             return;
           }
 
           if (allWarnings.length > 0) {
-            this.emit('validationWarnings', {
+            self.emit('validationWarnings', {
               type: 'entity.validationWarnings',
               sourceId: entity.sourceId,
               entityRef: entity.entityRef,
@@ -308,10 +312,10 @@ export class StreamProcessor extends EventEmitter {
 
           callback(null, entity);
         } catch (error) {
-          this.updateErrorMetrics();
-          callback(error);
+          self.updateErrorMetrics();
+          callback(error as Error);
         }
-      }.bind(this),
+      },
     });
   }
 
@@ -319,38 +323,39 @@ export class StreamProcessor extends EventEmitter {
    * Create enrichment stream
    */
   private createEnrichmentStream(): Transform {
+    const self = this;
     return new Transform({
       objectMode: true,
       highWaterMark: this.config.processing.batchSize,
-      
+
       async transform(entity: TransformedEntityData, encoding, callback) {
         try {
           // Run applicable enrichers in parallel
-          const enrichmentPromises = Array.from(this.enrichers.values())
+          const enrichmentPromises = Array.from(self.enrichers.values())
             .filter(enricher => enricher.canEnrich(entity))
             .map(enricher => enricher.enrich(entity));
 
           const enrichmentResults = await Promise.allSettled(enrichmentPromises);
-          
+
           // Apply successful enrichments
           for (const result of enrichmentResults) {
             if (result.status === 'fulfilled') {
               const enrichmentData = result.value.data;
-              
+
               // Merge enrichment data into entity
               if (enrichmentData.metadata) {
                 entity.metadata = { ...entity.metadata, ...enrichmentData.metadata };
               }
-              
+
               if (enrichmentData.spec) {
                 entity.spec = { ...entity.spec, ...enrichmentData.spec };
               }
-              
+
               if (enrichmentData.relations) {
                 entity.relations = [...(entity.relations || []), ...enrichmentData.relations];
               }
             } else {
-              this.emit('enrichmentError', {
+              self.emit('enrichmentError', {
                 type: 'entity.enrichmentError',
                 sourceId: entity.sourceId,
                 entityRef: entity.entityRef,
@@ -360,22 +365,22 @@ export class StreamProcessor extends EventEmitter {
             }
           }
 
-          this.emit('entityEnriched', {
+          self.emit('entityEnriched', {
             type: 'entity.enriched',
             sourceId: entity.sourceId,
             entityRef: entity.entityRef,
             timestamp: new Date(),
-            data: { 
+            data: {
               enrichmentsApplied: enrichmentResults.filter(r => r.status === 'fulfilled').length,
             },
           });
 
           callback(null, entity);
         } catch (error) {
-          this.updateErrorMetrics();
-          callback(error);
+          self.updateErrorMetrics();
+          callback(error as Error);
         }
-      }.bind(this),
+      },
     });
   }
 
@@ -383,15 +388,16 @@ export class StreamProcessor extends EventEmitter {
    * Create sink stream that persists entities
    */
   private createSinkStream(): Writable {
+    const self = this;
     return new Writable({
       objectMode: true,
       highWaterMark: this.config.processing.batchSize,
-      
+
       async write(entity: TransformedEntityData, encoding, callback) {
         try {
           // Persist to catalog storage
-          await this.persistEntity(entity);
-          
+          await self.persistEntity(entity);
+
           // Emit change event
           const changeEvent: EntityChangeEvent = {
             type: 'entity.updated',
@@ -402,16 +408,16 @@ export class StreamProcessor extends EventEmitter {
             entity,
             data: {},
           };
-          
-          this.emit('entityProcessed', changeEvent);
-          this.metrics.itemsProcessed++;
-          
+
+          self.emit('entityProcessed', changeEvent);
+          self.metrics.itemsProcessed++;
+
           callback();
         } catch (error) {
-          this.updateErrorMetrics();
-          callback(error);
+          self.updateErrorMetrics();
+          callback(error as Error);
         }
-      }.bind(this),
+      },
     });
   }
 

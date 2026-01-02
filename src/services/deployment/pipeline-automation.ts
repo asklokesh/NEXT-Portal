@@ -2,8 +2,6 @@ import * as yaml from 'js-yaml';
 import {
   DeploymentConfig,
   CanaryConfig,
-  BlueGreenConfig,
-  ABTestingConfig,
 } from './deployment-config';
 
 export class PipelineAutomation {
@@ -36,8 +34,8 @@ export class PipelineAutomation {
     return yaml.dump(workflow);
   }
 
-  private generateJobs(config: DeploymentConfig): any {
-    const jobs: any = {
+  private generateJobs(config: DeploymentConfig): Record<string, unknown> {
+    const jobs: Record<string, unknown> = {
       'build-and-push': {
         'runs-on': 'ubuntu-latest',
         permissions: {
@@ -45,8 +43,8 @@ export class PipelineAutomation {
           packages: 'write',
         },
         outputs: {
-          'image-tag': `${{ steps.meta.outputs.tags }}`,
-          'image-digest': `${{ steps.build.outputs.digest }}`,
+          'image-tag': '${{ steps.meta.outputs.tags }}',
+          'image-digest': '${{ steps.build.outputs.digest }}',
         },
         steps: [
           {
@@ -61,9 +59,9 @@ export class PipelineAutomation {
             name: 'Log in to Container Registry',
             uses: 'docker/login-action@v3',
             with: {
-              registry: `${{ env.REGISTRY }}`,
-              username: `${{ github.actor }}`,
-              password: `${{ secrets.GITHUB_TOKEN }}`,
+              registry: '${{ env.REGISTRY }}',
+              username: '${{ github.actor }}',
+              password: '${{ secrets.GITHUB_TOKEN }}',
             },
           },
           {
@@ -71,13 +69,13 @@ export class PipelineAutomation {
             name: 'Extract metadata',
             uses: 'docker/metadata-action@v5',
             with: {
-              images: `${{ env.REGISTRY }}/${config.name}`,
+              images: `\${{ env.REGISTRY }}/${config.name}`,
               tags: [
                 'type=ref,event=branch',
                 'type=ref,event=pr',
                 'type=semver,pattern={{version}}',
                 'type=semver,pattern={{major}}.{{minor}}',
-                `type=sha,prefix={{branch}}-`,
+                'type=sha,prefix={{branch}}-',
                 'type=raw,value=latest,enable={{is_default_branch}}',
               ].join('\n'),
             },
@@ -90,14 +88,14 @@ export class PipelineAutomation {
               context: '.',
               file: './Dockerfile.production',
               push: true,
-              tags: `${{ steps.meta.outputs.tags }}`,
-              labels: `${{ steps.meta.outputs.labels }}`,
+              tags: '${{ steps.meta.outputs.tags }}',
+              labels: '${{ steps.meta.outputs.labels }}',
               'cache-from': 'type=gha',
               'cache-to': 'type=gha,mode=max',
               'build-args': [
-                `BUILD_DATE=${{ github.event.repository.updated_at }}`,
-                `VCS_REF=${{ github.sha }}`,
-                `VERSION=${{ github.ref_name }}`,
+                'BUILD_DATE=${{ github.event.repository.updated_at }}',
+                'VCS_REF=${{ github.sha }}',
+                'VERSION=${{ github.ref_name }}',
               ].join('\n'),
             },
           },
@@ -109,15 +107,14 @@ export class PipelineAutomation {
     jobs['deploy-production'] = this.generateProductionJob(config);
     jobs['rollback'] = this.generateRollbackJob(config);
 
-
     return jobs;
   }
 
-  private generateStagingJob(config: DeploymentConfig): any {
+  private generateStagingJob(config: DeploymentConfig): Record<string, unknown> {
     return {
       needs: 'build-and-push',
       'runs-on': 'ubuntu-latest',
-      if: `github.event_name == 'push' || github.event.inputs.environment == 'staging'`, 
+      if: "github.event_name == 'push' || github.event.inputs.environment == 'staging'",
       environment: {
         name: 'staging',
         url: `https://staging.${config.name}.example.com`,
@@ -136,51 +133,39 @@ export class PipelineAutomation {
         },
         {
           name: 'Configure kubectl',
-          run: ""
-echo "${{ secrets.STAGING_KUBECONFIG }}" | base64 -d > kubeconfig
-echo \"KUBECONFIG=$(pwd)/kubeconfig\" >> $GITHUB_ENV
-          ",
+          run: `echo "$\{{ secrets.STAGING_KUBECONFIG }}" | base64 -d > kubeconfig
+echo "KUBECONFIG=$(pwd)/kubeconfig" >> $GITHUB_ENV`,
         },
         {
           name: 'Update image in Kubernetes',
-          run: ""
-            kubectl set image deployment/${config.name} \
-              app=${{ needs.build-and-push.outputs.image-tag }} \
-              -n ${config.name}-staging
-          ",
+          run: `kubectl set image deployment/${config.name} \\
+  app=$\{{ needs.build-and-push.outputs.image-tag }} \\
+  -n ${config.name}-staging`,
         },
         {
           name: 'Wait for rollout',
-          run: ""
-            kubectl rollout status deployment/${config.name} \
-              -n ${config.name}-staging \
-              --timeout=10m
-          ",
+          run: `kubectl rollout status deployment/${config.name} \\
+  -n ${config.name}-staging \\
+  --timeout=10m`,
         },
         {
           name: 'Run smoke tests',
-          run: ""
-            STAGING_URL=\"https://staging.${config.name}.example.com\"
-            
-            # Health check
-            curl -f 
-STAGING_URL
-/api/health || exit 1
-            
-            # Ready check
-            curl -f 
-STAGING_URL
-/api/health/ready || exit 1
-            
-            echo \"Smoke tests passed!\"
-          ",
+          run: `STAGING_URL="https://staging.${config.name}.example.com"
+
+# Health check
+curl -f $STAGING_URL/api/health || exit 1
+
+# Ready check
+curl -f $STAGING_URL/api/health/ready || exit 1
+
+echo "Smoke tests passed!"`,
         },
       ],
     };
   }
 
-  private generateProductionJob(config: DeploymentConfig): any {
-    const steps = [
+  private generateProductionJob(config: DeploymentConfig): Record<string, unknown> {
+    const steps: Record<string, unknown>[] = [
       {
         name: 'Checkout code',
         uses: 'actions/checkout@v4',
@@ -194,20 +179,16 @@ STAGING_URL
       },
       {
         name: 'Configure kubectl',
-        run: ""
-          echo "${{ secrets.PRODUCTION_KUBECONFIG }}" | base64 -d > kubeconfig
-          echo \"KUBECONFIG=$(pwd)/kubeconfig\" >> $GITHUB_ENV
-          ",
+        run: `echo "$\{{ secrets.PRODUCTION_KUBECONFIG }}" | base64 -d > kubeconfig
+echo "KUBECONFIG=$(pwd)/kubeconfig" >> $GITHUB_ENV`,
       },
       {
         name: 'Create backup',
-        run: ""
-          # Backup current deployment
-          kubectl get deployment ${config.name} -n ${config.name} -o yaml > backup-deployment.yaml
-          
-          # Backup database (example with pg_dump)
-          kubectl exec -n ${config.name} postgres-0 -- pg_dump -U backstage_user backstage_idp > backup-$(date +%Y%m%d-%H%M%S).sql
-          ",
+        run: `# Backup current deployment
+kubectl get deployment ${config.name} -n ${config.name} -o yaml > backup-deployment.yaml
+
+# Backup database (example with pg_dump)
+kubectl exec -n ${config.name} postgres-0 -- pg_dump -U backstage_user backstage_idp > backup-$(date +%Y%m%d-%H%M%S).sql`,
       },
     ];
 
@@ -216,40 +197,37 @@ STAGING_URL
     } else {
       steps.push(...this.generateStandardProductionSteps(config));
     }
-    
-    steps.push({
+
+    steps.push(
+      {
         name: 'Post-deployment verification',
-        run: ""
-          # Verify all pods are running
-          kubectl get pods -n ${config.name} -l app=${config.name}
-          
-          # Check metrics
-          curl -H \"Authorization: Bearer ${{ secrets.METRICS_TOKEN }}\" \
-            https://{config.name}.example.com/api/metrics
-          ",
+        run: `# Verify all pods are running
+kubectl get pods -n ${config.name} -l app=${config.name}
+
+# Check metrics
+curl -H "Authorization: Bearer $\{{ secrets.METRICS_TOKEN }}" \\
+  https://${config.name}.example.com/api/metrics`,
       },
       {
         name: 'Notify deployment',
         if: 'always()',
         uses: '8398a7/action-slack@v3',
         with: {
-          status: `${{ job.status }}`,
-          text: ""
-            Production deployment ${{ job.status }}
-            Version: ${{ needs.build-and-push.outputs.image-tag }}
-            Actor: ${{ github.actor }}
-          ",
+          status: '${{ job.status }}',
+          text: `Production deployment $\{{ job.status }}
+Version: $\{{ needs.build-and-push.outputs.image-tag }}
+Actor: $\{{ github.actor }}`,
           env: {
-            SLACK_WEBHOOK_URL: `${{ secrets.SLACK_WEBHOOK }}`,
+            SLACK_WEBHOOK_URL: '${{ secrets.SLACK_WEBHOOK }}',
           },
         },
-      },
+      }
     );
 
     return {
       needs: ['build-and-push', 'deploy-staging'],
       'runs-on': 'ubuntu-latest',
-      if: `github.event.inputs.environment == 'production'`, 
+      if: "github.event.inputs.environment == 'production'",
       environment: {
         name: 'production',
         url: `https://${config.name}.example.com`,
@@ -257,21 +235,19 @@ STAGING_URL
       steps,
     };
   }
-  
-  private generateCanarySteps(config: DeploymentConfig): any[] {
+
+  private generateCanarySteps(config: DeploymentConfig): Record<string, unknown>[] {
     const canaryConfig = config.progressiveDelivery as CanaryConfig;
-    const steps = [];
+    const steps: Record<string, unknown>[] = [];
 
     for (const step of canaryConfig.steps) {
       steps.push({
         name: `Canary: ${step.setWeight}% traffic`,
-        run: ""
-          kubectl set image deployment/${config.name}-canary \
-            app=${{ needs.build-and-push.outputs.image-tag }} \
-            -n ${config.name}
-          # Logic to set traffic weight to ${step.setWeight}%
-          # This would typically involve updating a service mesh (e.g., Istio) or an ingress controller
-          ",
+        run: `kubectl set image deployment/${config.name}-canary \\
+  app=$\{{ needs.build-and-push.outputs.image-tag }} \\
+  -n ${config.name}
+# Logic to set traffic weight to ${step.setWeight}%
+# This would typically involve updating a service mesh (e.g., Istio) or an ingress controller`,
       });
 
       if (step.pause?.duration) {
@@ -281,47 +257,41 @@ STAGING_URL
         });
       }
     }
-    
+
     steps.push({
-        name: 'Promote to production',
-        run: ""
-          # Update main deployment
-          kubectl set image deployment/${config.name} \
-            app=${{ needs.build-and-push.outputs.image-tag }} \
-            -n ${config.name}
-          
-          # Wait for rollout
-          kubectl rollout status deployment/${config.name} \
-            -n ${config.name} \
-            --timeout=15m
-          ",
-      });
+      name: 'Promote to production',
+      run: `# Update main deployment
+kubectl set image deployment/${config.name} \\
+  app=$\{{ needs.build-and-push.outputs.image-tag }} \\
+  -n ${config.name}
+
+# Wait for rollout
+kubectl rollout status deployment/${config.name} \\
+  -n ${config.name} \\
+  --timeout=15m`,
+    });
 
     return steps;
   }
-  
-  private generateStandardProductionSteps(config: DeploymentConfig): any[] {
+
+  private generateStandardProductionSteps(config: DeploymentConfig): Record<string, unknown>[] {
     return [
-        {
-            name: 'Update image in Kubernetes',
-            run: ""
-              kubectl set image deployment/${config.name} \
-                app=${{ needs.build-and-push.outputs.image-tag }} \
-                -n ${config.name}
-              ",
-        },
-        {
-            name: 'Wait for rollout',
-            run: ""
-              kubectl rollout status deployment/${config.name} \
-                -n ${config.name} \
-                --timeout=10m
-              ",
-        },
-    ]
+      {
+        name: 'Update image in Kubernetes',
+        run: `kubectl set image deployment/${config.name} \\
+  app=$\{{ needs.build-and-push.outputs.image-tag }} \\
+  -n ${config.name}`,
+      },
+      {
+        name: 'Wait for rollout',
+        run: `kubectl rollout status deployment/${config.name} \\
+  -n ${config.name} \\
+  --timeout=10m`,
+      },
+    ];
   }
 
-  private generateRollbackJob(config: DeploymentConfig): any {
+  private generateRollbackJob(config: DeploymentConfig): Record<string, unknown> {
     return {
       needs: 'deploy-production',
       'runs-on': 'ubuntu-latest',
@@ -330,34 +300,28 @@ STAGING_URL
       steps: [
         {
           name: 'Configure kubectl',
-          run: ""
-            echo "${{ secrets.PRODUCTION_KUBECONFIG }}" | base64 -d > kubeconfig
-            echo \"KUBECONFIG=$(pwd)/kubeconfig\" >> $GITHUB_ENV
-            ",
+          run: `echo "$\{{ secrets.PRODUCTION_KUBECONFIG }}" | base64 -d > kubeconfig
+echo "KUBECONFIG=$(pwd)/kubeconfig" >> $GITHUB_ENV`,
         },
         {
           name: 'Rollback deployment',
-          run: ""
-            kubectl rollout undo deployment/${config.name} -n ${config.name}
-            kubectl rollout status deployment/${config.name} -n ${config.name}
-            ",
+          run: `kubectl rollout undo deployment/${config.name} -n ${config.name}
+kubectl rollout status deployment/${config.name} -n ${config.name}`,
         },
         {
           name: 'Notify rollback',
           uses: '8398a7/action-slack@v3',
           with: {
             status: 'custom',
-            'custom_payload': ""
-              {
-                text: \"Production deployment rolled back\",
-                attachments: [{
-                  color: 'warning',
-                  text: 'Automatic rollback triggered due to deployment failure'
-                }]
-              }
-            ",
+            custom_payload: `{
+  "text": "Production deployment rolled back",
+  "attachments": [{
+    "color": "warning",
+    "text": "Automatic rollback triggered due to deployment failure"
+  }]
+}`,
             env: {
-              SLACK_WEBHOOK_URL: `${{ secrets.SLACK_WEBHOOK }}`,
+              SLACK_WEBHOOK_URL: '${{ secrets.SLACK_WEBHOOK }}',
             },
           },
         },

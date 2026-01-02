@@ -1,33 +1,64 @@
 import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
+
+// Mock Prisma client - define mocks before the mock call
+const mockUserCreate = jest.fn();
+const mockUserFindUnique = jest.fn();
+const mockUserFindFirst = jest.fn();
+const mockUserFindMany = jest.fn();
+const mockUserUpdate = jest.fn();
+const mockUserDelete = jest.fn();
+const mockUserCount = jest.fn();
+const mockServiceCount = jest.fn();
+const mockTemplateCount = jest.fn();
+const mockTeamMemberCount = jest.fn();
+
+// Mock the prisma client first, before importing UserRepository
+jest.mock('../../client', () => ({
+  prisma: {
+    user: {
+      create: mockUserCreate,
+      findUnique: mockUserFindUnique,
+      findFirst: mockUserFindFirst,
+      findMany: mockUserFindMany,
+      update: mockUserUpdate,
+      delete: mockUserDelete,
+      count: mockUserCount,
+    },
+    service: {
+      count: mockServiceCount,
+    },
+    template: {
+      count: mockTemplateCount,
+    },
+    teamMember: {
+      count: mockTeamMemberCount,
+    },
+  },
+}));
+
 import { UserRepository, CreateUserData, UpdateUserData } from '../UserRepository';
 
-// Mock Prisma client
+// Reference for test setup
 const mockPrisma = {
- user: {
- create: jest.fn(),
- findUnique: jest.fn(),
- findFirst: jest.fn(),
- findMany: jest.fn(),
- update: jest.fn(),
- delete: jest.fn(),
- count: jest.fn(),
- },
- service: {
- count: jest.fn(),
- },
- template: {
- count: jest.fn(),
- },
- teamMember: {
- count: jest.fn(),
- },
+  user: {
+    create: mockUserCreate,
+    findUnique: mockUserFindUnique,
+    findFirst: mockUserFindFirst,
+    findMany: mockUserFindMany,
+    update: mockUserUpdate,
+    delete: mockUserDelete,
+    count: mockUserCount,
+  },
+  service: {
+    count: mockServiceCount,
+  },
+  template: {
+    count: mockTemplateCount,
+  },
+  teamMember: {
+    count: mockTeamMemberCount,
+  },
 };
-
-// Mock the prisma client
-jest.mock('../../client', () => ({
- prisma: mockPrisma,
- default: mockPrisma,
-}));
 
 describe('UserRepository', () => {
  let userRepository: UserRepository;

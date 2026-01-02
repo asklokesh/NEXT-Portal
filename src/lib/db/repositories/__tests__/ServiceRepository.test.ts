@@ -1,31 +1,60 @@
 import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
+
+// Mock Prisma client - define mocks before the mock call
+const mockServiceCreate = jest.fn();
+const mockServiceFindUnique = jest.fn();
+const mockServiceFindMany = jest.fn();
+const mockServiceUpdate = jest.fn();
+const mockServiceDelete = jest.fn();
+const mockServiceCount = jest.fn();
+const mockServiceGroupBy = jest.fn();
+const mockDependencyCreate = jest.fn();
+const mockDependencyDeleteMany = jest.fn();
+const mockHealthCheckGroupBy = jest.fn();
+
+// Mock the prisma client first, before importing ServiceRepository
+jest.mock('../../client', () => ({
+  prisma: {
+    service: {
+      create: mockServiceCreate,
+      findUnique: mockServiceFindUnique,
+      findMany: mockServiceFindMany,
+      update: mockServiceUpdate,
+      delete: mockServiceDelete,
+      count: mockServiceCount,
+      groupBy: mockServiceGroupBy,
+    },
+    serviceDependency: {
+      create: mockDependencyCreate,
+      deleteMany: mockDependencyDeleteMany,
+    },
+    healthCheckResult: {
+      groupBy: mockHealthCheckGroupBy,
+    },
+  },
+}));
+
 import { ServiceRepository, CreateServiceData, UpdateServiceData } from '../ServiceRepository';
 
-// Mock Prisma client
+// Reference for test setup
 const mockPrisma = {
- service: {
- create: jest.fn(),
- findUnique: jest.fn(),
- findMany: jest.fn(),
- update: jest.fn(),
- delete: jest.fn(),
- count: jest.fn(),
- groupBy: jest.fn(),
- },
- serviceDependency: {
- create: jest.fn(),
- deleteMany: jest.fn(),
- },
- healthCheckResult: {
- groupBy: jest.fn(),
- },
+  service: {
+    create: mockServiceCreate,
+    findUnique: mockServiceFindUnique,
+    findMany: mockServiceFindMany,
+    update: mockServiceUpdate,
+    delete: mockServiceDelete,
+    count: mockServiceCount,
+    groupBy: mockServiceGroupBy,
+  },
+  serviceDependency: {
+    create: mockDependencyCreate,
+    deleteMany: mockDependencyDeleteMany,
+  },
+  healthCheckResult: {
+    groupBy: mockHealthCheckGroupBy,
+  },
 };
-
-// Mock the prisma client
-jest.mock('../../client', () => ({
- prisma: mockPrisma,
- default: mockPrisma,
-}));
 
 describe('ServiceRepository', () => {
  let serviceRepository: ServiceRepository;

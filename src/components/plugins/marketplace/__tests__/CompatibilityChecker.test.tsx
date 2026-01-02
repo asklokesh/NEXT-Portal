@@ -53,8 +53,10 @@ const mockSystemInfo = {
     'react-dom': '18.2.0',
     'typescript': '5.0.4',
   },
-  availableServices: ['postgresql', 'redis', 'elasticsearch'],
-  permissions: ['catalog:read', 'catalog:write', 'user:read'],
+  // Include 'kubernetes' to satisfy the infrastructure plugin's service requirement
+  availableServices: ['postgresql', 'redis', 'elasticsearch', 'kubernetes'],
+  // Include all permissions required by mockPlugin to get "Fully Compatible"
+  permissions: ['catalog:read', 'catalog:write', 'user:read', 'kubernetes:read'],
 };
 
 const defaultProps = {
@@ -111,7 +113,10 @@ describe('CompatibilityChecker', () => {
     render(<CompatibilityChecker {...defaultProps} />);
 
     expect(screen.getByText('Recommendations')).toBeInTheDocument();
-    expect(screen.getByText(/Passed|Warnings|Failed/)).toBeInTheDocument();
+    // Quick stats section shows Passed, Warnings, and Failed counts
+    expect(screen.getByText('Passed')).toBeInTheDocument();
+    expect(screen.getByText('Warnings')).toBeInTheDocument();
+    expect(screen.getByText('Failed')).toBeInTheDocument();
   });
 
   it('switches between tabs correctly', async () => {
@@ -235,16 +240,26 @@ describe('CompatibilityChecker', () => {
   });
 
   it('detects plugin conflicts', () => {
-    const conflictingPlugin = {
+    // Create a monitoring plugin that will conflict with another monitoring plugin
+    const monitoringPlugin = {
       ...mockPlugin,
-      id: 'another-kubernetes-plugin',
-      category: 'infrastructure',
+      id: 'prometheus-plugin',
+      title: 'Prometheus Plugin',
+      category: 'monitoring' as const,
+    };
+
+    const conflictingInstalledPlugin = {
+      ...mockPlugin,
+      id: 'grafana-plugin',
+      title: 'Grafana Plugin',
+      category: 'monitoring' as const,
     };
 
     render(
-      <CompatibilityChecker 
-        {...defaultProps} 
-        installedPlugins={[conflictingPlugin] as BackstagePlugin[]}
+      <CompatibilityChecker
+        {...defaultProps}
+        plugin={monitoringPlugin}
+        installedPlugins={[conflictingInstalledPlugin] as BackstagePlugin[]}
       />
     );
 

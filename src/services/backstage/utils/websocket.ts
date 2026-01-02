@@ -280,16 +280,26 @@ export class BackstageWebSocketClient {
  private buildWebSocketUrl(): string {
  const baseUrl = this.config.url;
  const url = new URL(baseUrl);
- 
+
  // Convert HTTP(S) to WS(S)
  url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
- 
+
+ // Build URL string manually to work around JSDOM URL issues
+ let urlStr = url.protocol + '//' + url.host + url.pathname;
+
  // Add authentication as query parameter if specified
- if (this.config.authentication.method === 'query' && this.config.authentication.token) {
- url.searchParams.set('token', this.config.authentication.token);
+ const auth = this.config.authentication;
+ const searchParams = new URLSearchParams(url.search);
+ if (auth && auth.method === 'query' && auth.token) {
+  searchParams.set('token', auth.token);
  }
- 
- return url.toString();
+
+ const searchStr = searchParams.toString();
+ if (searchStr) {
+  urlStr += '?' + searchStr;
+ }
+
+ return urlStr;
  }
 
  private buildProtocols(): string[] {
@@ -445,6 +455,16 @@ export function createBackstageWebSocket(): BackstageWebSocketClient {
 
 export function getBackstageWebSocket(): BackstageWebSocketClient | null {
  return backstageWebSocketClient;
+}
+
+/**
+ * Reset the singleton instance (for testing purposes only)
+ */
+export function resetBackstageWebSocket(): void {
+ if (backstageWebSocketClient) {
+  backstageWebSocketClient.disconnect();
+  backstageWebSocketClient = null;
+ }
 }
 
 // Utility hook for easier WebSocket usage in React

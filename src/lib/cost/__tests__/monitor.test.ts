@@ -32,9 +32,9 @@ const mockCostAggregator = {
  // Mock any methods from costAggregator that might be used
 };
 
-jest.mock('../db/client', () => ({
- prisma: mockPrisma,
- redis: mockRedis,
+jest.mock('../../db/client', () => ({
+  prisma: mockPrisma,
+  redis: mockRedis,
 }));
 
 jest.mock('../aggregator', () => ({

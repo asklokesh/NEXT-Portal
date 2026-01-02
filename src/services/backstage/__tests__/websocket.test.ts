@@ -1,9 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
 
-import { 
- BackstageWebSocketClient, 
- createBackstageWebSocket, 
+import {
+ BackstageWebSocketClient,
+ createBackstageWebSocket,
  getBackstageWebSocket,
+ resetBackstageWebSocket,
  useWebSocketConnection
 } from '../utils/websocket';
 
@@ -620,10 +621,14 @@ describe('BackstageWebSocketClient', () => {
 });
 
 describe('Singleton Functions', () => {
+ beforeEach(() => {
+  // Reset singleton before each test
+  resetBackstageWebSocket();
+ });
+
  afterEach(() => {
- // Reset singleton
- const ws = getBackstageWebSocket();
- ws?.disconnect();
+  // Reset singleton after each test
+  resetBackstageWebSocket();
  });
 
  it('should create singleton WebSocket client', () => {
