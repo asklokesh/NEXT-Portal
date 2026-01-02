@@ -8,31 +8,32 @@ datasource db {
 }
 
 model User {
-  id              String          @id @default(cuid())
-  email           String          @unique
-  name            String
-  username        String?         @unique
-  avatar          String?
-  provider        String
-  providerId      String
-  password        String?
-  role            UserRole        @default(DEVELOPER)
-  isActive        Boolean         @default(true)
-  lastLogin       DateTime?
-  mfaEnabled      Boolean         @default(false)
-  mfaSecret       String?
-  mfaMethod       String?
-  mfaBackupCodes  String[]
-  phoneNumber     String?
-  createdAt       DateTime        @default(now())
-  updatedAt       DateTime        @updatedAt
-  apiKeys         ApiKey[]
-  auditLogs       AuditLog[]
-  mfaChallenges   MfaChallenge[]
-  ownedServices   Service[]       @relation("ServiceOwner")
-  sessions        Session[]
-  teamMemberships TeamMember[]
-  trustedDevices  TrustedDevice[]
+  id                    String                @id @default(cuid())
+  email                 String                @unique
+  name                  String
+  username              String?               @unique
+  avatar                String?
+  provider              String
+  providerId            String
+  password              String?
+  role                  UserRole              @default(DEVELOPER)
+  isActive              Boolean               @default(true)
+  lastLogin             DateTime?
+  mfaEnabled            Boolean               @default(false)
+  mfaSecret             String?
+  mfaMethod             String?
+  mfaBackupCodes        String[]
+  phoneNumber           String?
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+  apiKeys               ApiKey[]
+  auditLogs             AuditLog[]
+  mfaChallenges         MfaChallenge[]
+  ownedServices         Service[]             @relation("ServiceOwner")
+  sessions              Session[]
+  teamMemberships       TeamMember[]
+  trustedDevices        TrustedDevice[]
+  organizationMemberships OrganizationMember[]
 
   @@map("users")
 }
@@ -1066,6 +1067,7 @@ model DisasterRecoveryExecution {
 model Organization {
   id                   String               @id @default(cuid())
   name                 String               @unique
+  slug                 String               @unique // URL-friendly identifier (e.g., "acme-corp")
   displayName          String
   taxId                String?
   billingEmail         String
@@ -1079,6 +1081,20 @@ model Organization {
   creditLimit          Decimal              @default(0) @db.Decimal(10, 2)
   billingCycle         BillingCycle         @default(MONTHLY)
   status               OrganizationStatus   @default(ACTIVE)
+
+  // Multi-tenant SSO Configuration
+  domain               String?              @unique // Custom domain (e.g., "acme.portal.com")
+  ssoEnabled           Boolean              @default(false)
+  ssoProvider          SSOProvider?         // SAML, OIDC, AZURE_AD, OKTA, GOOGLE
+  ssoConfig            Json?                // { clientId, issuer, metadata, certificate, etc. }
+  allowLocalAuth       Boolean              @default(true) // Allow password login alongside SSO
+  enforceSSO           Boolean              @default(false) // Force SSO for all users
+  allowedEmailDomains  String[]             @default([]) // e.g., ["acme.com", "acme.io"]
+
+  // Environment configuration
+  environment          OrgEnvironment       @default(PRODUCTION)
+  parentOrgId          String?              // For dev/staging environments linked to prod
+
   createdAt            DateTime             @default(now())
   updatedAt            DateTime             @updatedAt
   billingAlerts        BillingAlert[]
@@ -1090,8 +1106,35 @@ model Organization {
   payments             Payment[]
   usageRecords         ResourceUsage[]
   subscriptions        Subscription[]
+  members              OrganizationMember[] // Members of this organization
+  parentOrg            Organization?        @relation("OrgHierarchy", fields: [parentOrgId], references: [id])
+  childOrgs            Organization[]       @relation("OrgHierarchy")
 
+  @@index([slug])
+  @@index([domain])
   @@map("organizations")
+}
+
+model OrganizationMember {
+  id             String         @id @default(cuid())
+  organizationId String
+  userId         String
+  role           OrgMemberRole  @default(MEMBER)
+  isActive       Boolean        @default(true)
+  invitedBy      String?
+  invitedAt      DateTime       @default(now())
+  joinedAt       DateTime?
+  lastActiveAt   DateTime?
+  ssoIdentity    String?        // External SSO identity/subject
+  metadata       Json?
+
+  organization   Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user           User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, userId])
+  @@index([userId])
+  @@index([organizationId, role])
+  @@map("organization_members")
 }
 
 model Subscription {
@@ -2554,6 +2597,31 @@ enum OrganizationStatus {
   SUSPENDED
   DELINQUENT
   CANCELLED
+}
+
+enum SSOProvider {
+  SAML
+  OIDC
+  AZURE_AD
+  OKTA
+  GOOGLE
+  ONELOGIN
+  PING_IDENTITY
+  AUTH0
+}
+
+enum OrgEnvironment {
+  PRODUCTION
+  STAGING
+  DEVELOPMENT
+  SANDBOX
+}
+
+enum OrgMemberRole {
+  OWNER
+  ADMIN
+  MEMBER
+  GUEST
 }
 
 enum BillingCycle {

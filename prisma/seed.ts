@@ -388,22 +388,119 @@ async function main() {
 
  console.log(' Created sample permissions');
 
- // Create test-tenant organization for localhost:4400
- const testTenant = await prisma.organization.upsert({
-   where: { name: 'test-tenant' },
+ // Create organizations for multi-tenant SaaS
+ const acmeOrg = await prisma.organization.upsert({
+   where: { name: 'acme-corp' },
    update: {},
    create: {
-     name: 'test-tenant',
-     displayName: 'Test Tenant Organization',
-     billingEmail: 'billing@localhost.com',
+     name: 'acme-corp',
+     slug: 'acme',
+     displayName: 'Acme Corporation',
+     billingEmail: 'billing@acme.com',
      country: 'US',
      currency: 'USD',
      billingCycle: 'MONTHLY',
      status: 'ACTIVE',
+     ssoEnabled: false,
+     allowLocalAuth: true,
+     enforceSSO: false,
+     allowedEmailDomains: ['acme.com', 'company.com'],
+     environment: 'PRODUCTION',
    },
  });
 
- console.log(' Created test-tenant organization:', testTenant.name);
+ // Create staging environment for Acme
+ const acmeStaging = await prisma.organization.upsert({
+   where: { name: 'acme-corp-staging' },
+   update: {},
+   create: {
+     name: 'acme-corp-staging',
+     slug: 'acme-staging',
+     displayName: 'Acme Corporation (Staging)',
+     billingEmail: 'billing@acme.com',
+     country: 'US',
+     currency: 'USD',
+     billingCycle: 'MONTHLY',
+     status: 'ACTIVE',
+     ssoEnabled: false,
+     allowLocalAuth: true,
+     enforceSSO: false,
+     allowedEmailDomains: ['acme.com', 'company.com'],
+     environment: 'STAGING',
+     parentOrgId: acmeOrg.id,
+   },
+ });
+
+ // Create TechStart organization with SSO configured
+ const techStartOrg = await prisma.organization.upsert({
+   where: { name: 'techstart-inc' },
+   update: {},
+   create: {
+     name: 'techstart-inc',
+     slug: 'techstart',
+     displayName: 'TechStart Inc',
+     billingEmail: 'billing@techstart.io',
+     country: 'US',
+     currency: 'USD',
+     billingCycle: 'MONTHLY',
+     status: 'ACTIVE',
+     ssoEnabled: true,
+     ssoProvider: 'OKTA',
+     ssoConfig: {
+       issuer: 'https://techstart.okta.com',
+       clientId: 'mock-client-id',
+       authorizationEndpoint: 'https://techstart.okta.com/oauth2/v1/authorize',
+       tokenEndpoint: 'https://techstart.okta.com/oauth2/v1/token',
+     },
+     allowLocalAuth: true, // Allow fallback to local auth
+     enforceSSO: false,
+     allowedEmailDomains: ['techstart.io'],
+     environment: 'PRODUCTION',
+   },
+ });
+
+ console.log(' Created organizations:');
+ console.log('   - acme (Acme Corporation) - Local auth only');
+ console.log('   - acme-staging (Acme Staging) - Linked to acme');
+ console.log('   - techstart (TechStart Inc) - SSO enabled with local fallback');
+
+ // Add admin user to Acme organization
+ await prisma.organizationMember.upsert({
+   where: {
+     organizationId_userId: {
+       organizationId: acmeOrg.id,
+       userId: adminUser.id,
+     },
+   },
+   update: {},
+   create: {
+     organizationId: acmeOrg.id,
+     userId: adminUser.id,
+     role: 'OWNER',
+     isActive: true,
+     joinedAt: new Date(),
+   },
+ });
+
+ // Add developer user to Acme organization
+ await prisma.organizationMember.upsert({
+   where: {
+     organizationId_userId: {
+       organizationId: acmeOrg.id,
+       userId: testUser.id,
+     },
+   },
+   update: {},
+   create: {
+     organizationId: acmeOrg.id,
+     userId: testUser.id,
+     role: 'MEMBER',
+     isActive: true,
+     joinedAt: new Date(),
+   },
+ });
+
+ console.log(' Added users to organizations');
 
  // Initialize system health records
  const healthServices = [

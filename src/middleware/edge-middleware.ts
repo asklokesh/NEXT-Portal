@@ -5,6 +5,7 @@
 
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
+import { jwtVerify, importSPKI } from 'jose';
 import { permissionCheckMiddleware } from './edge-permission-check';
 import {
   extractTenantContext,
@@ -12,6 +13,58 @@ import {
   validateTenantAccess,
   handleTenantError
 } from './tenant-context';
+
+// Edge-compatible token verification
+interface TokenPayload {
+  userId: string;
+  email: string;
+  role: string;
+  sessionId: string;
+  exp?: number;
+  iat?: number;
+}
+
+// Cache for public key
+let cachedPublicKey: CryptoKey | null = null;
+
+async function getPublicKey(): Promise<CryptoKey | null> {
+  if (cachedPublicKey) return cachedPublicKey;
+
+  const publicKeyPem = process.env.JWT_PUBLIC_KEY;
+  if (!publicKeyPem) return null;
+
+  try {
+    cachedPublicKey = await importSPKI(publicKeyPem, 'RS256');
+    return cachedPublicKey;
+  } catch {
+    return null;
+  }
+}
+
+async function verifyAccessToken(token: string): Promise<TokenPayload | null> {
+  try {
+    const publicKey = await getPublicKey();
+    if (!publicKey) {
+      // Fallback for development - decode without verification
+      if (process.env.NODE_ENV === 'development') {
+        const parts = token.split('.');
+        if (parts.length === 3) {
+          const payload = JSON.parse(atob(parts[1]));
+          return payload as TokenPayload;
+        }
+      }
+      return null;
+    }
+
+    const { payload } = await jwtVerify(token, publicKey, {
+      algorithms: ['RS256']
+    });
+
+    return payload as unknown as TokenPayload;
+  } catch {
+    return null;
+  }
+}
 
 // Security configurations
 const BYPASS_ROUTES = [
@@ -23,6 +76,46 @@ const BYPASS_ROUTES = [
   '/sitemap.xml',
   '/.well-known',
   '/api/scaffolder'
+];
+
+// Public page routes that don't require authentication
+const PUBLIC_PAGE_ROUTES = [
+  '/login',
+  '/signup',
+  '/login/enterprise',
+  '/forgot-password',
+  '/reset-password',
+  '/verify-email',
+  '/terms',
+  '/privacy',
+  '/contact',
+  '/'  // Landing page is public
+];
+
+// Protected page routes that require authentication
+const PROTECTED_PAGE_ROUTES = [
+  '/dashboard',
+  '/catalog',
+  '/create',
+  '/docs',
+  '/search',
+  '/settings',
+  '/admin',
+  '/rbac',
+  '/plugins',
+  '/kubernetes',
+  '/insights',
+  '/skill-exchange',
+  '/github',
+  '/profile',
+  '/notifications',
+  '/deployments',
+  '/monitoring',
+  '/costs',
+  '/audit-logs',
+  '/integrations',
+  '/api-explorer',
+  '/onboarding'
 ];
 
 const SENSITIVE_ROUTES = [
@@ -239,6 +332,107 @@ export async function middleware(request: NextRequest) {
   }
 
   try {
+    // Check if this is a protected page route (not API)
+    const isProtectedPage = PROTECTED_PAGE_ROUTES.some(route =>
+      pathname === route || pathname.startsWith(route + '/')
+    );
+
+    const isPublicPage = PUBLIC_PAGE_ROUTES.some(route =>
+      pathname === route || pathname.startsWith(route + '/')
+    );
+
+    // Authentication check for protected pages
+    if (isProtectedPage && !pathname.startsWith('/api/')) {
+      const accessToken = request.cookies.get('access-token')?.value;
+      const sessionId = request.cookies.get('session-id')?.value;
+
+      if (!accessToken || !sessionId) {
+        // Redirect to login with return URL
+        const loginUrl = new URL('/login', request.url);
+        loginUrl.searchParams.set('callbackUrl', pathname);
+
+        logSecurityEvent('unauthenticated_access', {
+          ip: getClientIP(request),
+          attemptedPath: pathname,
+          userAgent: request.headers.get('user-agent')
+        });
+
+        return NextResponse.redirect(loginUrl);
+      }
+
+      // Verify the token
+      const tokenPayload = await verifyAccessToken(accessToken);
+
+      if (!tokenPayload) {
+        // Invalid token - redirect to login
+        const loginUrl = new URL('/login', request.url);
+        loginUrl.searchParams.set('callbackUrl', pathname);
+        loginUrl.searchParams.set('error', 'InvalidToken');
+
+        logSecurityEvent('invalid_token', {
+          ip: getClientIP(request),
+          attemptedPath: pathname,
+          userAgent: request.headers.get('user-agent')
+        });
+
+        // Clear invalid cookies
+        const response = NextResponse.redirect(loginUrl);
+        response.cookies.delete('access-token');
+        response.cookies.delete('session-id');
+        return response;
+      }
+
+      // Check token expiry (enterprise requirement)
+      if (tokenPayload.exp && Date.now() >= tokenPayload.exp * 1000) {
+        const loginUrl = new URL('/login', request.url);
+        loginUrl.searchParams.set('callbackUrl', pathname);
+        loginUrl.searchParams.set('error', 'SessionExpired');
+
+        logSecurityEvent('session_expired', {
+          ip: getClientIP(request),
+          userId: tokenPayload.userId,
+          path: pathname
+        });
+
+        // Clear expired cookies
+        const response = NextResponse.redirect(loginUrl);
+        response.cookies.delete('access-token');
+        response.cookies.delete('session-id');
+        return response;
+      }
+
+      // Validate session ID matches token
+      if (tokenPayload.sessionId !== sessionId) {
+        const loginUrl = new URL('/login', request.url);
+        loginUrl.searchParams.set('callbackUrl', pathname);
+        loginUrl.searchParams.set('error', 'SessionMismatch');
+
+        logSecurityEvent('session_mismatch', {
+          ip: getClientIP(request),
+          userId: tokenPayload.userId,
+          path: pathname
+        });
+
+        const response = NextResponse.redirect(loginUrl);
+        response.cookies.delete('access-token');
+        response.cookies.delete('session-id');
+        return response;
+      }
+    }
+
+    // Redirect authenticated users away from login/signup
+    if (isPublicPage && (pathname === '/login' || pathname === '/signup')) {
+      const accessToken = request.cookies.get('access-token')?.value;
+      const sessionId = request.cookies.get('session-id')?.value;
+
+      if (accessToken && sessionId) {
+        const tokenPayload = await verifyAccessToken(accessToken);
+        if (tokenPayload && tokenPayload.exp && Date.now() < tokenPayload.exp * 1000) {
+          // Valid token - redirect to dashboard
+          return NextResponse.redirect(new URL('/dashboard', request.url));
+        }
+      }
+    }
     // Detect suspicious activity
     const suspiciousCheck = detectSuspiciousActivity(request);
     if (suspiciousCheck.suspicious) {

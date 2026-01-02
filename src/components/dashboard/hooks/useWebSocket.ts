@@ -137,121 +137,63 @@ export const useWidgetData = (widgetId: string, widget?: any) => {
         // Initial fetch
         fetchData();
 
-        // Set up real-time data service
-        const setupRealtimeUpdates = async () => {
-            try {
-                const { realtimeService } = await import('@/services/dashboard/realtime');
+        // Set up WebSocket connection for real-time updates
+        let cleanupWebSocket: (() => void) | undefined;
+        let pollingInterval: NodeJS.Timeout | undefined;
 
-                const handleMetricsUpdate = (update: any) => {
-                    if (mounted) {
-                        // Update data based on widget type
-                        switch (widget?.type) {
-                            case 'metric':
-                            case 'chart':
-                            case 'serviceHealth':
-                            case 'deployment':
-                            case 'table':
-                                fetchData(); // Refresh widget data
-                                break;
-                        }
-                    }
-                };
+        try {
+            wsService.current = getWebSocketService();
+            const service = wsService.current;
 
-                const handleEntityUpdate = (update: any) => {
-                    if (mounted && widget?.dataSource?.query?.includes(update.entityRef)) {
-                        fetchData();
-                    }
-                };
-
-                // Subscribe to real-time updates
-                realtimeService.on('metrics', handleMetricsUpdate);
-                realtimeService.on('entity-update', handleEntityUpdate);
-                realtimeService.on('deployment', handleMetricsUpdate);
-                realtimeService.on('alert', handleMetricsUpdate);
-                realtimeService.on('health', handleMetricsUpdate);
-
-                // Start the real-time service if not already started
-                if (!realtimeService.isConnected()) {
-                    realtimeService.start();
+            const handleWidgetData = (message: WebSocketMessage) => {
+                if (message.payload.widgetId === widgetId && mounted) {
+                    setData(message.payload.data);
+                    setError(null);
                 }
+            };
 
-                return () => {
-                    if (mounted) {
-                        realtimeService.off('metrics', handleMetricsUpdate);
-                        realtimeService.off('entity-update', handleEntityUpdate);
-                        realtimeService.off('deployment', handleMetricsUpdate);
-                        realtimeService.off('alert', handleMetricsUpdate);
-                        realtimeService.off('health', handleMetricsUpdate);
-                    }
-                };
-            } catch (error) {
-                console.error('Failed to setup real-time updates:', error);
-                // Fallback to polling
-                const interval = setInterval(fetchData, 30000);
-                return () => {
-                    mounted = false;
-                    clearInterval(interval);
-                };
+            const handleMetricData = (payload: any) => {
+                if (mounted) {
+                    setData(payload.data);
+                    setError(null);
+                }
+            };
+
+            const handleError = (err: Error) => {
+                if (mounted) {
+                    setError(err);
+                }
+            };
+
+            service.on(`widget:${widgetId}`, handleWidgetData);
+
+            if (widget?.dataSource?.query) {
+                service.on(`metric:${widget.dataSource.query}`, handleMetricData);
             }
-        };
 
-        // Set up WebSocket connection as fallback
-        const setupWebSocketFallback = () => {
-            try {
-                wsService.current = getWebSocketService();
-                const service = wsService.current;
+            service.on('error', handleError);
 
-                const handleWidgetData = (message: WebSocketMessage) => {
-                    if (message.payload.widgetId === widgetId && mounted) {
-                        setData(message.payload.data);
-                        setError(null);
-                    }
-                };
-
-                const handleMetricData = (payload: any) => {
-                    if (mounted) {
-                        setData(payload.data);
-                        setError(null);
-                    }
-                };
-
-                const handleError = (error: Error) => {
-                    if (mounted) {
-                        setError(error);
-                    }
-                };
-
-                service.on(`widget:${widgetId}`, handleWidgetData);
+            cleanupWebSocket = () => {
+                service.off(`widget:${widgetId}`, handleWidgetData);
 
                 if (widget?.dataSource?.query) {
-                    service.on(`metric:${widget.dataSource.query}`, handleMetricData);
+                    service.off(`metric:${widget.dataSource.query}`, handleMetricData);
                 }
 
-                service.on('error', handleError);
-
-                return () => {
-                    service.off(`widget:${widgetId}`, handleWidgetData);
-
-                    if (widget?.dataSource?.query) {
-                        service.off(`metric:${widget.dataSource.query}`, handleMetricData);
-                    }
-
-                    service.off('error', handleError);
-                };
-            } catch (error) {
-                // No WebSocket available, use polling
-                const interval = setInterval(fetchData, 30000);
-                return () => clearInterval(interval);
-            }
-        };
-
-        // Try real-time service first, fallback to WebSocket, then polling
-        const cleanup = setupRealtimeUpdates();
+                service.off('error', handleError);
+            };
+        } catch (wsError) {
+            // No WebSocket available, use polling as fallback
+            pollingInterval = setInterval(fetchData, 30000);
+        }
 
         return () => {
             mounted = false;
-            if (cleanup) {
-                cleanup.then(cleanupFn => cleanupFn && cleanupFn());
+            if (cleanupWebSocket) {
+                cleanupWebSocket();
+            }
+            if (pollingInterval) {
+                clearInterval(pollingInterval);
             }
         };
     }, [widgetId, widget, refreshKey]);

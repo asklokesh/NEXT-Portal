@@ -11,7 +11,8 @@ const loginSchema = z.object({
   email: z.string().email().max(255),
   password: z.string().min(1).max(128),
   rememberMe: z.boolean().optional(),
-  mfaToken: z.string().optional()
+  mfaToken: z.string().optional(),
+  organizationSlug: z.string().optional() // For multi-tenant login
 });
 
 // Login attempt tracking with automatic cleanup
@@ -111,7 +112,7 @@ export async function POST(request: NextRequest) {
       );
     }
     
-    const { email, password, rememberMe, mfaToken } = validation.data;
+    const { email, password, rememberMe, mfaToken, organizationSlug } = validation.data;
     const sanitizedEmail = email.toLowerCase().trim();
     
     // Check account lockout
@@ -190,7 +191,102 @@ export async function POST(request: NextRequest) {
     
     // Clear login attempts on successful authentication
     loginAttempts.delete(sanitizedEmail);
-    
+
+    // Organization validation for multi-tenant login
+    let organization = null;
+    let orgMembership = null;
+
+    if (organizationSlug) {
+      // Find the organization
+      organization = await db.findFirst('organization', {
+        where: {
+          OR: [
+            { slug: organizationSlug.toLowerCase() },
+            { name: organizationSlug.toLowerCase() }
+          ],
+          status: 'ACTIVE'
+        }
+      });
+
+      if (!organization) {
+        return NextResponse.json(
+          { success: false, error: 'Organization not found', requestId },
+          { status: 404 }
+        );
+      }
+
+      // Check if SSO is enforced and local auth is not allowed
+      if (organization.enforceSSO && organization.ssoEnabled && !organization.allowLocalAuth) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: 'SSO login is required for this organization',
+            ssoRequired: true,
+            ssoProvider: organization.ssoProvider,
+            requestId
+          },
+          { status: 403 }
+        );
+      }
+
+      // Check if user is a member of the organization
+      orgMembership = await db.findFirst('organizationMember', {
+        where: {
+          organizationId: organization.id,
+          userId: user.id,
+          isActive: true
+        }
+      });
+
+      if (!orgMembership) {
+        // Check if user's email domain is allowed
+        const emailDomain = sanitizedEmail.split('@')[1];
+        const allowedDomains = organization.allowedEmailDomains || [];
+
+        if (!allowedDomains.includes(emailDomain)) {
+          return NextResponse.json(
+            {
+              success: false,
+              error: 'You are not a member of this organization',
+              requestId
+            },
+            { status: 403 }
+          );
+        }
+
+        // Auto-add user to organization if their email domain matches
+        orgMembership = await db.create('organizationMember', {
+          data: {
+            organizationId: organization.id,
+            userId: user.id,
+            role: 'MEMBER',
+            isActive: true,
+            joinedAt: new Date()
+          }
+        });
+      }
+    } else {
+      // If no org slug provided, try to find user's primary organization
+      orgMembership = await db.findFirst('organizationMember', {
+        where: {
+          userId: user.id,
+          isActive: true
+        },
+        orderBy: {
+          joinedAt: 'asc' // First joined org is primary
+        }
+      });
+
+      if (orgMembership) {
+        organization = await db.findFirst('organization', {
+          where: {
+            id: orgMembership.organizationId,
+            status: 'ACTIVE'
+          }
+        });
+      }
+    }
+
     // Initialize JWT security
     await jwtSecurity.initialize();
     
@@ -212,7 +308,7 @@ export async function POST(request: NextRequest) {
         riskScore: 0,
         anomalyDetected: false
       },
-      user.tenantId || undefined
+      organization?.id || undefined // Use organization ID as tenant context
     );
     
     // Generate secure tokens with anti-replay protection
@@ -239,9 +335,8 @@ export async function POST(request: NextRequest) {
     // Update last login
     await db.update('user', {
       where: { id: user.id },
-      data: { 
-        lastLogin: new Date(),
-        lastLoginIp: clientInfo.ipAddress
+      data: {
+        lastLogin: new Date()
       }
     });
 
@@ -254,6 +349,14 @@ export async function POST(request: NextRequest) {
         name: user.name,
         role: user.role
       },
+      organization: organization ? {
+        id: organization.id,
+        slug: organization.slug,
+        name: organization.name,
+        displayName: organization.displayName,
+        environment: organization.environment,
+        role: orgMembership?.role || 'MEMBER'
+      } : null,
       session: {
         id: session.id,
         expiresAt: session.expiresAt.toISOString()

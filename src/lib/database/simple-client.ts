@@ -44,6 +44,14 @@ class SimpleDatabaseClient {
     return await modelDelegate.findMany(args || {});
   }
 
+  async findFirst<T extends keyof PrismaClient>(
+    model: T,
+    args?: any
+  ): Promise<any> {
+    const modelDelegate = this.prisma[model] as any;
+    return await modelDelegate.findFirst(args || {});
+  }
+
   async create<T extends keyof PrismaClient>(
     model: T,
     args: any
