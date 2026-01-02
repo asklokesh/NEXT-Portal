@@ -5,6 +5,22 @@ All notable changes to NEXT Portal will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.1] - 2026-01-02
+
+### Changed
+- Updated GitHub Actions workflow to use v4 of actions (checkout, setup-node, upload-artifact, download-artifact)
+- Updated codecov-action to v4, codeql-action to v3
+- Increased Node.js heap memory limit to 8GB in CI environment
+- Changed npm install to npm ci for deterministic builds
+- Added CI environment variable to test runs
+- Added NEXT_TELEMETRY_DISABLED to build step
+- Improved Trivy scanner to focus on CRITICAL and HIGH severity
+- Fixed E2E tests to run database schema setup before tests
+
+### Fixed
+- Removed `if: always()` from build job to only run on successful tests
+- Added missing database schema push step in E2E job
+
 ## [1.1.0] - 2026-01-02
 
 ### Added
