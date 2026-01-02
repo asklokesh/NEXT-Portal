@@ -5,6 +5,17 @@ All notable changes to NEXT Portal will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.15] - 2026-01-02
+
+### Added
+
+- Created missing global-setup.ts and global-teardown.ts for Playwright E2E tests
+- E2E tests now have proper setup/teardown hooks referenced in playwright.config.ts
+
+### Fixed
+
+- E2E CI job failing due to missing required module './tests/e2e/global-setup.ts'
+
 ## [1.1.14] - 2026-01-02
 
 ### Fixed
