@@ -24,6 +24,8 @@ env:
 
 jobs:
   security-scan:
+    # Skip until production infrastructure is configured
+    if: false
     name: Security Scan
     runs-on: ubuntu-latest
     permissions:

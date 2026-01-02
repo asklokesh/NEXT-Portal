@@ -26,6 +26,8 @@ env:
 
 jobs:
   build-and-test:
+    # Skip until Kubernetes and ArgoCD are configured
+    if: false
     runs-on: ubuntu-latest
     permissions:
       contents: read

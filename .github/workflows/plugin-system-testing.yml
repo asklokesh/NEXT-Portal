@@ -34,7 +34,7 @@ on:
           - compatibility
 
 env:
-  NODE_VERSION: '18.x'
+  NODE_VERSION: '20'
   DOCKER_REGISTRY: ghcr.io
   BACKSTAGE_VERSION: '1.39.0'
   PLAYWRIGHT_BROWSERS_PATH: 0

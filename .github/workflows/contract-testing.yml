@@ -17,7 +17,7 @@ on:
           - production
 
 env:
-  NODE_VERSION: '18'
+  NODE_VERSION: '20'
   PACT_BROKER_BASE_URL: ${{ secrets.PACT_BROKER_BASE_URL }}
   PACT_BROKER_TOKEN: ${{ secrets.PACT_BROKER_TOKEN }}
 

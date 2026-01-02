@@ -5,6 +5,20 @@ All notable changes to NEXT Portal will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.17] - 2026-01-02
+
+### Fixed
+
+- Updated all workflows to use Node.js 20 (project requires Node >= 20)
+- Fixed security-audit.yml, visual-regression.yml, contract-testing.yml Node versions
+- Fixed comprehensive-testing.yml, plugin-system-testing.yml, plugin-install.yml Node versions
+
+### Changed
+
+- Temporarily skipped infrastructure-dependent workflows (deploy, production-deploy, progressive-delivery)
+- These workflows require Kubernetes cluster and production Dockerfile not yet configured
+- CI workflow now passes all jobs: lint, test, security, build
+
 ## [1.1.16] - 2026-01-02
 
 ### Changed

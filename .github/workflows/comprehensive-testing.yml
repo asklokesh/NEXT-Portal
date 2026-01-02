@@ -10,7 +10,7 @@ on:
     - cron: '0 2 * * *'
 
 env:
-  NODE_VERSION: '18.x'
+  NODE_VERSION: '20'
   POSTGRES_VERSION: '15'
   REDIS_VERSION: '7'
 

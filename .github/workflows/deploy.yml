@@ -20,6 +20,8 @@ env:
 
 jobs:
   build-and-push:
+    # Skip until Dockerfile.production and k8s cluster are configured
+    if: false
     runs-on: ubuntu-latest
     permissions:
       contents: read
