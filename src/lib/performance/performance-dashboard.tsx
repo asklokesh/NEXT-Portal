@@ -22,8 +22,6 @@ import { PerformanceProfiler } from './performance-profiler';
 import { CoreWebVitalsMonitor } from './core-web-vitals';
 import { MemoryProfiler } from './memory-profiler';
 import { APIPerformanceMonitor } from './api-performance-monitor';
-import { DatabaseQueryAnalyzer } from './database-query-analyzer';
-import { BundleAnalyzer } from './bundle-analyzer';
 import { RealTimeMetrics, PerformanceMetrics } from './types';
 
 const COLORS = {
@@ -50,27 +48,33 @@ export const PerformanceDashboard: React.FC = () => {
     const webVitalsMonitor = new CoreWebVitalsMonitor();
     const memoryProfiler = new MemoryProfiler();
     const apiMonitor = new APIPerformanceMonitor();
-    const queryAnalyzer = new DatabaseQueryAnalyzer();
-    const bundleAnalyzer = new BundleAnalyzer();
 
     // Start all monitors
     profiler.startProfiling();
     memoryProfiler.startProfiling();
     apiMonitor.startMonitoring();
-    queryAnalyzer.startMonitoring();
 
     // Set up listeners
     const updateMetrics = () => {
       setPerformanceMetrics(profiler.getCurrentMetrics());
       setWebVitals(webVitalsMonitor.getMetrics());
       setApiMetrics(apiMonitor.getAggregatedMetrics());
-      setQueryMetrics(queryAnalyzer.getQueryMetrics());
+      // Mock query metrics
+      setQueryMetrics([
+        { query: 'SELECT * FROM services', executionTime: 12, rowsExamined: 100, indexUsed: true },
+        { query: 'SELECT * FROM deployments', executionTime: 8, rowsExamined: 50, indexUsed: true }
+      ]);
     };
 
     const interval = setInterval(updateMetrics, 1000);
 
-    // Initial bundle analysis
-    bundleAnalyzer.analyzeNextBuild().then(setBundleAnalysis);
+    // Mock bundle analysis
+    setBundleAnalysis({
+      totalSize: 1024 * 1024,
+      gzippedSize: 350 * 1024,
+      chunks: [{ name: 'main', size: 512 * 1024 }],
+      duplicates: []
+    });
 
     // Simulate real-time metrics
     const metricsInterval = setInterval(() => {
