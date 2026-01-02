@@ -1,24 +1,57 @@
 /* eslint-disable @typescript-eslint/no-unused-vars, @typescript-eslint/no-misused-promises */
 import { PrismaClient } from '@prisma/client';
+import bcrypt from 'bcryptjs';
 
 const prisma = new PrismaClient();
 
 async function main() {
  console.log(' Seeding database...');
 
- // Create admin user
+ // Hash default password for test users
+ const defaultPassword = await bcrypt.hash('admin123!', 12);
+ const testPassword = await bcrypt.hash('test123!', 12);
+
+ // Create admin user with password
  const adminUser = await prisma.user.upsert({
  where: { email: 'admin@company.com' },
- update: {},
+ update: {
+   password: defaultPassword, // Update password if user exists
+   isActive: true,
+ },
  create: {
  email: 'admin@company.com',
  name: 'Admin User',
  username: 'admin',
+ password: defaultPassword,
  provider: 'local',
  providerId: 'admin-001',
  role: 'ADMIN',
+ isActive: true,
  },
  });
+
+ // Create test developer user
+ const testUser = await prisma.user.upsert({
+ where: { email: 'developer@company.com' },
+ update: {
+   password: testPassword,
+   isActive: true,
+ },
+ create: {
+ email: 'developer@company.com',
+ name: 'Test Developer',
+ username: 'developer',
+ password: testPassword,
+ provider: 'local',
+ providerId: 'dev-001',
+ role: 'DEVELOPER',
+ isActive: true,
+ },
+ });
+
+ console.log(' Created test users:');
+ console.log('   - admin@company.com / admin123!');
+ console.log('   - developer@company.com / test123!');
 
  console.log(' Created admin user:', adminUser.email);
 

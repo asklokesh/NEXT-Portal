@@ -5,6 +5,30 @@ All notable changes to NEXT Portal will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.19] - 2026-01-02
+
+### Added
+
+- Enterprise SSO login page at /login/enterprise for multi-tenant SaaS deployments
+- Sign-up page at /signup with email/password and OAuth registration
+- Microsoft/Azure AD SSO button on login page
+- GitHub integration page at /github for repository management
+- "Create an account" link on login page for new user onboarding
+
+### Fixed
+
+- PrismaClient browser environment error - added 'server-only' directive to src/lib/prisma.ts
+- 401 Unauthorized on dashboard widget API - added credentials: 'include' to fetch calls
+- Next.js 15 params deprecation warnings - updated dynamic routes to use useParams() hook
+- Fixed src/app/create/[templateId]/page.tsx to use useParams instead of props.params
+- Fixed src/app/create/job/[jobId]/page.tsx to use useParams pattern
+- Fixed src/app/api/scaffolder-v2/templates/[templateId]/route.ts with Promise<params>
+
+### Changed
+
+- Login page now displays 4 SSO options: GitHub, Google, Microsoft, Enterprise SSO
+- Improved SSO button styling with loading states and labels
+
 ## [1.1.18] - 2026-01-02
 
 ### Fixed

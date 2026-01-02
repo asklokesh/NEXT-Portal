@@ -3,16 +3,19 @@ import { TemplateMarketplaceEngine } from '@/lib/scaffolder-v2/marketplace-engin
 
 const marketplaceEngine = TemplateMarketplaceEngine.getInstance();
 
+type RouteParams = { params: Promise<{ templateId: string }> };
+
 export async function GET(
   request: NextRequest,
-  { params }: { params: { templateId: string } }
+  { params }: RouteParams
 ) {
   try {
+    const { templateId } = await params;
     const { searchParams } = new URL(request.url);
     const userId = searchParams.get('userId');
 
     const templateDetails = await marketplaceEngine.getTemplateDetails(
-      params.templateId,
+      templateId,
       userId || undefined
     );
 
@@ -36,9 +39,10 @@ export async function GET(
 
 export async function PUT(
   request: NextRequest,
-  { params }: { params: { templateId: string } }
+  { params }: RouteParams
 ) {
   try {
+    const { templateId } = await params;
     const body = await request.json();
     const { updates, publisherUserId } = body;
 
@@ -50,7 +54,7 @@ export async function PUT(
     }
 
     const result = await marketplaceEngine.updateTemplate(
-      params.templateId,
+      templateId,
       updates,
       publisherUserId
     );
@@ -77,9 +81,10 @@ export async function PUT(
 
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { templateId: string } }
+  { params }: RouteParams
 ) {
   try {
+    const { templateId } = await params;
     const { searchParams } = new URL(request.url);
     const publisherUserId = searchParams.get('publisherUserId');
 

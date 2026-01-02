@@ -1,26 +1,22 @@
-
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useParams } from 'next/navigation';
 import { Card, CardHeader, CardTitle, CardContent, CardFooter } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Loader2, CheckCircle, XCircle, Clock, ExternalLink } from 'lucide-react';
+import { Loader2, CheckCircle, XCircle, ExternalLink } from 'lucide-react';
 import Link from 'next/link';
 
-export default function JobPage({ params }: { params: { jobId: string } }) {
+export default function JobPage() {
+    const routeParams = useParams<{ jobId: string }>();
+    const jobId = routeParams.jobId;
     const [job, setJob] = useState<any>(null);
-    const [unwrappedParams, setUnwrappedParams] = useState<{ jobId: string } | null>(null);
 
     useEffect(() => {
-        Promise.resolve(params).then(p => setUnwrappedParams(p));
-    }, [params]);
-
-    useEffect(() => {
-        if (!unwrappedParams) return;
+        if (!jobId) return;
 
         const interval = setInterval(() => {
-            fetch(`/api/scaffolder/jobs/${unwrappedParams.jobId}`)
+            fetch(`/api/scaffolder/jobs/${jobId}`)
                 .then(res => res.json())
                 .then(data => {
                     setJob(data);
@@ -31,7 +27,7 @@ export default function JobPage({ params }: { params: { jobId: string } }) {
         }, 1000);
 
         return () => clearInterval(interval);
-    }, [unwrappedParams]);
+    }, [jobId]);
 
     if (!job) return <div className="flex justify-center py-20"><Loader2 className="w-8 h-8 animate-spin" /></div>;
 

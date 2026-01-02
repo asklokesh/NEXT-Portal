@@ -1,38 +1,31 @@
-
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useParams } from 'next/navigation';
 import { Card, CardHeader, CardTitle, CardContent, CardFooter } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Loader2, ArrowLeft } from 'lucide-react';
 
-export default function TemplateWizardPage({ params }: { params: { templateId: string } }) {
+export default function TemplateWizardPage() {
     const router = useRouter();
+    const routeParams = useParams<{ templateId: string }>();
+    const templateId = routeParams.templateId;
+
     const [template, setTemplate] = useState<any>(null);
     const [loading, setLoading] = useState(true);
     const [submitting, setSubmitting] = useState(false);
     const [formData, setFormData] = useState<Record<string, any>>({});
-    const { templateId } = params; // In Next 15 this needs to be awaited if accessing async, but client component params behavior varies. Assuming direct access for now, will fix if needed.
-
-    // Unwrap params if necessary (Next.js 15 breaking change potentially)
-    const [unwrappedParams, setUnwrappedParams] = useState<{ templateId: string } | null>(null);
-
-    useEffect(() => {
-        // Handling param unwrapping for safety
-        Promise.resolve(params).then(p => setUnwrappedParams(p));
-    }, [params]);
 
 
     useEffect(() => {
-        if (!unwrappedParams) return;
+        if (!templateId) return;
 
         fetch('/api/scaffolder/templates')
             .then(res => res.json())
             .then((data: any[]) => {
-                const found = data.find(t => t.id === unwrappedParams.templateId);
+                const found = data.find(t => t.id === templateId);
                 setTemplate(found);
 
                 // Initialize defaults
@@ -45,7 +38,7 @@ export default function TemplateWizardPage({ params }: { params: { templateId: s
                 }
                 setLoading(false);
             });
-    }, [unwrappedParams]);
+    }, [templateId]);
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -56,7 +49,7 @@ export default function TemplateWizardPage({ params }: { params: { templateId: s
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    templateId: unwrappedParams?.templateId,
+                    templateId,
                     values: formData
                 })
             });
@@ -75,7 +68,7 @@ export default function TemplateWizardPage({ params }: { params: { templateId: s
         setFormData(prev => ({ ...prev, [name]: value }));
     };
 
-    if (loading || !unwrappedParams) return <div className="flex justify-center py-20"><Loader2 className="w-8 h-8 animate-spin" /></div>;
+    if (loading || !templateId) return <div className="flex justify-center py-20"><Loader2 className="w-8 h-8 animate-spin" /></div>;
     if (!template) return <div className="p-8">Template not found</div>;
 
     return (

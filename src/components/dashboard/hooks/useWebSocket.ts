@@ -103,6 +103,7 @@ export const useWidgetData = (widgetId: string, widget?: any) => {
                     const response = await fetch('/api/dashboard/widget', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
+                        credentials: 'include',
                         body: JSON.stringify({
                             widgetType: widget.type,
                             config: widget.config
