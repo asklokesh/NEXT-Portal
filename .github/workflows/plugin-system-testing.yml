@@ -729,38 +729,38 @@ jobs:
               labels: ['bug', 'test-failure', 'automated', 'high-priority']
             })
 
-# Additional workflow for plugin-specific testing on plugin changes
-plugin-change-detection:
-  name: Plugin Change Detection
-  runs-on: ubuntu-latest
-  outputs:
-    changed-plugins: ${{ steps.changes.outputs.plugins }}
-    
-  steps:
-    - name: Checkout Repository
-      uses: actions/checkout@v4
-      with:
-        fetch-depth: 0
+  # Job 12: Plugin Change Detection
+  plugin-change-detection:
+    name: Plugin Change Detection
+    runs-on: ubuntu-latest
+    outputs:
+      changed-plugins: ${{ steps.changes.outputs.plugins }}
 
-    - name: Detect Changed Plugin Files
-      uses: dorny/paths-filter@v2
-      id: changes
-      with:
-        filters: |
-          plugins:
-            - 'src/components/plugins/**'
-            - 'src/services/plugins/**'
-            - 'tests/plugins/**'
-          configs:
-            - 'src/components/configuration/**'
-            - 'src/services/configuration/**'
-            - 'tests/configuration/**'
-          security:
-            - 'src/services/security/**'
-            - 'tests/security/**'
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-    - name: Output Changed Components
-      run: |
-        echo "Changed plugins: ${{ steps.changes.outputs.plugins }}"
-        echo "Changed configs: ${{ steps.changes.outputs.configs }}"
-        echo "Changed security: ${{ steps.changes.outputs.security }}"
+      - name: Detect Changed Plugin Files
+        uses: dorny/paths-filter@v2
+        id: changes
+        with:
+          filters: |
+            plugins:
+              - 'src/components/plugins/**'
+              - 'src/services/plugins/**'
+              - 'tests/plugins/**'
+            configs:
+              - 'src/components/configuration/**'
+              - 'src/services/configuration/**'
+              - 'tests/configuration/**'
+            security:
+              - 'src/services/security/**'
+              - 'tests/security/**'
+
+      - name: Output Changed Components
+        run: |
+          echo "Changed plugins: ${{ steps.changes.outputs.plugins }}"
+          echo "Changed configs: ${{ steps.changes.outputs.configs }}"
+          echo "Changed security: ${{ steps.changes.outputs.security }}"
