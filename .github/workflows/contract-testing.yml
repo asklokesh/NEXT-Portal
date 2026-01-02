@@ -23,10 +23,12 @@ env:
 
 jobs:
   contract-generation:
+    # Skip until contract testing infrastructure is set up (Pact broker, test:contracts:consumer script)
+    if: false
     name: Generate Contracts
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -82,7 +84,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     needs: contract-generation
-    
+
     strategy:
       matrix:
         provider: [catalog-service, auth-service, plugin-service]
@@ -262,7 +264,7 @@ jobs:
         id: can_deploy
         run: |
           ENVIRONMENT="${{ github.event.inputs.environment || 'staging' }}"
-          
+
           npx pact-broker can-i-deploy \
             --pacticipant backstage-portal \
             --version ${{ github.sha }} \
@@ -270,7 +272,7 @@ jobs:
             --broker-base-url ${{ env.PACT_BROKER_BASE_URL }} \
             --broker-token ${{ env.PACT_BROKER_TOKEN }} \
             --output json > can-i-deploy.json
-          
+
           if [ $? -eq 0 ]; then
             echo "deployment_ready=true" >> $GITHUB_OUTPUT
           else
@@ -423,11 +425,11 @@ jobs:
           SLACK_COLOR: ${{ steps.notification.outputs.color }}
           SLACK_MESSAGE: |
             ${{ steps.notification.outputs.message }}
-            
+
             Branch: ${{ github.ref_name }}
             Commit: ${{ github.sha }}
             Actor: ${{ github.actor }}
-            
+
             View results: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
       - name: Create issue on failure
@@ -438,23 +440,23 @@ jobs:
             const title = `Contract tests failed on main branch`;
             const body = `
             ## Contract Testing Failure
-            
+
             The contract testing pipeline failed on the main branch.
-            
+
             **Details:**
             - **Commit**: ${context.sha}
             - **Actor**: ${context.actor}
             - **Workflow**: ${context.workflow}
             - **Run**: [${context.runNumber}](${context.payload.repository.html_url}/actions/runs/${context.runId})
-            
+
             **Failed Jobs:**
             ${{ toJSON(needs) }}
-            
+
             Please investigate and fix the issues.
-            
+
             /cc @platform-team
             `;
-            
+
             github.rest.issues.create({
               owner: context.repo.owner,
               repo: context.repo.repo,
