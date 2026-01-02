@@ -751,7 +751,7 @@ describe('ServiceRepository', () => {
 
  const result = await serviceRepository.getServiceStats();
 
- expect(mockPrisma.service.count).toHaveBeenCalledWith({ isActive: true });
+ expect(mockPrisma.service.count).toHaveBeenCalledWith({ where: { isActive: true } });
  expect(mockPrisma.service.groupBy).toHaveBeenCalledWith({
  by: ['type', 'lifecycle'],
  where: { isActive: true },

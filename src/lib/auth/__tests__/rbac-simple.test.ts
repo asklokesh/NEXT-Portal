@@ -1,4 +1,23 @@
 import { describe, it, expect } from '@jest/globals';
+
+// Mock prisma before importing anything that uses it
+jest.mock('../../db/client', () => ({
+  prisma: {
+    service: {
+      findUnique: jest.fn(),
+    },
+    template: {
+      findUnique: jest.fn(),
+    },
+    team: {
+      findFirst: jest.fn(),
+    },
+    teamMember: {
+      findFirst: jest.fn(),
+    },
+  },
+}));
+
 import { RBACSystem } from '../rbac';
 import type { RBACContext } from '../rbac';
 
@@ -226,6 +245,7 @@ describe('RBACSystem - Simple Tests', () => {
  teamIds: ['team-1'],
  },
  params: {},
+ query: {},
  };
  const res: any = {
  status: jest.fn().mockReturnThis(),
@@ -258,7 +278,7 @@ describe('RBACSystem - Simple Tests', () => {
 
  it('should return 403 if user lacks permission', async () => {
  const middleware = rbacSystem.createAuthorizationMiddleware('catalog', 'write');
- 
+
  const req = {
  user: {
  id: 'test-user',
@@ -266,6 +286,7 @@ describe('RBACSystem - Simple Tests', () => {
  teamIds: [],
  },
  params: {},
+ query: {}, // Add query object to prevent undefined access
  };
  const res = {
  status: jest.fn().mockReturnThis(),

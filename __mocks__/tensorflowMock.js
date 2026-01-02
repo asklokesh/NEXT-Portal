@@ -1,44 +1,47 @@
 // Mock TensorFlow.js for Jest testing
+// Helper function to create tensor mock without circular reference
+const createTensorMock = (data, shape, dtype) => ({
+  shape: shape || [data?.length || 1],
+  dtype: dtype || 'float32',
+  data: jest.fn().mockResolvedValue(new Float32Array(Array.isArray(data) ? data : [data])),
+  dataSync: jest.fn(() => new Float32Array(Array.isArray(data) ? data : [data])),
+  dispose: jest.fn(),
+  print: jest.fn(),
+  reshape: jest.fn(function() { return createTensorMock(data); }),
+  expandDims: jest.fn(function() { return createTensorMock(data); }),
+  squeeze: jest.fn(function() { return createTensorMock(data); }),
+  cast: jest.fn(function() { return createTensorMock(data); }),
+  clone: jest.fn(function() { return createTensorMock(data); }),
+});
+
 const tensorflowMock = {
   // Core tensor operations
-  tensor: jest.fn((data, shape, dtype) => ({
-    shape: shape || [data.length],
-    dtype: dtype || 'float32',
-    data: jest.fn().mockResolvedValue(new Float32Array(data)),
-    dataSync: jest.fn(() => new Float32Array(data)),
-    dispose: jest.fn(),
-    print: jest.fn(),
-    reshape: jest.fn(() => tensorflowMock.tensor(data)),
-    expandDims: jest.fn(() => tensorflowMock.tensor(data)),
-    squeeze: jest.fn(() => tensorflowMock.tensor(data)),
-    cast: jest.fn(() => tensorflowMock.tensor(data)),
-    clone: jest.fn(() => tensorflowMock.tensor(data)),
-  })),
+  tensor: jest.fn((data, shape, dtype) => createTensorMock(data, shape, dtype)),
 
-  tensor1d: jest.fn((values, dtype) => tensorflowMock.tensor(values, [values.length], dtype)),
-  tensor2d: jest.fn((values, shape, dtype) => tensorflowMock.tensor(values, shape, dtype)),
-  tensor3d: jest.fn((values, shape, dtype) => tensorflowMock.tensor(values, shape, dtype)),
-  tensor4d: jest.fn((values, shape, dtype) => tensorflowMock.tensor(values, shape, dtype)),
+  tensor1d: jest.fn((values, dtype) => createTensorMock(values, [values.length], dtype)),
+  tensor2d: jest.fn((values, shape, dtype) => createTensorMock(values, shape, dtype)),
+  tensor3d: jest.fn((values, shape, dtype) => createTensorMock(values, shape, dtype)),
+  tensor4d: jest.fn((values, shape, dtype) => createTensorMock(values, shape, dtype)),
 
   // Mathematical operations
-  add: jest.fn(() => tensorflowMock.tensor([1, 2, 3])),
-  sub: jest.fn(() => tensorflowMock.tensor([1, 2, 3])),
-  mul: jest.fn(() => tensorflowMock.tensor([1, 2, 3])),
-  div: jest.fn(() => tensorflowMock.tensor([1, 2, 3])),
-  matMul: jest.fn(() => tensorflowMock.tensor([1, 2, 3])),
-  dot: jest.fn(() => tensorflowMock.tensor([1, 2, 3])),
+  add: jest.fn(() => createTensorMock([1, 2, 3])),
+  sub: jest.fn(() => createTensorMock([1, 2, 3])),
+  mul: jest.fn(() => createTensorMock([1, 2, 3])),
+  div: jest.fn(() => createTensorMock([1, 2, 3])),
+  matMul: jest.fn(() => createTensorMock([1, 2, 3])),
+  dot: jest.fn(() => createTensorMock([1, 2, 3])),
 
   // Activation functions
-  relu: jest.fn(() => tensorflowMock.tensor([1, 2, 3])),
-  sigmoid: jest.fn(() => tensorflowMock.tensor([0.5, 0.7, 0.9])),
-  softmax: jest.fn(() => tensorflowMock.tensor([0.3, 0.3, 0.4])),
-  tanh: jest.fn(() => tensorflowMock.tensor([0.1, 0.2, 0.3])),
+  relu: jest.fn(() => createTensorMock([1, 2, 3])),
+  sigmoid: jest.fn(() => createTensorMock([0.5, 0.7, 0.9])),
+  softmax: jest.fn(() => createTensorMock([0.3, 0.3, 0.4])),
+  tanh: jest.fn(() => createTensorMock([0.1, 0.2, 0.3])),
 
   // Loss functions
   losses: {
-    meanSquaredError: jest.fn(() => tensorflowMock.tensor([0.1])),
-    categoricalCrossentropy: jest.fn(() => tensorflowMock.tensor([0.2])),
-    sparseCategoricalCrossentropy: jest.fn(() => tensorflowMock.tensor([0.15])),
+    meanSquaredError: jest.fn(() => createTensorMock([0.1])),
+    categoricalCrossentropy: jest.fn(() => createTensorMock([0.2])),
+    sparseCategoricalCrossentropy: jest.fn(() => createTensorMock([0.15])),
   },
 
   // Optimizers
@@ -65,8 +68,8 @@ const tensorflowMock = {
         acc: [0.6, 0.8, 0.9],
       },
     }),
-    predict: jest.fn(() => tensorflowMock.tensor([0.8, 0.2])),
-    evaluate: jest.fn().mockResolvedValue([tensorflowMock.tensor([0.1]), tensorflowMock.tensor([0.9])]),
+    predict: jest.fn(() => createTensorMock([0.8, 0.2])),
+    evaluate: jest.fn().mockResolvedValue([createTensorMock([0.1]), createTensorMock([0.9])]),
     save: jest.fn().mockResolvedValue({}),
     summary: jest.fn(),
     getWeights: jest.fn(() => []),
@@ -82,8 +85,8 @@ const tensorflowMock = {
         acc: [0.6, 0.8, 0.9],
       },
     }),
-    predict: jest.fn(() => tensorflowMock.tensor([0.8, 0.2])),
-    evaluate: jest.fn().mockResolvedValue([tensorflowMock.tensor([0.1]), tensorflowMock.tensor([0.9])]),
+    predict: jest.fn(() => createTensorMock([0.8, 0.2])),
+    evaluate: jest.fn().mockResolvedValue([createTensorMock([0.1]), createTensorMock([0.9])]),
     save: jest.fn().mockResolvedValue({}),
     summary: jest.fn(),
     getWeights: jest.fn(() => []),
@@ -94,44 +97,44 @@ const tensorflowMock = {
 
   // Model loading
   loadLayersModel: jest.fn().mockResolvedValue({
-    predict: jest.fn(() => tensorflowMock.tensor([0.8, 0.2])),
-    evaluate: jest.fn().mockResolvedValue([tensorflowMock.tensor([0.1])]),
+    predict: jest.fn(() => createTensorMock([0.8, 0.2])),
+    evaluate: jest.fn().mockResolvedValue([createTensorMock([0.1])]),
   }),
 
   // Layers
   layers: {
     dense: jest.fn(() => ({
-      apply: jest.fn(() => tensorflowMock.tensor([1, 2, 3])),
+      apply: jest.fn(() => createTensorMock([1, 2, 3])),
       getWeights: jest.fn(() => []),
       setWeights: jest.fn(),
       units: 10,
       activation: 'relu',
     })),
     conv2d: jest.fn(() => ({
-      apply: jest.fn(() => tensorflowMock.tensor([1, 2, 3])),
+      apply: jest.fn(() => createTensorMock([1, 2, 3])),
       getWeights: jest.fn(() => []),
       setWeights: jest.fn(),
       filters: 32,
       kernelSize: [3, 3],
     })),
     maxPooling2d: jest.fn(() => ({
-      apply: jest.fn(() => tensorflowMock.tensor([1, 2, 3])),
+      apply: jest.fn(() => createTensorMock([1, 2, 3])),
       poolSize: [2, 2],
     })),
     flatten: jest.fn(() => ({
-      apply: jest.fn(() => tensorflowMock.tensor([1, 2, 3])),
+      apply: jest.fn(() => createTensorMock([1, 2, 3])),
     })),
     dropout: jest.fn(() => ({
-      apply: jest.fn(() => tensorflowMock.tensor([1, 2, 3])),
+      apply: jest.fn(() => createTensorMock([1, 2, 3])),
       rate: 0.2,
     })),
     embedding: jest.fn(() => ({
-      apply: jest.fn(() => tensorflowMock.tensor([1, 2, 3])),
+      apply: jest.fn(() => createTensorMock([1, 2, 3])),
       inputDim: 1000,
       outputDim: 64,
     })),
     lstm: jest.fn(() => ({
-      apply: jest.fn(() => tensorflowMock.tensor([1, 2, 3])),
+      apply: jest.fn(() => createTensorMock([1, 2, 3])),
       units: 50,
     })),
   },
@@ -167,19 +170,19 @@ const tensorflowMock = {
   setBackend: jest.fn().mockResolvedValue({}),
 
   // Random operations
-  randomNormal: jest.fn(() => tensorflowMock.tensor([0.1, 0.2, 0.3])),
-  randomUniform: jest.fn(() => tensorflowMock.tensor([0.4, 0.5, 0.6])),
-  truncatedNormal: jest.fn(() => tensorflowMock.tensor([0.1, 0.2, 0.3])),
+  randomNormal: jest.fn(() => createTensorMock([0.1, 0.2, 0.3])),
+  randomUniform: jest.fn(() => createTensorMock([0.4, 0.5, 0.6])),
+  truncatedNormal: jest.fn(() => createTensorMock([0.1, 0.2, 0.3])),
 
   // Utility functions for testing
-  zeros: jest.fn((shape) => tensorflowMock.tensor(new Array(shape.reduce((a, b) => a * b, 1)).fill(0))),
-  ones: jest.fn((shape) => tensorflowMock.tensor(new Array(shape.reduce((a, b) => a * b, 1)).fill(1))),
-  eye: jest.fn(() => tensorflowMock.tensor([1, 0, 0, 1])),
+  zeros: jest.fn((shape) => createTensorMock(new Array(shape.reduce((a, b) => a * b, 1)).fill(0))),
+  ones: jest.fn((shape) => createTensorMock(new Array(shape.reduce((a, b) => a * b, 1)).fill(1))),
+  eye: jest.fn(() => createTensorMock([1, 0, 0, 1])),
 
   // Image operations
   image: {
-    resizeBilinear: jest.fn(() => tensorflowMock.tensor([1, 2, 3])),
-    resizeNearestNeighbor: jest.fn(() => tensorflowMock.tensor([1, 2, 3])),
+    resizeBilinear: jest.fn(() => createTensorMock([1, 2, 3])),
+    resizeNearestNeighbor: jest.fn(() => createTensorMock([1, 2, 3])),
   },
 
   // Version info
