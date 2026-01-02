@@ -21,13 +21,14 @@ This directory contains comprehensive documentation for the NEXT Portal Internal
 | [Database Schema](DATABASE_SCHEMA_DOCUMENTATION.md) | Prisma schema and data models |
 | [Backend Architecture Plan](BACKEND_ARCHITECTURE_PLAN.md) | Backend service design |
 | [Architecture Summary](architecture/ARCHITECTURE_SUMMARY.md) | High-level architecture overview |
+| [System Architecture](architecture/SYSTEM_ARCHITECTURE.md) | Core system design |
+| [Technical Standards](architecture/TECHNICAL_STANDARDS.md) | Code and design standards |
 
 ### API Reference
 
 | Document | Description |
 |----------|-------------|
 | [API Reference](API_REFERENCE.md) | Complete REST/GraphQL API documentation |
-| [API Documentation](API_DOCUMENTATION.md) | Detailed API specifications |
 | [Marketplace API](api/MARKETPLACE_API.md) | Plugin marketplace API |
 | [API Versioning](api-versioning/README.md) | API version management |
 
@@ -37,6 +38,7 @@ This directory contains comprehensive documentation for the NEXT Portal Internal
 |----------|-------------|
 | [Production Deployment Guide](PRODUCTION_DEPLOYMENT_GUIDE.md) | Production deployment procedures |
 | [Production Setup](PRODUCTION_SETUP.md) | Environment configuration |
+| [Deployment Architecture](architecture/DEPLOYMENT_ARCHITECTURE.md) | Infrastructure design |
 | [Operational Runbook](OPERATIONAL_RUNBOOK.md) | Day-to-day operations |
 | [Maintenance Procedures](MAINTENANCE_PROCEDURES.md) | System maintenance |
 | [Enterprise Operational Runbooks](ENTERPRISE_OPERATIONAL_RUNBOOKS.md) | Enterprise ops procedures |
@@ -74,6 +76,7 @@ This directory contains comprehensive documentation for the NEXT Portal Internal
 | [Performance Optimization Guide](PERFORMANCE_OPTIMIZATION_GUIDE.md) | Performance tuning |
 | [Monitoring Implementation](COMPREHENSIVE_MONITORING_IMPLEMENTATION.md) | Observability setup |
 | [Production Monitoring](PRODUCTION_MONITORING_IMPLEMENTATION.md) | Production monitoring |
+| [Monitoring Observability](architecture/MONITORING_OBSERVABILITY.md) | Full observability guide |
 
 ### Developer Experience
 
@@ -89,10 +92,14 @@ This directory contains comprehensive documentation for the NEXT Portal Internal
 |----------|-------------|
 | [Market Analysis](MARKET_ANALYSIS_COMPETITIVE_INTELLIGENCE.md) | Competitive landscape |
 | [GTM Strategy](GTM_STRATEGY_COMPREHENSIVE.md) | Go-to-market plan |
+| [Marketing Launch](MARKETING_LAUNCH_STRATEGY.md) | Launch strategy |
 | [Executive Pitch Deck](EXECUTIVE_PITCH_DECK.md) | Investor/sales deck |
 | [Innovation Roadmap](INNOVATION_ROADMAP.md) | Future vision |
+| [Development Roadmap](DEVELOPMENT_ROADMAP.md) | Feature roadmap |
 | [Financial Models](FINANCIAL_MODELS_PROJECTIONS.md) | Revenue projections |
 | [Sales Battlecards](SALES_BATTLECARDS_OBJECTION_GUIDE.md) | Competitive positioning |
+| [Partnership Strategy](PARTNERSHIP_CHANNEL_STRATEGY.md) | Partner channels |
+| [Customer Success](CUSTOMER_SUCCESS_STRATEGY.md) | CS framework |
 
 ### Enterprise Features
 
@@ -102,14 +109,13 @@ This directory contains comprehensive documentation for the NEXT Portal Internal
 | [Enterprise Authentication](ENTERPRISE_AUTHENTICATION_SUMMARY.md) | SSO/SAML setup |
 | [SaaS Model](SAAS_MODEL_IMPLEMENTATION.md) | SaaS architecture |
 | [Production Readiness](ENTERPRISE_PRODUCTION_READINESS_REPORT.md) | Enterprise checklist |
+| [Production Readiness Guide](architecture/PRODUCTION_READINESS_GUIDE.md) | Readiness checklist |
 
 ### Development History
 
 | Document | Description |
 |----------|-------------|
 | [Changelog](CHANGELOG.md) | Version history |
-| [Development Roadmap](DEVELOPMENT_ROADMAP.md) | Feature roadmap |
-| [Implementation Status](IMPLEMENTATION_STATUS.md) | Current progress |
 
 ---
 
@@ -118,10 +124,9 @@ This directory contains comprehensive documentation for the NEXT Portal Internal
 ```
 docs/
 +-- architecture/         # Architecture Decision Records (ADRs)
-+-- architecture-v2/      # Next-gen architecture plans
 +-- api/                  # API-specific documentation
 +-- api-versioning/       # API version management
-+-- guides/               # How-to guides
++-- screenshots/          # UI screenshots
 +-- *.md                  # Core documentation
 ```
 
