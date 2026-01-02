@@ -149,6 +149,9 @@ function checkRateLimit(request: NextRequest): { allowed: boolean; remaining: nu
   if (SENSITIVE_ROUTES.some(route => pathname.startsWith(route))) {
     limit = 10; // Sensitive endpoints: 10 requests per minute
     windowMs = 60000;
+  } else if (pathname.startsWith('/api/dashboard')) {
+    limit = 200; // Dashboard endpoints: 200 requests per minute (internal tool)
+    windowMs = 60000;
   } else if (pathname.startsWith('/api/')) {
     limit = 50; // API endpoints: 50 requests per minute
     windowMs = 60000;

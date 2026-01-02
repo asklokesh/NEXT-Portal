@@ -5,6 +5,24 @@ All notable changes to NEXT Portal will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2026-01-02
+
+### Added
+
+- Custom JWT authentication support in API middleware alongside next-auth
+- Dual authentication support: custom JWT tokens (access-token cookie) and next-auth sessions
+
+### Fixed
+
+- 401 Unauthorized errors on `/api/dashboard/widget` after login - middleware now verifies custom JWT tokens
+- Prisma query error in dashboard metrics - removed invalid `mode: 'insensitive'` on enum field
+- Rate limiting causing 429 errors on dashboard - increased limit from 50 to 200 requests/minute
+
+### Changed
+
+- Edge permission middleware now checks custom JWT tokens before falling back to next-auth
+- Dashboard API endpoints now have higher rate limit tier (200/min) for internal enterprise use
+
 ## [1.1.19] - 2026-01-02
 
 ### Added

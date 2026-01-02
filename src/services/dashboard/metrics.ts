@@ -241,10 +241,7 @@ class MetricsService {
   private async getClusterStatusWidgetData(config: any): Promise<any> {
     const clusters = await prisma.service.findMany({
         where: {
-            type: {
-                equals: 'INFRASTRUCTURE', 
-                mode: 'insensitive' // Ensure we catch 'infrastructure' or 'INFRASTRUCTURE'
-            }
+            type: 'INFRASTRUCTURE'
         }
     });
 

@@ -1,10 +1,63 @@
 /**
  * Edge Runtime Compatible Permission Check Middleware
  * Next.js middleware for API route protection without Node.js dependencies
+ * Supports both next-auth and custom JWT authentication
  */
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getToken } from 'next-auth/jwt';
+import { jwtVerify, importSPKI } from 'jose';
+
+// Cache for public key
+let cachedPublicKey: CryptoKey | null = null;
+
+async function getPublicKey(): Promise<CryptoKey | null> {
+  if (cachedPublicKey) return cachedPublicKey;
+
+  const publicKeyPem = process.env.JWT_PUBLIC_KEY;
+  if (!publicKeyPem) return null;
+
+  try {
+    cachedPublicKey = await importSPKI(publicKeyPem, 'RS256');
+    return cachedPublicKey;
+  } catch {
+    return null;
+  }
+}
+
+interface CustomTokenPayload {
+  userId: string;
+  email: string;
+  role: string;
+  sessionId: string;
+  exp?: number;
+  iat?: number;
+}
+
+async function verifyCustomToken(token: string): Promise<CustomTokenPayload | null> {
+  try {
+    const publicKey = await getPublicKey();
+    if (!publicKey) {
+      // Fallback for development - decode without verification
+      if (process.env.NODE_ENV === 'development') {
+        const parts = token.split('.');
+        if (parts.length === 3) {
+          const payload = JSON.parse(atob(parts[1]));
+          return payload as CustomTokenPayload;
+        }
+      }
+      return null;
+    }
+
+    const { payload } = await jwtVerify(token, publicKey, {
+      algorithms: ['RS256']
+    });
+
+    return payload as unknown as CustomTokenPayload;
+  } catch {
+    return null;
+  }
+}
 
 // Simplified permission types for Edge Runtime
 enum ResourceType {
@@ -218,25 +271,61 @@ function extractContext(request: NextRequest): any {
 
 /**
  * Edge Runtime compatible permission check middleware
+ * Supports both custom JWT tokens and next-auth sessions
  */
 export async function permissionCheckMiddleware(
   request: NextRequest
 ): Promise<NextResponse | null> {
   const pathname = request.nextUrl.pathname;
-  
+
   // Skip public routes
   if (PUBLIC_ROUTES.some(route => pathname.startsWith(route))) {
     return null;
   }
 
   try {
-    // Get user token using next-auth (Edge Runtime compatible)
-    const token = await getToken({ 
-      req: request as any,
-      secret: process.env.NEXTAUTH_SECRET 
-    });
-    
-    if (!token || !token.sub) {
+    // First, try to get custom JWT token from cookies
+    const accessToken = request.cookies.get('access-token')?.value;
+    const sessionId = request.cookies.get('session-id')?.value;
+
+    let userId: string | undefined;
+    let userRoles: string[] = [];
+
+    if (accessToken && sessionId) {
+      // Verify custom JWT token
+      const customToken = await verifyCustomToken(accessToken);
+
+      if (customToken) {
+        // Check token expiry
+        if (customToken.exp && Date.now() < customToken.exp * 1000) {
+          // Validate session ID matches
+          if (customToken.sessionId === sessionId) {
+            userId = customToken.userId;
+            // Map role to roles array for permission check
+            if (customToken.role) {
+              userRoles = [customToken.role.toLowerCase()];
+            }
+          }
+        }
+      }
+    }
+
+    // Fall back to next-auth if custom JWT not found/invalid
+    if (!userId) {
+      const token = await getToken({
+        req: request as any,
+        secret: process.env.NEXTAUTH_SECRET
+      });
+
+      if (token && token.sub) {
+        userId = token.sub;
+        if (token.roles) {
+          userRoles = token.roles as string[];
+        }
+      }
+    }
+
+    if (!userId) {
       return NextResponse.json(
         { error: 'Unauthorized' },
         { status: 401 }
@@ -269,13 +358,11 @@ export async function permissionCheckMiddleware(
 
     // Check permission using simplified logic
     const context = extractContext(request);
-    // Add roles from token to context
-    if (token.roles) {
-      context.roles = token.roles as string[];
-    }
-    
+    // Add roles to context
+    context.roles = userRoles;
+
     const hasPermission = await checkPermissionSimple(
-      token.sub,
+      userId,
       permissionReq.resource,
       permissionReq.action,
       extractResourceId(request),
