@@ -7,12 +7,12 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
-import { 
-  Settings, 
-  Plus, 
-  Eye, 
-  Edit, 
-  FileDown, 
+import {
+  Settings,
+  Plus,
+  Eye,
+  Edit,
+  FileDown,
   FileUp,
   Zap,
   Grid,
@@ -31,7 +31,7 @@ import { useMetadataSchemas } from '@/hooks/useMetadata';
 // Dynamic import for the new configuration form builder to avoid SSR issues
 const ConfigurationFormBuilder = dynamic(
   () => import('@/components/configuration/ConfigurationFormBuilder'),
-  { 
+  {
     ssr: false,
     loading: () => (
       <div className="flex items-center justify-center h-96">
@@ -163,13 +163,29 @@ export default function FormBuilderPage() {
   const [currentSchema, setCurrentSchema] = useState<MetadataSchema | null>(null);
   const [selectedEntity, setSelectedEntity] = useState<typeof DEMO_ENTITIES[0] | null>(null);
   const [editorMode, setEditorMode] = useState<'edit' | 'create' | 'bulk'>('create');
-  
+
   const { schemas, createSchema, isLoading } = useMetadataSchemas();
-  
+
   // New configuration form builder handlers
   const handleConfigSave = async (values: Record<string, any>) => {
-    console.log('Configuration saved:', values);
-    // Handle configuration save
+    try {
+      const response = await fetch('/api/templates', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(values),
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to save template');
+      }
+
+      const savedTemplate = await response.json();
+      console.log('Configuration saved:', savedTemplate);
+      // Show success toast here if toast component exists
+    } catch (error) {
+      console.error('Error saving configuration:', error);
+      // Show error toast here
+    }
   };
 
   const handleConfigExport = (format: 'json' | 'yaml' | 'typescript') => {
@@ -178,9 +194,10 @@ export default function FormBuilderPage() {
   };
 
   const handleSaveSchema = async (schema: MetadataSchema) => {
+    // For now, we only persist the Configuration Builder output as it maps better to ServiceTemplate
+    // But we could also map this schema to a partial template
     setCurrentSchema(schema);
-    // In a real app, this would save to the backend
-    console.log('Schema saved:', schema);
+    console.log('Schema saved (local only):', schema);
   };
 
   const handleSaveMetadata = async (data: any, backstageYaml?: any) => {
@@ -197,7 +214,7 @@ export default function FormBuilderPage() {
       createdBy: 'demo-user',
       active: true,
     } as MetadataSchema;
-    
+
     setCurrentSchema(sampleSchema);
     setActiveTab('builder');
   };
@@ -223,7 +240,7 @@ export default function FormBuilderPage() {
             Transform JSON schemas and Backstage configurations into intuitive, accessible forms
           </p>
         </div>
-        
+
         <div className="flex items-center space-x-3">
           <Badge variant="outline" className="px-3 py-1">
             <Zap className="h-4 w-4 mr-1" />
@@ -260,11 +277,11 @@ export default function FormBuilderPage() {
               </CardHeader>
               <CardContent>
                 <CardDescription>
-                  Transform JSON schemas and Backstage configurations into sophisticated forms 
+                  Transform JSON schemas and Backstage configurations into sophisticated forms
                   with 20+ field types, validation engine, and wizard workflows.
                 </CardDescription>
-                <Button 
-                  className="mt-4 w-full" 
+                <Button
+                  className="mt-4 w-full"
                   onClick={() => setActiveTab('config-builder')}
                 >
                   <Wand2 className="h-4 w-4 mr-2" />
@@ -272,7 +289,7 @@ export default function FormBuilderPage() {
                 </Button>
               </CardContent>
             </Card>
-            
+
             {/* Feature Cards */}
             <Card>
               <CardHeader>
@@ -286,8 +303,8 @@ export default function FormBuilderPage() {
                   Drag-and-drop interface for creating custom metadata forms with 9 field types,
                   validation rules, and conditional logic.
                 </CardDescription>
-                <Button 
-                  className="mt-4 w-full" 
+                <Button
+                  className="mt-4 w-full"
                   variant="outline"
                   onClick={() => setActiveTab('builder')}
                 >
@@ -308,8 +325,8 @@ export default function FormBuilderPage() {
                   Dynamic form rendering based on schemas with real-time validation,
                   bulk editing, and Backstage YAML generation.
                 </CardDescription>
-                <Button 
-                  className="mt-4 w-full" 
+                <Button
+                  className="mt-4 w-full"
                   variant="outline"
                   onClick={() => setActiveTab('editor')}
                 >
@@ -330,8 +347,8 @@ export default function FormBuilderPage() {
                   Version control, migration support, import/export capabilities,
                   and analytics for your metadata schemas.
                 </CardDescription>
-                <Button 
-                  className="mt-4 w-full" 
+                <Button
+                  className="mt-4 w-full"
                   variant="outline"
                   onClick={() => setActiveTab('schemas')}
                 >
@@ -412,15 +429,15 @@ export default function FormBuilderPage() {
                       <p className="text-sm text-gray-500">{entity.kind}</p>
                     </div>
                     <div className="flex items-center space-x-2">
-                      <Button 
-                        size="sm" 
+                      <Button
+                        size="sm"
                         variant="outline"
                         onClick={() => openEditor(entity, 'create')}
                       >
                         <Plus className="h-4 w-4 mr-1" />
                         Create
                       </Button>
-                      <Button 
+                      <Button
                         size="sm"
                         onClick={() => openEditor(entity, 'edit')}
                       >
@@ -430,11 +447,11 @@ export default function FormBuilderPage() {
                     </div>
                   </div>
                 ))}
-                
+
                 <Separator className="my-4" />
-                
-                <Button 
-                  className="w-full" 
+
+                <Button
+                  className="w-full"
                   variant="outline"
                   onClick={openBulkEditor}
                 >
@@ -456,7 +473,7 @@ export default function FormBuilderPage() {
                 <Badge variant="secondary">Enterprise</Badge>
               </CardTitle>
               <CardDescription>
-                Transform JSON schemas and Backstage configurations into intuitive, accessible forms 
+                Transform JSON schemas and Backstage configurations into intuitive, accessible forms
                 with advanced validation, real-time collaboration, and wizard workflows.
               </CardDescription>
             </CardHeader>

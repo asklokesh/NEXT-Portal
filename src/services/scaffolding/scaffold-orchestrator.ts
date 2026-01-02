@@ -3,7 +3,8 @@ import { z } from 'zod';
 import { Logger } from 'pino';
 
 // Core interfaces
-interface ServiceTemplate {
+// Core interfaces
+export interface ServiceTemplate {
   id: string;
   name: string;
   description: string;
@@ -17,7 +18,7 @@ interface ServiceTemplate {
   metadata: TemplateMetadata;
 }
 
-interface TemplateParameter {
+export interface TemplateParameter {
   name: string;
   type: 'string' | 'number' | 'boolean' | 'select' | 'multiselect';
   description: string;
@@ -28,7 +29,7 @@ interface TemplateParameter {
   conditional?: ConditionalRule;
 }
 
-interface TemplateFile {
+export interface TemplateFile {
   path: string;
   content: string;
   type: 'template' | 'static' | 'binary';
@@ -36,20 +37,20 @@ interface TemplateFile {
   conditions?: ConditionalRule[];
 }
 
-interface TemplateHook {
+export interface TemplateHook {
   name: string;
   stage: 'pre-generate' | 'post-generate' | 'pre-deploy' | 'post-deploy';
   script: string;
   conditions?: ConditionalRule[];
 }
 
-interface ConditionalRule {
+export interface ConditionalRule {
   parameter: string;
   operator: 'equals' | 'not_equals' | 'contains' | 'not_contains' | 'greater_than' | 'less_than';
   value: any;
 }
 
-interface ScaffoldRequest {
+export interface ScaffoldRequest {
   templateId: string;
   serviceName: string;
   parameters: Record<string, any>;
@@ -866,5 +867,16 @@ interface ContainerConfig {
   };
 }
 
-// Export main class
+// Singleton instance
+let orchestratorInstance: ScaffoldOrchestrator | null = null;
+
+export function getScaffoldOrchestrator(): ScaffoldOrchestrator {
+  if (!orchestratorInstance) {
+    const logger = { info: console.log, error: console.error } as Logger;
+    const config = { templatesPath: '/templates', integrations: {} };
+    orchestratorInstance = new ScaffoldOrchestrator(logger, config);
+  }
+  return orchestratorInstance;
+}
+
 export { ScaffoldOrchestrator };

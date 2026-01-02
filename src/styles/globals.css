@@ -4,63 +4,72 @@
 
 @layer base {
   :root {
-    /* Spotify Portal Light Theme */
-    --background: 0 0% 100%;
-    --foreground: 0 0% 9%;
-    --card: 0 0% 100%;
-    --card-foreground: 0 0% 9%;
-    --popover: 0 0% 100%;
-    --popover-foreground: 0 0% 9%;
-    --primary: 141 76% 48%; /* Spotify Green #1DB954 */
-    --primary-foreground: 0 0% 100%;
-    --secondary: 0 0% 96.1%;
-    --secondary-foreground: 0 0% 9%;
-    --muted: 0 0% 96.1%;
-    --muted-foreground: 0 0% 40%;
-    --accent: 168 76% 85%; /* Spotify Teal #9BF0E1 */
-    --accent-foreground: 0 0% 9%;
-    --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 0 0% 98%;
-    --border: 0 0% 87%;
-    --input: 0 0% 87%;
-    --ring: 141 76% 48%;
-    --radius: 0.75rem;
+    /* Apple Human Interface Guidelines (Light Mode) */
+    --background: 0 0% 98%; /* #FAFAFA - Slight off-white app background */
+    --foreground: 240 6% 10%; /* #1D1D1F - Apple Text Black */
     
-    /* Spotify Portal Custom Colors - Light Theme */
-    --spotify-green: 141 76% 48%; /* #1DB954 */
-    --spotify-teal: 168 76% 85%; /* #9BF0E1 */
-    --spotify-dark: 0 0% 7%; /* #121212 */
-    --spotify-gray: 0 0% 18%; /* #2A2A2A */
-    --spotify-light-gray: 0 0% 94%; /* #F0F0F0 */
-    --sidebar-bg: 0 0% 98%; /* Light sidebar */
-    --header-bg: 0 0% 100%; /* Light header */
+    --card: 0 0% 100%; /* Pure white cards */
+    --card-foreground: 240 6% 10%;
+    
+    --popover: 0 0% 100%;
+    --popover-foreground: 240 6% 10%;
+    
+    --primary: 211 100% 50%; /* #0071E3 - Apple System Blue */
+    --primary-foreground: 0 0% 100%;
+    
+    --secondary: 240 5% 96%; /* #F5F5F7 - Apple secondary background */
+    --secondary-foreground: 240 6% 10%;
+    
+    --muted: 240 5% 96%;
+    --muted-foreground: 240 4% 46%; /* #86868B - Apple Subtext */
+    
+    --accent: 211 100% 50%; /* Same as primary for consistency */
+    --accent-foreground: 0 0% 100%;
+    
+    --destructive: 0 84% 60%; /* System Red */
+    --destructive-foreground: 0 0% 98%;
+    
+    --border: 240 6% 90%; /* #D2D2D7 */
+    --input: 240 6% 90%;
+    --ring: 211 100% 50%;
+    
+    --radius: 0.75rem; /* 12px default, components often use more */
+    
+    /* Apple Specific Colors */
+    --apple-blue: 211 100% 50%;
+    --apple-gray: 0 0% 55%; /* #8E8E93 */
+    --apple-light-gray: 0 0% 95%; /* #F2F2F7 */
   }
 
   .dark {
-    /* Spotify Portal Dark Theme (Primary) */
-    --background: 0 0% 7%; /* #121212 - Spotify's signature dark */
-    --foreground: 0 0% 95%;
-    --card: 0 0% 9%; /* #171717 */
-    --card-foreground: 0 0% 95%;
-    --popover: 0 0% 9%;
-    --popover-foreground: 0 0% 95%;
-    --primary: 141 76% 48%; /* Spotify Green #1DB954 */
-    --primary-foreground: 0 0% 9%;
-    --secondary: 0 0% 14.9%; /* #262626 */
-    --secondary-foreground: 0 0% 95%;
-    --muted: 0 0% 14.9%;
-    --muted-foreground: 0 0% 63.9%;
-    --accent: 168 76% 85%; /* Spotify Teal #9BF0E1 */
-    --accent-foreground: 0 0% 9%;
-    --destructive: 0 62.8% 30.6%;
-    --destructive-foreground: 0 0% 98%;
-    --border: 0 0% 14.9%;
-    --input: 0 0% 14.9%;
-    --ring: 141 76% 48%;
+    /* Apple Dark Mode */
+    --background: 0 0% 0%; /* #000000 */
+    --foreground: 0 0% 96%; /* #F5F5F7 */
     
-    /* Dark theme specific overrides */
-    --sidebar-bg: 0 0% 4%; /* #0A0A0A */
-    --header-bg: 0 0% 7%; /* #121212 */
+    --card: 0 0% 11%; /* #1C1C1E - Apple Dark Card */
+    --card-foreground: 0 0% 96%;
+    
+    --popover: 0 0% 11%;
+    --popover-foreground: 0 0% 96%;
+    
+    --primary: 211 100% 50%; /* #0A84FF - Dark Mode Blue (slightly lighter) */
+    --primary-foreground: 0 0% 100%;
+    
+    --secondary: 0 0% 18%; /* #2C2C2E */
+    --secondary-foreground: 0 0% 96%;
+    
+    --muted: 0 0% 18%;
+    --muted-foreground: 0 0% 60%;
+    
+    --accent: 211 100% 50%;
+    --accent-foreground: 0 0% 100%;
+    
+    --destructive: 0 63% 31%;
+    --destructive-foreground: 0 0% 96%;
+    
+    --border: 0 0% 20%; /* #38383A */
+    --input: 0 0% 20%;
+    --ring: 211 100% 50%;
   }
 }
 
@@ -71,358 +80,61 @@
   
   body {
     @apply bg-background text-foreground;
-    font-feature-settings: "rlig" 1, "calt" 1;
-  }
-
-  /* Focus visible styles */
-  .focus-ring {
-    @apply outline-none ring-2 ring-ring ring-offset-2 ring-offset-background;
-  }
-
-  /* Scrollbar styles */
-  ::-webkit-scrollbar {
-    width: 8px;
-    height: 8px;
-  }
-
-  ::-webkit-scrollbar-track {
-    @apply bg-muted;
-  }
-
-  ::-webkit-scrollbar-thumb {
-    @apply bg-muted-foreground/20 rounded-md;
-  }
-
-  ::-webkit-scrollbar-thumb:hover {
-    @apply bg-muted-foreground/30;
-  }
-
-  /* Selection styles */
-  ::selection {
-    @apply bg-primary/20 text-primary-foreground;
-  }
-
-  /* Loading skeleton */
-  .skeleton {
-    @apply animate-pulse bg-muted;
-  }
-
-  /* Glass morphism effect */
-  .glass {
-    @apply bg-background/80 backdrop-blur-md;
-  }
-
-  /* Gradient text */
-  .gradient-text {
-    @apply bg-gradient-to-r from-primary to-primary/60 bg-clip-text text-transparent;
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-feature-settings: "kern" 1, "rlig" 1, "calt" 1;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
   }
 }
 
 @layer components {
-  /* Spotify Portal Specific Components */
-  .spotify-sidebar {
-    @apply bg-[hsl(var(--sidebar-bg))] border-r border-border/50;
-    background: linear-gradient(180deg, hsl(var(--sidebar-bg)) 0%, hsl(var(--card)) 100%);
-    backdrop-filter: blur(10px);
-    -webkit-backdrop-filter: blur(10px);
+  /* Apple-style Glassmorphism */
+  .glass {
+    @apply bg-white/70 backdrop-blur-xl border border-white/20 shadow-sm;
+    /* Dark mode override handled by standard classes usually, or specific media query */
+  }
+  .dark .glass {
+    @apply bg-black/70 border-white/10;
   }
 
-  .spotify-header {
-    @apply bg-[hsl(var(--header-bg))] border-b border-border/50;
-    backdrop-filter: blur(20px);
-    -webkit-backdrop-filter: blur(20px);
-    background: linear-gradient(135deg, hsl(var(--header-bg)) 0%, hsl(var(--card))/95% 100%);
+  /* Apple Card */
+  .apple-card {
+    @apply bg-card rounded-2xl border-none shadow-sm transition-all duration-300;
+  }
+  .apple-card:hover {
+    @apply transform shadow-md scale-[1.01];
   }
 
-  .spotify-card {
-    @apply bg-card border border-border/50 rounded-xl shadow-sm;
-    background: linear-gradient(145deg, hsl(var(--card)) 0%, hsl(var(--card))/95% 100%);
-    backdrop-filter: blur(10px);
-    -webkit-backdrop-filter: blur(10px);
+  /* Apple Button */
+  .apple-button {
+    @apply rounded-full px-6 py-2 font-medium transition-all duration-200 active:scale-95;
   }
-
-  .spotify-card-hover {
-    @apply transition-all duration-300 hover:shadow-xl hover:border-primary/20 hover:-translate-y-1;
-    transform-origin: center;
+  .apple-button-primary {
+    @apply bg-primary text-white hover:opacity-90 shadow-md hover:shadow-lg;
   }
-
-  .spotify-button-primary {
-    @apply bg-primary text-primary-foreground hover:bg-primary/90 focus:bg-primary/90;
-    background: linear-gradient(135deg, hsl(var(--primary)) 0%, hsl(var(--primary))/80% 100%);
-    box-shadow: 0 4px 14px 0 hsl(var(--primary))/20%;
+  .apple-button-secondary {
+    @apply bg-secondary text-secondary-foreground hover:bg-secondary/80;
   }
-
-  .spotify-button-secondary {
-    @apply bg-accent text-accent-foreground hover:bg-accent/80 focus:bg-accent/80;
-    background: linear-gradient(135deg, hsl(var(--accent)) 0%, hsl(var(--accent))/80% 100%);
-  }
-
-  .spotify-input {
-    @apply bg-card/50 border border-border focus:border-primary/50 focus:ring-2 focus:ring-primary/20;
-    backdrop-filter: blur(8px);
-    -webkit-backdrop-filter: blur(8px);
-  }
-
-  .spotify-plugin-card {
-    @apply spotify-card spotify-card-hover p-6;
-    background: linear-gradient(145deg, 
-      hsl(var(--card)) 0%, 
-      hsl(var(--card))/98% 50%,
-      hsl(var(--accent))/5% 100%
-    );
-  }
-
-  .spotify-tab-active {
-    @apply bg-primary text-primary-foreground;
-    background: linear-gradient(135deg, hsl(var(--primary)) 0%, hsl(var(--primary))/90% 100%);
-    box-shadow: 0 2px 8px 0 hsl(var(--primary))/25%;
-  }
-
-  .spotify-tab-inactive {
-    @apply bg-muted/50 text-muted-foreground hover:bg-muted hover:text-foreground;
-    transition: all 0.2s ease;
-  }
-
-  .spotify-quality-score-a {
-    @apply bg-green-500/10 text-green-600 border-green-500/20;
-  }
-
-  .spotify-quality-score-b {
-    @apply bg-blue-500/10 text-blue-600 border-blue-500/20;
-  }
-
-  .spotify-quality-score-c {
-    @apply bg-yellow-500/10 text-yellow-600 border-yellow-500/20;
-  }
-
-  .spotify-quality-score-d {
-    @apply bg-orange-500/10 text-orange-600 border-orange-500/20;
-  }
-
-  .spotify-quality-score-f {
-    @apply bg-red-500/10 text-red-600 border-red-500/20;
-  }
-
-  /* Card variations */
-  .card-hover {
-    @apply transition-all duration-200 hover:shadow-lg hover:-translate-y-0.5;
-  }
-
-  .card-interactive {
-    @apply card-hover cursor-pointer active:scale-[0.98];
-  }
-
-  /* Button base styles */
-  .btn-base {
-    @apply inline-flex items-center justify-center rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50;
-  }
-
-  /* Input base styles */
-  .input-base {
-    @apply flex w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50;
-  }
-
-  /* Container styles */
-  .container-responsive {
-    @apply container mx-auto px-4 sm:px-6 lg:px-8;
-  }
-
-  /* Spotify Portal Layout */
-  .spotify-layout {
-    @apply min-h-screen bg-background;
-    background: radial-gradient(ellipse at top, hsl(var(--primary))/4% 0%, transparent 50%),
-                radial-gradient(ellipse at bottom, hsl(var(--accent))/3% 0%, transparent 50%),
-                hsl(var(--background));
-  }
-
-  .spotify-main-content {
-    @apply flex-1 p-6;
-    background: linear-gradient(135deg, transparent 0%, hsl(var(--muted))/30% 100%);
-  }
-
-  /* Grid layouts */
-  .grid-auto-fit {
-    @apply grid grid-cols-[repeat(auto-fit,minmax(250px,1fr))] gap-4;
-  }
-
-  .grid-auto-fill {
-    @apply grid grid-cols-[repeat(auto-fill,minmax(250px,1fr))] gap-4;
-  }
-
-  /* Flex utilities */
-  .flex-center {
-    @apply flex items-center justify-center;
-  }
-
-  .flex-between {
-    @apply flex items-center justify-between;
-  }
-
-  /* Text utilities */
-  .text-balance {
-    text-wrap: balance;
-  }
-
-  .spotify-gradient-text {
-    background: linear-gradient(135deg, hsl(var(--primary)) 0%, hsl(var(--accent)) 100%);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
-  }
-
-  /* Animation utilities */
-  .animate-in {
-    animation: animateIn 0.3s ease-out;
-  }
-
-  .animate-out {
-    animation: animateOut 0.3s ease-in forwards;
-  }
-
-  .spotify-fade-in {
-    animation: spotifyFadeIn 0.4s ease-out;
-  }
-
-  .spotify-scale-in {
-    animation: spotifyScaleIn 0.3s ease-out;
+  
+  /* Sidebar clean style */
+  .apple-sidebar {
+    @apply bg-secondary/50 backdrop-blur-xl border-r border-border;
   }
 }
 
 @layer utilities {
-  /* Hide scrollbar but keep functionality */
-  .no-scrollbar {
-    -ms-overflow-style: none;
-    scrollbar-width: none;
+  .text-balance {
+    text-wrap: balance;
   }
   
-  .no-scrollbar::-webkit-scrollbar {
-    display: none;
-  }
-
-  /* Truncate text with lines */
-  .line-clamp-1 {
-    overflow: hidden;
-    display: -webkit-box;
-    -webkit-box-orient: vertical;
-    -webkit-line-clamp: 1;
-  }
-
-  .line-clamp-2 {
-    overflow: hidden;
-    display: -webkit-box;
-    -webkit-box-orient: vertical;
-    -webkit-line-clamp: 2;
-  }
-
-  .line-clamp-3 {
-    overflow: hidden;
-    display: -webkit-box;
-    -webkit-box-orient: vertical;
-    -webkit-line-clamp: 3;
-  }
-
-  /* Safe area insets for mobile */
-  .safe-top {
-    padding-top: env(safe-area-inset-top);
-  }
-
-  .safe-bottom {
-    padding-bottom: env(safe-area-inset-bottom);
-  }
-
-  .safe-left {
-    padding-left: env(safe-area-inset-left);
-  }
-
-  .safe-right {
-    padding-right: env(safe-area-inset-right);
-  }
-}
-
-/* Animations */
-@keyframes animateIn {
-  from {
-    opacity: 0;
-    transform: translateY(10px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-@keyframes animateOut {
-  from {
-    opacity: 1;
-    transform: translateY(0);
-  }
-  to {
-    opacity: 0;
-    transform: translateY(10px);
-  }
-}
-
-/* Spotify Portal Animations */
-@keyframes spotifyFadeIn {
-  from {
-    opacity: 0;
-    transform: translateY(20px) scale(0.95);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
-}
-
-@keyframes spotifyScaleIn {
-  from {
-    opacity: 0;
-    transform: scale(0.8);
-  }
-  to {
-    opacity: 1;
-    transform: scale(1);
-  }
-}
-
-@keyframes spotifySlideIn {
-  from {
-    opacity: 0;
-    transform: translateX(-30px);
-  }
-  to {
-    opacity: 1;
-    transform: translateX(0);
-  }
-}
-
-@keyframes spotifyGlow {
-  0%, 100% {
-    box-shadow: 0 0 20px hsl(var(--primary))/20%;
-  }
-  50% {
-    box-shadow: 0 0 30px hsl(var(--primary))/40%;
-  }
-}
-
-@keyframes spotifyPulse {
-  0%, 100% {
-    transform: scale(1);
-    opacity: 1;
-  }
-  50% {
-    transform: scale(1.05);
-    opacity: 0.8;
-  }
-}
-
-/* Print styles */
-@media print {
-  body {
-    @apply bg-white text-black;
+  /* Apple Typography Helpers */
+  .text-sf-large {
+    font-weight: 700;
+    letter-spacing: -0.02em;
   }
   
-  .no-print {
-    display: none !important;
+  .text-sf-body {
+    font-weight: 400;
+    letter-spacing: 0;
   }
 }

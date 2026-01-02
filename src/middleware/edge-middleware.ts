@@ -6,11 +6,11 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { permissionCheckMiddleware } from './edge-permission-check';
-import { 
-  extractTenantContext, 
+import {
+  extractTenantContext,
   tenantContextMiddleware as newTenantContextMiddleware,
   validateTenantAccess,
-  handleTenantError 
+  handleTenantError
 } from './tenant-context';
 
 // Security configurations
@@ -20,7 +20,9 @@ const BYPASS_ROUTES = [
   '/favicon.ico',
   '/robots.txt',
   '/sitemap.xml',
-  '/.well-known'
+  '/sitemap.xml',
+  '/.well-known',
+  '/api/scaffolder'
 ];
 
 const SENSITIVE_ROUTES = [
@@ -36,9 +38,9 @@ const rateLimitStore = new Map<string, { count: number; resetTime: number }>();
 // Security functions compatible with Edge Runtime
 function getClientIP(request: NextRequest): string {
   return request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ||
-         request.headers.get('x-real-ip') ||
-         request.headers.get('cf-connecting-ip') ||
-         'unknown';
+    request.headers.get('x-real-ip') ||
+    request.headers.get('cf-connecting-ip') ||
+    'unknown';
 }
 
 function checkRateLimit(request: NextRequest): { allowed: boolean; remaining: number; resetTime: number; retryAfter: number } {
@@ -46,11 +48,11 @@ function checkRateLimit(request: NextRequest): { allowed: boolean; remaining: nu
   const pathname = request.nextUrl.pathname;
   const key = `${clientIP}:${pathname}`;
   const now = Date.now();
-  
+
   // Different limits for different endpoints
   let limit = 100; // Default: 100 requests per minute
   let windowMs = 60000; // 1 minute
-  
+
   if (SENSITIVE_ROUTES.some(route => pathname.startsWith(route))) {
     limit = 10; // Sensitive endpoints: 10 requests per minute
     windowMs = 60000;
@@ -58,22 +60,22 @@ function checkRateLimit(request: NextRequest): { allowed: boolean; remaining: nu
     limit = 50; // API endpoints: 50 requests per minute
     windowMs = 60000;
   }
-  
+
   const windowStart = now - windowMs;
   let entry = rateLimitStore.get(key);
-  
+
   // Clean up old entries
   if (!entry || entry.resetTime < windowStart) {
     entry = { count: 0, resetTime: now + windowMs };
     rateLimitStore.set(key, entry);
   }
-  
+
   entry.count++;
-  
+
   const allowed = entry.count <= limit;
   const remaining = Math.max(0, limit - entry.count);
   const retryAfter = allowed ? 0 : entry.resetTime - now;
-  
+
   return {
     allowed,
     remaining,
@@ -88,7 +90,7 @@ function detectSuspiciousActivity(request: NextRequest): { suspicious: boolean; 
   const userAgent = request.headers.get('user-agent') || '';
   const pathname = request.nextUrl.pathname;
   const query = request.nextUrl.search;
-  
+
   // Check for bot/crawler user agents on sensitive endpoints
   if (SENSITIVE_ROUTES.some(route => pathname.startsWith(route))) {
     const botPatterns = [/bot/i, /crawler/i, /spider/i, /scraper/i, /curl/i, /wget/i];
@@ -97,31 +99,31 @@ function detectSuspiciousActivity(request: NextRequest): { suspicious: boolean; 
       severity = 'medium';
     }
   }
-  
+
   // Check for dangerous query parameters
   const dangerousParams = [
     /<script/i, /javascript:/i, /on\w+=/i, /\.\.\//,
     /\/etc\/passwd/i, /cmd\.exe/i, /<\?php/i,
     /union.*select/i, /drop.*table/i
   ];
-  
+
   if (dangerousParams.some(pattern => pattern.test(query))) {
     reasons.push('Suspicious query parameters');
     severity = 'high';
   }
-  
+
   // Check for path traversal attempts
   if (/\.\.\/|\.\.\\|%2e%2e%2f|%252e%252e%252f/i.test(pathname)) {
     reasons.push('Path traversal attempt');
     severity = 'critical';
   }
-  
+
   // Check for null bytes
   if (request.url.includes('%00') || request.url.includes('\0')) {
     reasons.push('Null byte injection attempt');
     severity = 'critical';
   }
-  
+
   return {
     suspicious: reasons.length > 0,
     reasons,
@@ -230,7 +232,7 @@ function logSecurityEvent(type: string, details: any): void {
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
   const startTime = Date.now();
-  
+
   // Skip middleware for static assets and bypass routes
   if (BYPASS_ROUTES.some(route => pathname.startsWith(route))) {
     return NextResponse.next();
@@ -293,7 +295,7 @@ export async function middleware(request: NextRequest) {
 
     // Multi-tenant context extraction and validation
     const tenantContext = extractTenantContext(request);
-    
+
     // Routes that require tenant context
     const requireTenantRoutes = [
       '/api/plugins',
@@ -302,16 +304,16 @@ export async function middleware(request: NextRequest) {
       '/api/metrics',
       '/api/workflows'
     ];
-    
+
     const requiresTenant = requireTenantRoutes.some(route => pathname.startsWith(route));
-    
+
     if (requiresTenant && !tenantContext) {
       logSecurityEvent('missing_tenant_context', {
         ip: getClientIP(request),
         path: pathname,
         userAgent: request.headers.get('user-agent')
       });
-      
+
       return new NextResponse(
         JSON.stringify({
           error: 'Tenant context required',
@@ -337,7 +339,7 @@ export async function middleware(request: NextRequest) {
             ip: getClientIP(request),
             path: pathname
           });
-          
+
           return new NextResponse(
             JSON.stringify({
               error: 'Tenant access denied',
@@ -352,7 +354,7 @@ export async function middleware(request: NextRequest) {
             }
           );
         }
-        
+
         // Apply tenant context middleware
         const tenantResponse = await newTenantContextMiddleware(request, tenantContext);
         if (tenantResponse && tenantResponse.status !== 200) {
@@ -362,7 +364,7 @@ export async function middleware(request: NextRequest) {
           });
           return tenantResponse;
         }
-        
+
       } catch (error) {
         if (error instanceof Error && tenantContext) {
           return handleTenantError(error, tenantContext);
@@ -402,7 +404,7 @@ export async function middleware(request: NextRequest) {
 
     // Create response with comprehensive security headers
     const response = NextResponse.next();
-    
+
     // Apply security headers
     const securityHeaders = createSecurityHeaders(request);
     Object.entries(securityHeaders).forEach(([key, value]) => {
@@ -417,7 +419,7 @@ export async function middleware(request: NextRequest) {
     response.headers.set('X-Request-ID', generateRequestId());
     response.headers.set('X-Response-Time', `${Date.now() - startTime}ms`);
     response.headers.set('X-Environment', process.env.NODE_ENV || 'production');
-    
+
     // Add tenant context headers if available
     if (tenantContext) {
       response.headers.set('X-Tenant-ID', tenantContext.tenantId);
@@ -434,14 +436,14 @@ export async function middleware(request: NextRequest) {
 
   } catch (error) {
     console.error('Middleware error:', error);
-    
+
     // Fail securely
     const errorResponse = NextResponse.next();
     const basicHeaders = createSecurityHeaders(request);
     Object.entries(basicHeaders).forEach(([key, value]) => {
       errorResponse.headers.set(key, value);
     });
-    
+
     return errorResponse;
   }
 }

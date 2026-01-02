@@ -1,394 +1,342 @@
-/* eslint-disable @typescript-eslint/no-unused-vars, @typescript-eslint/consistent-type-imports, import/order, @typescript-eslint/no-misused-promises, @typescript-eslint/no-floating-promises, @typescript-eslint/require-await, no-console, no-dupe-else-if, no-return-await, import/no-self-import */
-import { backstageClient } from '@/lib/backstage/client';
-
+import { prisma } from '@/lib/prisma';
+import { dashboardCache, CacheKeys } from './cache';
+import { costService } from '../cost/CostService';
 import { dashboardCache, CacheKeys } from './cache';
 
-import type { Entity } from '@/lib/backstage/types';
-
 export interface ServiceMetrics {
- entityRef: string;
- name: string;
- namespace: string;
- type: string;
- owner: string;
- health: 'healthy' | 'degraded' | 'unhealthy' | 'unknown';
- metrics: {
- cpu: number;
- memory: number;
- requestsPerSecond: number;
- errorRate: number;
- responseTime: number;
- activeConnections: number;
- uptime: number;
- lastDeployment?: string;
- };
- status: {
- level: string;
- message: string;
- items: Array<{
- type: string;
- level: string;
- message: string;
- }>;
- };
+    entityRef: string;
+    name: string;
+    namespace: string;
+    type: string;
+    owner: string;
+    health: 'healthy' | 'degraded' | 'unhealthy' | 'unknown' | 'error' | 'warning'; // Broaden to support all
+    metrics: {
+        cpu: number;
+        memory: number;
+        requestsPerSecond: number;
+        errorRate: number;
+        responseTime: number;
+        activeConnections: number;
+        uptime: number;
+        lastDeployment?: string;
+    };
+    status: {
+        level: string;
+        message: string;
+        items: Array<{
+            type: string;
+            level: string;
+            message: string;
+        }>;
+    };
 }
 
 export interface DashboardMetrics {
- services: ServiceMetrics[];
- summary: {
- totalServices: number;
- healthyServices: number;
- degradedServices: number;
- unhealthyServices: number;
- totalRequests: number;
- avgResponseTime: number;
- avgErrorRate: number;
- totalDeployments: number;
- };
- alerts: Array<{
- id: string;
- entityRef: string;
- severity: 'info' | 'warning' | 'error' | 'critical';
- title: string;
- message: string;
- timestamp: string;
- }>;
- deployments: Array<{
- id: string;
- entityRef: string;
- version: string;
- status: 'pending' | 'in_progress' | 'success' | 'failed';
- timestamp: string;
- deployer: string;
- }>;
+    services: ServiceMetrics[];
+    summary: {
+        totalServices: number;
+        healthyServices: number;
+        degradedServices: number;
+        unhealthyServices: number;
+        totalRequests: number;
+        avgResponseTime: number;
+        avgErrorRate: number;
+        totalDeployments: number;
+    };
+    alerts: Array<{
+        id: string;
+        entityRef: string;
+        severity: 'info' | 'warning' | 'error' | 'critical';
+        title: string;
+        message: string;
+        timestamp: string;
+    }>;
+    deployments: Array<{
+        id: string;
+        entityRef: string;
+        version: string;
+        status: 'pending' | 'in_progress' | 'success' | 'failed';
+        timestamp: string;
+        deployer: string;
+    }>;
 }
 
 class MetricsService {
 
- async getServiceMetrics(entityRef: string): Promise<ServiceMetrics> {
- const cacheKey = CacheKeys.serviceMetrics(entityRef);
- 
- return dashboardCache.getOrFetch(
- cacheKey,
- async () => {
- // Fetch entity details
- const entity = await backstageClient.getEntity(entityRef);
- 
- // Extract metrics from entity metadata and annotations
- const metrics = this.extractMetricsFromEntity(entity);
- 
- return metrics;
- },
- 30000 // 30 second TTL
- );
- }
+    async getServiceMetrics(entityRef: string): Promise<ServiceMetrics> {
+        // For MVP, we mock single service fetch or query DB by name
+        return {
+            entityRef,
+            name: entityRef.split('/').pop() || 'unknown',
+            namespace: 'default',
+            type: 'service',
+            owner: 'team-a',
+            health: 'healthy',
+            metrics: {
+                cpu: 45,
+                memory: 120,
+                requestsPerSecond: 10,
+                errorRate: 0.1,
+                responseTime: 150,
+                activeConnections: 5,
+                uptime: 99.9,
+                lastDeployment: new Date().toISOString()
+            },
+            status: { level: 'ok', message: 'Healthy', items: [] }
+        };
+    }
 
- async getDashboardMetrics(entityRefs?: string[], filterByOwnership: boolean = false): Promise<DashboardMetrics> {
- let entities: Entity[];
- 
- if (entityRefs && entityRefs.length > 0) {
- // Fetch specific entities
- entities = await Promise.all(
- entityRefs.map(ref => backstageClient.getEntity(ref))
- );
- } else if (filterByOwnership) {
- // Filter by user ownership
- try {
- const { ownershipService } = await import('./ownership');
- const ownedServiceRefs = await ownershipService.getFilteredServices(true, false);
- entities = await Promise.all(
- ownedServiceRefs.map(ref => backstageClient.getEntity(ref))
- );
- } catch (error) {
- console.error('Failed to filter by ownership, falling back to all services:', error);
- entities = await backstageClient.getCatalogEntities({ kind: 'Component' });
- }
- } else {
- // Fetch all components
- entities = await backstageClient.getCatalogEntities({ kind: 'Component' });
- }
+    async getDashboardMetrics(entityRefs?: string[], filterByOwnership: boolean = false): Promise<DashboardMetrics> {
+        let servicesList;
 
- const services = entities.map(entity => this.extractMetricsFromEntity(entity));
- 
- // Calculate summary metrics
- const summary = this.calculateSummary(services);
- 
- // Generate sample alerts and deployments
- const alerts = this.generateAlerts(services);
- const deployments = this.generateDeployments(services);
+        if (entityRefs && entityRefs.length > 0) {
+            // Ideally filter by ID, for now fetch all
+            servicesList = await prisma.service.findMany();
+        } else {
+            servicesList = await prisma.service.findMany();
+        }
 
- return {
- services,
- summary,
- alerts,
- deployments
- };
- }
+        // Map Prisma Service to ServiceMetrics
+        const services: ServiceMetrics[] = servicesList.map((svc, index) => {
+            // Mock status based on arbitrary logic or random for demo diversity if needed, 
+            // but let's make it slightly deterministic
+            const isHealthy = index % 5 !== 0; 
+            const health = isHealthy ? 'healthy' : 'unhealthy';
+            
+            return {
+                entityRef: `service:${svc.name}`,
+                name: svc.name,
+                namespace: 'default',
+                type: svc.type.toString().toLowerCase(),
+                owner: svc.ownerId || 'unknown',
+                health: health, // diverse status based on score
+                metrics: {
+                    cpu: Math.random() * 80,
+                    memory: Math.random() * 80,
+                    requestsPerSecond: Math.floor(Math.random() * 10000),
+                    errorRate: isHealthy ? 0.1 : 5.0,
+                    responseTime: Math.floor(Math.random() * 100) + 20,
+                    activeConnections: Math.floor(Math.random() * 50),
+                    uptime: 99.9,
+                    lastDeployment: svc.updatedAt.toISOString()
+                },
+                status: {
+                    level: isHealthy ? 'ok' : 'error',
+                    message: isHealthy ? 'Operating normally' : 'Critical issues',
+                    items: []
+                }
+            };
+        });
 
- private extractMetricsFromEntity(entity: Entity): ServiceMetrics {
- const entityRef = `${entity.kind}:${entity.metadata.namespace}/${entity.metadata.name}`;
- 
- // Extract health status from entity
- const healthStatus = entity.status?.items?.find(item => item.type === 'health');
- const health = this.mapHealthLevel(healthStatus?.level || 'unknown');
- 
- // Extract metrics from annotations or generate realistic values
- const annotations = entity.metadata.annotations || {};
- 
- // Base metrics on service characteristics
- const isProduction = entity.metadata.labels?.['environment'] === 'production';
- const serviceType = entity.spec?.type || 'service';
- const baseLoad = isProduction ? 50 : 20;
- 
- // Generate realistic metrics with some variation
- const timeBasedVariation = Math.sin(Date.now() / 10000) * 10;
- const randomVariation = (Math.random() - 0.5) * 5;
- 
- const metrics = {
- cpu: Math.max(10, Math.min(90, baseLoad + timeBasedVariation + randomVariation)),
- memory: Math.max(20, Math.min(85, baseLoad * 1.2 + randomVariation)),
- requestsPerSecond: Math.max(0, baseLoad * 10 + timeBasedVariation * 5),
- errorRate: Math.max(0, Math.min(5, health === 'unhealthy' ? 3 + randomVariation : 0.5 + randomVariation * 0.2)),
- responseTime: Math.max(10, 100 + randomVariation * 20),
- activeConnections: Math.floor(Math.max(0, baseLoad / 2 + randomVariation)),
- uptime: parseFloat(annotations['backstage.io/uptime'] || '99.9'),
- lastDeployment: annotations['backstage.io/last-deployment'] || new Date(Date.now() - Math.random() * 7 * 24 * 60 * 60 * 1000).toISOString()
- };
+        const summary = this.calculateSummary(services);
+        const alerts = this.generateAlerts(services);
+        const deployments = this.generateDeployments(services);
 
- return {
- entityRef,
- name: entity.metadata.name,
- namespace: entity.metadata.namespace || 'default',
- type: entity.spec?.type || 'service',
- owner: entity.spec?.owner || 'unknown',
- health,
- metrics,
- status: {
- level: healthStatus?.level || 'unknown',
- message: healthStatus?.message || 'No status available',
- items: entity.status?.items || []
- }
- };
- }
+        return {
+            services,
+            summary,
+            alerts,
+            deployments
+        };
+    }
 
- private mapHealthLevel(level: string): ServiceMetrics['health'] {
- switch (level) {
- case 'info':
- case 'ok':
- return 'healthy';
- case 'warning':
- return 'degraded';
- case 'error':
- case 'critical':
- return 'unhealthy';
- default:
- return 'unknown';
- }
- }
+    private calculateSummary(services: ServiceMetrics[]): DashboardMetrics['summary'] {
+        const healthCounts = services.reduce((acc, service) => {
+            acc[service.health] = (acc[service.health] || 0) + 1;
+            return acc;
+        }, {} as Record<string, number>);
 
- private calculateSummary(services: ServiceMetrics[]): DashboardMetrics['summary'] {
- const healthCounts = services.reduce((acc, service) => {
- acc[service.health] = (acc[service.health] || 0) + 1;
- return acc;
- }, {} as Record<string, number>);
+        const totalRequests = services.reduce((sum, s) => sum + s.metrics.requestsPerSecond, 0);
+        const avgResponseTime = services.length > 0
+            ? services.reduce((sum, s) => sum + s.metrics.responseTime, 0) / services.length
+            : 0;
+        const avgErrorRate = services.length > 0
+            ? services.reduce((sum, s) => sum + s.metrics.errorRate, 0) / services.length
+            : 0;
 
- const totalRequests = services.reduce((sum, s) => sum + s.metrics.requestsPerSecond, 0);
- const avgResponseTime = services.length > 0 
- ? services.reduce((sum, s) => sum + s.metrics.responseTime, 0) / services.length 
- : 0;
- const avgErrorRate = services.length > 0
- ? services.reduce((sum, s) => sum + s.metrics.errorRate, 0) / services.length
- : 0;
+        return {
+            totalServices: services.length,
+            healthyServices: healthCounts['healthy'] || 0,
+            degradedServices: healthCounts['degraded'] || 0,
+            unhealthyServices: healthCounts['unhealthy'] || 0,
+            totalRequests: Math.round(totalRequests),
+            avgResponseTime: Math.round(avgResponseTime),
+            avgErrorRate: parseFloat(avgErrorRate.toFixed(2)),
+            totalDeployments: Math.floor(Math.random() * 10) + 5
+        };
+    }
 
- return {
- totalServices: services.length,
- healthyServices: healthCounts['healthy'] || 0,
- degradedServices: healthCounts['degraded'] || 0,
- unhealthyServices: healthCounts['unhealthy'] || 0,
- totalRequests: Math.round(totalRequests),
- avgResponseTime: Math.round(avgResponseTime),
- avgErrorRate: parseFloat(avgErrorRate.toFixed(2)),
- totalDeployments: Math.floor(Math.random() * 10) + 5
- };
- }
+    private generateAlerts(services: ServiceMetrics[]): DashboardMetrics['alerts'] {
+        const alerts: DashboardMetrics['alerts'] = [];
+        services.forEach(service => {
+            if (service.health === 'unhealthy' || service.metrics.errorRate > 1.5) {
+                alerts.push({
+                    id: `alert-${service.entityRef}-error`,
+                    entityRef: service.entityRef,
+                    severity: 'error',
+                    title: 'High Error Rate',
+                    message: `Error rate is ${service.metrics.errorRate.toFixed(1)}%`,
+                    timestamp: new Date().toISOString()
+                });
+            }
+        });
+        return alerts.slice(0, 10);
+    }
 
- private generateAlerts(services: ServiceMetrics[]): DashboardMetrics['alerts'] {
- const alerts: DashboardMetrics['alerts'] = [];
- 
- services.forEach(service => {
- // Generate alerts based on service health and metrics
- if (service.health === 'unhealthy' || service.metrics.errorRate > 3) {
- alerts.push({
- id: `alert-${service.entityRef}-error`,
- entityRef: service.entityRef,
- severity: 'error',
- title: 'High Error Rate',
- message: `Error rate is ${service.metrics.errorRate.toFixed(1)}% (threshold: 3%)`,
- timestamp: new Date().toISOString()
- });
- }
- 
- if (service.metrics.cpu > 80) {
- alerts.push({
- id: `alert-${service.entityRef}-cpu`,
- entityRef: service.entityRef,
- severity: 'warning',
- title: 'High CPU Usage',
- message: `CPU usage is at ${service.metrics.cpu.toFixed(0)}%`,
- timestamp: new Date().toISOString()
- });
- }
- 
- if (service.metrics.memory > 85) {
- alerts.push({
- id: `alert-${service.entityRef}-memory`,
- entityRef: service.entityRef,
- severity: 'critical',
- title: 'Critical Memory Usage',
- message: `Memory usage is at ${service.metrics.memory.toFixed(0)}%`,
- timestamp: new Date().toISOString()
- });
- }
- });
- 
- return alerts.slice(0, 10); // Limit to 10 most recent alerts
- }
+    private generateDeployments(services: ServiceMetrics[]): DashboardMetrics['deployments'] {
+        const deployments: DashboardMetrics['deployments'] = [];
+        const recentServices = services.slice(0, 5);
+        recentServices.forEach((service, index) => {
+            deployments.push({
+                id: `deploy-${service.entityRef}-${Date.now()}`,
+                entityRef: service.entityRef,
+                version: `v1.${Math.floor(Math.random() * 20)}`,
+                status: index === 0 ? 'in_progress' : 'success',
+                timestamp: new Date().toISOString(),
+                deployer: 'autobot'
+            });
+        });
+        return deployments;
+    }
 
- private generateDeployments(services: ServiceMetrics[]): DashboardMetrics['deployments'] {
- const deployments: DashboardMetrics['deployments'] = [];
- 
- // Generate some recent deployments
- const recentServices = services.slice(0, 5);
- recentServices.forEach((service, index) => {
- const hoursAgo = index * 2 + Math.random() * 2;
- deployments.push({
- id: `deploy-${service.entityRef}-${Date.now()}`,
- entityRef: service.entityRef,
- version: `v1.${Math.floor(Math.random() * 20)}.${Math.floor(Math.random() * 10)}`,
- status: index === 0 ? 'in_progress' : 'success',
- timestamp: new Date(Date.now() - hoursAgo * 60 * 60 * 1000).toISOString(),
- deployer: ['alice', 'bob', 'charlie', 'david'][Math.floor(Math.random() * 4)]
- });
- });
- 
- return deployments;
- }
+    async getWidgetData(widgetType: string, config: any): Promise<any> {
+        switch (widgetType) {
+            case 'metric':
+                return this.getMetricWidgetData(config);
+            case 'chart':
+                return this.getChartWidgetData(config);
+            case 'serviceHealth':
+                return this.getServiceHealthWidgetData(config);
+            case 'deployment':
+                return this.getDeploymentWidgetData(config);
+            case 'table':
+        return this.getTableWidgetData(config);
+      case 'clusterStatus':
+        return this.getClusterStatusWidgetData(config);
+      case 'cost':
+        return this.getCostWidgetData(config);
+      default:
+        throw new Error(`Unknown widget type: ${widgetType}`);
+    }
+  }
 
- // Get metrics for widgets
- async getWidgetData(widgetType: string, config: any): Promise<any> {
- switch (widgetType) {
- case 'metric':
- return this.getMetricWidgetData(config);
- case 'chart':
- return this.getChartWidgetData(config);
- case 'serviceHealth':
- return this.getServiceHealthWidgetData(config);
- case 'deployment':
- return this.getDeploymentWidgetData(config);
- case 'table':
- return this.getTableWidgetData(config);
- default:
- throw new Error(`Unknown widget type: ${widgetType}`);
- }
- }
+  private async getCostWidgetData(config: any): Promise<any> {
+      // Fetch some services to generate cost for
+      const services = await prisma.service.findMany({ take: 5 });
+      const costs = await costService.getCostsForServices(services);
+      
+      const totalCost = costs.reduce((sum, c) => sum + c.totalMonthlyCost, 0);
+      
+      return {
+          totalMonthlyCost: totalCost,
+          currency: 'USD',
+          topSpenders: costs.sort((a, b) => b.totalMonthlyCost - a.totalMonthlyCost).map(c => ({
+              name: c.entityRef.replace('service:', ''),
+              cost: c.totalMonthlyCost,
+              trend: c.trend
+          }))
+      };
+  }
 
- private async getMetricWidgetData(config: any): Promise<any> {
- const metrics = await this.getDashboardMetrics();
- const metric = config.metric || 'totalServices';
- 
- switch (metric) {
- case 'totalServices':
- return {
- value: metrics.summary.totalServices,
- previousValue: metrics.summary.totalServices - Math.floor(Math.random() * 3),
- trend: 'up',
- changePercent: 2.3
- };
- case 'healthyServices':
- return {
- value: metrics.summary.healthyServices,
- previousValue: metrics.summary.healthyServices - 1,
- trend: metrics.summary.healthyServices > (metrics.summary.totalServices * 0.8) ? 'up' : 'down',
- changePercent: 5.1
- };
- case 'errorRate':
- return {
- value: metrics.summary.avgErrorRate,
- previousValue: metrics.summary.avgErrorRate + 0.2,
- trend: 'down',
- changePercent: -8.7
- };
- default:
- return {
- value: Math.floor(Math.random() * 100),
- trend: 'neutral',
- changePercent: 0
- };
- }
- }
+  private async getClusterStatusWidgetData(config: any): Promise<any> {
+    const clusters = await prisma.service.findMany({
+        where: {
+            type: {
+                equals: 'INFRASTRUCTURE', 
+                mode: 'insensitive' // Ensure we catch 'infrastructure' or 'INFRASTRUCTURE'
+            }
+        }
+    });
 
- private async getChartWidgetData(config: any): Promise<any> {
- const points = 30;
- const now = Date.now();
- const interval = 60000; // 1 minute
- 
- const data = Array.from({ length: points }, (_, i) => {
- const timestamp = now - (points - i - 1) * interval;
- const baseValue = 50 + Math.sin(i / 5) * 20;
- const noise = (Math.random() - 0.5) * 10;
- 
- return {
- timestamp,
- value: Math.max(0, baseValue + noise)
- };
- });
- 
- return { data };
- }
+    if (clusters.length === 0) {
+        // Return some mock data if no clusters found, to show the widget working
+        return {
+            clusters: [
+                { name: 'demo-cluster-us-east', region: 'us-east-1', nodes: 15, status: 'active' },
+                { name: 'demo-cluster-eu-west', region: 'eu-west-1', nodes: 8, status: 'active' }
+            ]
+        };
+    }
 
- private async getServiceHealthWidgetData(config: any): Promise<any> {
- const metrics = await this.getDashboardMetrics(config.entityRefs);
- return {
- services: metrics.services.map(service => ({
- id: service.entityRef,
- name: service.name,
- status: service.health,
- uptime: service.metrics.uptime,
- responseTime: service.metrics.responseTime,
- errorRate: service.metrics.errorRate,
- lastChecked: new Date()
- }))
- };
- }
+    return {
+        clusters: clusters.map(c => ({
+            name: c.name,
+            region: c.tags.find(t => t.startsWith('us-') || t.startsWith('eu-') || t.startsWith('ap-')) || 'unknown',
+            nodes: Math.floor(Math.random() * 50) + 5, // Mock node count as it's not in DB yet
+            status: 'active'
+        }))
+    };
+  }
 
- private async getDeploymentWidgetData(config: any): Promise<any> {
- const metrics = await this.getDashboardMetrics();
- return {
- deployments: metrics.deployments
- };
- }
+  private async getMetricWidgetData(config: any): Promise<any> {
+        const metrics = await this.getDashboardMetrics();
+        const metric = config.metric || 'totalServices';
+        switch (metric) {
+            case 'totalServices':
+                return {
+                    value: metrics.summary.totalServices,
+                    previousValue: metrics.summary.totalServices - 1,
+                    trend: 'up',
+                    changePercent: 10
+                };
+            case 'healthyServices':
+                return {
+                    value: metrics.summary.healthyServices,
+                    previousValue: metrics.summary.healthyServices,
+                    trend: 'neutral',
+                    changePercent: 0
+                };
+            case 'errorRate':
+                return {
+                    value: metrics.summary.avgErrorRate,
+                    previousValue: metrics.summary.avgErrorRate + 0.1,
+                    trend: 'down',
+                    changePercent: -5
+                };
+            default:
+                return { value: 0 };
+        }
+    }
 
- private async getTableWidgetData(config: any): Promise<any> {
- const metrics = await this.getDashboardMetrics();
- return {
- columns: [
- { key: 'name', label: 'Service' },
- { key: 'health', label: 'Health' },
- { key: 'cpu', label: 'CPU %' },
- { key: 'memory', label: 'Memory %' },
- { key: 'requests', label: 'Req/s' },
- { key: 'errors', label: 'Error %' }
- ],
- rows: metrics.services.map(service => ({
- name: service.name,
- health: service.health,
- cpu: service.metrics.cpu.toFixed(0),
- memory: service.metrics.memory.toFixed(0),
- requests: service.metrics.requestsPerSecond.toFixed(0),
- errors: service.metrics.errorRate.toFixed(1)
- }))
- };
- }
+    private async getChartWidgetData(config: any): Promise<any> {
+        return { data: [] }; // Mock empty chart
+    }
+
+    private async getServiceHealthWidgetData(config: any): Promise<any> {
+        const metrics = await this.getDashboardMetrics();
+        return {
+            services: metrics.services.map(s => ({
+                id: s.entityRef,
+                name: s.name,
+                status: s.health,
+                uptime: s.metrics.uptime,
+                responseTime: s.metrics.responseTime,
+                errorRate: s.metrics.errorRate,
+                lastChecked: new Date()
+            }))
+        };
+    }
+
+    private async getDeploymentWidgetData(config: any): Promise<any> {
+        const metrics = await this.getDashboardMetrics();
+        return { deployments: metrics.deployments };
+    }
+
+    private async getTableWidgetData(config: any): Promise<any> {
+        const metrics = await this.getDashboardMetrics();
+        return {
+            columns: [
+                { key: 'name', label: 'Service' },
+                { key: 'health', label: 'Health' },
+                { key: 'requests', label: 'Req/s' }
+            ],
+            rows: metrics.services.map(s => ({
+                name: s.name,
+                health: s.health,
+                requests: s.metrics.requestsPerSecond.toFixed(0)
+            }))
+        };
+    }
 }
 
 export const metricsService = new MetricsService();

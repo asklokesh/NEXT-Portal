@@ -59,7 +59,7 @@ export class TenantAwareDatabase {
    */
   async setContextFromRequest(request: NextRequest): Promise<void> {
     const tenantContext = getTenantContext(request);
-    
+
     if (tenantContext) {
       this.context = {
         tenantId: tenantContext.tenant.id,
@@ -85,7 +85,7 @@ export class TenantAwareDatabase {
    * Validate tenant access and get filtered query args
    */
   private validateAndFilterQuery<T extends Record<string, any>>(
-    args: T, 
+    args: T,
     modelName: string,
     options: TenantAwareQueryOptions = {}
   ): T {
@@ -100,7 +100,7 @@ export class TenantAwareDatabase {
 
     // Add tenant filter based on model
     const filteredArgs = this.addTenantFilter(args, modelName, options);
-    
+
     // Validate tenant access
     if (options.validateTenantAccess && this.context) {
       this.validateTenantAccess(filteredArgs, modelName);
@@ -122,14 +122,14 @@ export class TenantAwareDatabase {
     }
 
     const tenantFilter = this.getTenantFilterForModel(modelName, this.context.tenantId);
-    
+
     if (!tenantFilter) {
       return args; // Model doesn't support tenant filtering
     }
 
     // Merge tenant filter with existing where clause
     const filteredArgs = { ...args };
-    
+
     if (filteredArgs.where) {
       filteredArgs.where = {
         ...filteredArgs.where,
@@ -152,7 +152,9 @@ export class TenantAwareDatabase {
       'PluginGovernance',
       'PluginAnalytics',
       'Organization',
-      'Subscription'
+      'Subscription',
+      'Scorecard',
+      'ScorecardResult'
     ];
 
     // Models with tenant relationship through other models
@@ -227,7 +229,7 @@ export class TenantAwareDatabase {
     if (!this.context) return;
 
     const permissions = this.context.userPermissions;
-    
+
     // Permission-based access control
     const permissionMap: Record<string, string[]> = {
       'Plugin': ['plugin:read', 'plugin:write', 'plugin:manage'],
@@ -241,8 +243,8 @@ export class TenantAwareDatabase {
 
     const requiredPermissions = permissionMap[modelName];
     if (requiredPermissions) {
-      const hasPermission = requiredPermissions.some(perm => 
-        permissions.includes(perm) || 
+      const hasPermission = requiredPermissions.some(perm =>
+        permissions.includes(perm) ||
         permissions.includes('*') ||
         permissions.includes('admin:all')
       );
@@ -287,7 +289,7 @@ export class TenantAwareDatabase {
     if (!this.context || this.context.isSystemOperation) return;
 
     const modelName = params.model || '';
-    
+
     // Ensure tenant ID is set for create operations
     if (params.action === 'create' && this.getTenantFilterForModel(modelName, this.context.tenantId)) {
       if (!params.args.data.tenantId && modelName === 'Plugin') {
@@ -544,10 +546,10 @@ export class TenantQueryBuilder {
    */
   buildPluginQuery(baseWhere: any = {}): any {
     const tenantFilter = { tenantId: this.tenantId };
-    
+
     // Add permission-based visibility filters
-    const visibilityFilter = this.permissions.includes('plugin:manage') 
-      ? {} 
+    const visibilityFilter = this.permissions.includes('plugin:manage')
+      ? {}
       : { tenantScope: { in: ['PUBLIC', 'PRIVATE'] } };
 
     return {

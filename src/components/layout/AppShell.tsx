@@ -75,7 +75,7 @@ export const AppShell = ({ children }: { children: React.ReactNode }) => {
   const { isSearchOpen, openSearch, closeSearch } = useGlobalSearch();
   const { toggles } = useFeatureToggles();
   const commandPalette = useCommandPalette();
-  
+
   // State
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
@@ -84,7 +84,7 @@ export const AppShell = ({ children }: { children: React.ReactNode }) => {
   const [notificationCenterOpen, setNotificationCenterOpen] = useState(false);
   const [expandedMenus, setExpandedMenus] = useState<string[]>(['Catalog']);
   const [hydrated, setHydrated] = useState(false);
-  
+
   // Mock user (would come from auth context)
   const [user, _setUser] = useState<User>({
     name: 'Alex Johnson',
@@ -129,20 +129,6 @@ export const AppShell = ({ children }: { children: React.ReactNode }) => {
 
   // Spotify Portal premium plugins section
   const premiumPlugins: NavigationItem[] = [
-    {
-      name: 'Soundcheck',
-      href: '/soundcheck',
-      icon: Shield,
-      description: 'Tech health and standards',
-      badge: 'Premium'
-    },
-    {
-      name: 'AiKA',
-      href: '/aika',
-      icon: Zap,
-      description: 'AI Knowledge Assistant',
-      badge: 'AI'
-    },
     {
       name: 'Skill Exchange',
       href: '/skill-exchange',
@@ -189,6 +175,7 @@ export const AppShell = ({ children }: { children: React.ReactNode }) => {
   ];
 
   const secondaryNavigation: NavigationItem[] = [
+    { name: 'Integrations', href: '/admin/integrations', icon: Network }, // Changed from lucide-react Settings or similar
     { name: 'Settings', href: '/settings', icon: Settings },
     { name: 'Help', href: '/help', icon: HelpCircle },
   ];
@@ -205,7 +192,6 @@ export const AppShell = ({ children }: { children: React.ReactNode }) => {
     'Deployments': 'deployments',
     'Kubernetes': 'kubernetes',
     'Health Monitor': 'healthMonitor',
-    'Soundcheck': 'soundcheck',
     'Tech Radar': 'techRadar',
     'Analytics': 'analytics',
     'Cost Tracking': 'costTracking',
@@ -230,13 +216,13 @@ export const AppShell = ({ children }: { children: React.ReactNode }) => {
   // Initialize settings from localStorage after hydration
   useEffect(() => {
     setHydrated(true);
-    
+
     // Load expanded menus
     const savedExpandedMenus = localStorage.getItem('expandedMenus');
     if (savedExpandedMenus) {
       setExpandedMenus(JSON.parse(savedExpandedMenus));
     }
-    
+
     // Load dark mode
     const savedDarkMode = localStorage.getItem('darkMode') === 'true';
     setDarkMode(savedDarkMode);
@@ -248,13 +234,13 @@ export const AppShell = ({ children }: { children: React.ReactNode }) => {
   // Connect to WebSocket
   useEffect(() => {
     wsClient.connect();
-    
+
     const handleAlert = () => {
       setNotificationCount(prev => prev + 1);
     };
-    
+
     wsClient.on('alert', handleAlert);
-    
+
     return () => {
       wsClient.off('alert', handleAlert);
     };
@@ -300,7 +286,7 @@ export const AppShell = ({ children }: { children: React.ReactNode }) => {
   // Handle keyboard navigation
   const handleKeyDown = (e: React.KeyboardEvent, item: NavigationItem) => {
     const hasChildren = item.children && item.children.length > 0;
-    
+
     if (hasChildren) {
       if (e.key === 'Enter' || e.key === ' ') {
         e.preventDefault();
@@ -323,147 +309,85 @@ export const AppShell = ({ children }: { children: React.ReactNode }) => {
     }
   };
 
-  // Spotify Portal navigation item renderer
-  const renderSpotifyNavigationItem = (item: NavigationItem, isMobile = false) => {
+  // Apple Portal navigation item renderer
+  const renderAppleNavigationItem = (item: NavigationItem, isMobile = false) => {
     const Icon = item.icon;
     const isActive = item.href ? pathname.startsWith(item.href) : false;
 
     return (
       <motion.div
         key={item.name}
-        initial={{ opacity: 0, x: -20 }}
+        initial={{ opacity: 0, x: -10 }}
         animate={{ opacity: 1, x: 0 }}
-        className="spotify-fade-in"
       >
         <Link
           href={item.href!}
           onClick={isMobile ? () => setSidebarOpen(false) : undefined}
-          className={`group flex items-center gap-3 rounded-xl px-3 py-3 text-sm font-medium transition-all duration-200 relative overflow-hidden ${
-            isActive
-              ? 'spotify-tab-active shadow-lg'
-              : 'spotify-tab-inactive'
-          }`}
+          className={`group flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-all duration-200 ${isActive
+            ? 'bg-blue-50 text-blue-600 dark:bg-blue-500/10 dark:text-blue-400'
+            : 'text-gray-600 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800'
+            }`}
           title={item.description}
         >
-          <Icon className="h-5 w-5 relative z-10" />
-          <span className="flex-1 relative z-10">{item.name}</span>
+          <Icon className={`h-4 w-4 ${isActive ? 'text-blue-600 dark:text-blue-400' : 'text-gray-500'}`} />
+          <span className="flex-1">{item.name}</span>
           {item.badge && (
-            <span className={`rounded-full px-2 py-1 text-xs font-semibold relative z-10 ${
-              item.badge === 'Premium' 
-                ? 'bg-gradient-to-r from-primary to-accent text-primary-foreground'
-                : item.badge === 'AI'
-                ? 'bg-gradient-to-r from-purple-500 to-pink-500 text-white'
-                : item.badge === 'Beta'
-                ? 'bg-gradient-to-r from-orange-500 to-yellow-500 text-white'
-                : 'bg-muted text-muted-foreground'
-            }`}>
+            <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${item.badge === 'Premium'
+              ? 'bg-purple-100 text-purple-600 dark:bg-purple-900/30 dark:text-purple-400'
+              : item.badge === 'AI'
+                ? 'bg-blue-100 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400'
+                : 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400'
+              }`}>
               {item.badge}
             </span>
           )}
-          
-          {/* Hover effect overlay */}
-          <div className="absolute inset-0 bg-gradient-to-r from-primary/5 to-accent/5 opacity-0 group-hover:opacity-100 transition-opacity duration-200" />
         </Link>
       </motion.div>
     );
   };
 
   const renderNavigationItem = (item: NavigationItem, isMobile = false) => {
+    // Redirect to use our new renderer
+    if (item.href) return renderAppleNavigationItem(item, isMobile);
+
+    // For expandable menus (kept mostly same but updated colors)
     const Icon = item.icon;
     const hasChildren = item.children && item.children.length > 0;
     const isExpanded = expandedMenus.includes(item.name);
-    const isActive = item.href ? pathname.startsWith(item.href) : 
-      item.children?.some(child => child.href && pathname.startsWith(child.href));
+    const isActive = item.children?.some(child => child.href && pathname.startsWith(child.href));
 
     return (
       <div key={item.name}>
-        {/* Parent item */}
-        {item.href ? (
-          <Link
-            href={item.href}
-            onClick={isMobile ? () => setSidebarOpen(false) : undefined}
-            className={`group flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors ${
-              isActive
-                ? 'bg-blue-50 text-blue-600 dark:bg-blue-900/20 dark:text-blue-400'
-                : 'text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700'
+        <button
+          onClick={() => {
+            if (expandedMenus.includes(item.name)) {
+              setExpandedMenus(expandedMenus.filter(name => name !== item.name));
+            } else {
+              setExpandedMenus([...expandedMenus, item.name]);
+            }
+          }}
+          className={`w-full group flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors ${isActive
+            ? 'text-blue-600 dark:text-blue-400'
+            : 'text-gray-600 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800'
             }`}
-            title={item.description}
-          >
-            <Icon className="h-5 w-5" />
-            <span className="flex-1">{item.name}</span>
-            {item.badge && (
-              <span className="rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-600 dark:bg-blue-900/50 dark:text-blue-400">
-                {item.badge}
-              </span>
-            )}
-          </Link>
-        ) : (
-          <button
-            onClick={() => {
-              if (expandedMenus.includes(item.name)) {
-                setExpandedMenus(expandedMenus.filter(name => name !== item.name));
-              } else {
-                setExpandedMenus([...expandedMenus, item.name]);
-              }
-            }}
-            onKeyDown={(e) => handleKeyDown(e, item)}
-            className={`w-full group flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors ${
-              isActive
-                ? 'bg-blue-50 text-blue-600 dark:bg-blue-900/20 dark:text-blue-400'
-                : 'text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700'
-            }`}
-            title={item.description}
-            aria-expanded={hydrated ? isExpanded : undefined}
-            aria-haspopup={hasChildren}
-          >
-            <Icon className="h-5 w-5" />
-            <span className="flex-1 text-left">{item.name}</span>
-            {hasChildren && (
-              <ChevronRight className={`h-4 w-4 transition-transform ${
-                isExpanded ? 'rotate-90' : ''
-              }`} />
-            )}
-          </button>
-        )}
-        
-        {/* Children items */}
+        >
+          <Icon className="h-4 w-4" />
+          <span className="flex-1 text-left">{item.name}</span>
+          {hasChildren && (
+            <ChevronRight className={`h-3 w-3 transition-transform ${isExpanded ? 'rotate-90' : ''}`} />
+          )}
+        </button>
+
         <AnimatePresence>
           {hasChildren && isExpanded && (
-            <motion.div 
+            <motion.div
               initial={{ height: 0, opacity: 0 }}
               animate={{ height: 'auto', opacity: 1 }}
               exit={{ height: 0, opacity: 0 }}
-              transition={{ duration: 0.2, ease: 'easeInOut' }}
               className="overflow-hidden"
             >
-              <div className="ml-4 mt-1 space-y-1">
-                {item.children?.map(child => {
-                  const ChildIcon = child.icon;
-                  const isChildActive = child.href && pathname.startsWith(child.href);
-                  
-                  return (
-                    <motion.div
-                      key={child.name}
-                      initial={{ x: -10, opacity: 0 }}
-                      animate={{ x: 0, opacity: 1 }}
-                      transition={{ duration: 0.2 }}
-                    >
-                      <Link
-                        href={child.href!}
-                        onClick={isMobile ? () => setSidebarOpen(false) : undefined}
-                        className={`group flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors ${
-                          isChildActive
-                            ? 'bg-blue-50 text-blue-600 dark:bg-blue-900/20 dark:text-blue-400'
-                            : 'text-gray-600 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-700'
-                        }`}
-                        title={child.description}
-                      >
-                        <ChildIcon className="h-4 w-4" />
-                        <span className="flex-1">{child.name}</span>
-                      </Link>
-                    </motion.div>
-                  );
-                })}
+              <div className="ml-4 mt-1 space-y-0.5 border-l border-gray-200 dark:border-gray-800 pl-2">
+                {item.children?.map(child => renderAppleNavigationItem(child, isMobile))}
               </div>
             </motion.div>
           )}
@@ -473,8 +397,8 @@ export const AppShell = ({ children }: { children: React.ReactNode }) => {
   };
 
   return (
-    <div className="spotify-layout">
-      
+    <div className="min-h-screen bg-background">
+
       {/* Mobile sidebar */}
       <AnimatePresence>
         {sidebarOpen && (
@@ -486,37 +410,28 @@ export const AppShell = ({ children }: { children: React.ReactNode }) => {
               className="fixed inset-0 z-50 lg:hidden"
               onClick={() => setSidebarOpen(false)}
             >
-              <div className="fixed inset-0 bg-black/60 backdrop-blur-sm" />
+              <div className="fixed inset-0 bg-black/20 backdrop-blur-sm" />
             </motion.div>
-            
+
             <motion.div
-              data-testid="mobile-menu"
+              className="fixed inset-y-0 left-0 z-50 w-72 bg-white/80 dark:bg-black/80 backdrop-blur-xl border-r border-gray-200 dark:border-gray-800 lg:hidden"
               initial={{ x: -300 }}
               animate={{ x: 0 }}
               exit={{ x: -300 }}
-              className="fixed inset-y-0 left-0 z-50 w-72 spotify-sidebar lg:hidden"
             >
               <div className="flex h-full flex-col">
-                <div className="flex h-16 items-center justify-between px-6">
-                  <Link href="/" className="flex items-center gap-2">
-                    <div className="h-8 w-8 rounded-lg bg-primary flex items-center justify-center">
-                      <span className="text-primary-foreground font-bold text-lg">N</span>
-                    </div>
-                    <span className="text-xl font-bold spotify-gradient-text">
-                      Next Portal
-                    </span>
-                  </Link>
-                  <button
-                    onClick={() => setSidebarOpen(false)}
-                    className="text-muted-foreground hover:text-foreground transition-colors"
-                  >
-                    <X className="h-6 w-6" />
+                <div className="flex h-14 items-center justify-between px-6 border-b border-gray-100 dark:border-gray-800/50">
+                  <div className="flex items-center gap-2">
+                    <div className="h-6 w-6 rounded bg-blue-600 text-white flex items-center justify-center text-xs font-bold">N</div>
+                    <span className="font-semibold text-lg tracking-tight">Portal</span>
+                  </div>
+                  <button onClick={() => setSidebarOpen(false)}>
+                    <X className="h-5 w-5 text-gray-500" />
                   </button>
                 </div>
-                <nav className="flex-1 px-4 py-6 space-y-8">
-                  {/* Core Navigation */}
-                  <div className="space-y-2">
-                    {navigation.map((item) => renderSpotifyNavigationItem(item, true))}
+                <nav className="flex-1 px-4 py-6 space-y-6 overflow-y-auto">
+                  <div className="space-y-1">
+                    {navigation.map((item) => renderAppleNavigationItem(item, true))}
                   </div>
                 </nav>
               </div>
@@ -525,147 +440,119 @@ export const AppShell = ({ children }: { children: React.ReactNode }) => {
         )}
       </AnimatePresence>
 
-      {/* Desktop sidebar - Spotify Portal Style */}
-      <div className="hidden lg:fixed lg:inset-y-0 lg:left-0 lg:z-50 lg:block lg:w-72 lg:overflow-y-auto spotify-sidebar">
+      {/* Desktop sidebar - Apple Style */}
+      <div className="hidden lg:fixed lg:inset-y-0 lg:left-0 lg:z-50 lg:block lg:w-64 lg:overflow-y-auto bg-gray-50/50 dark:bg-secondary/20 backdrop-blur-xl border-r border-border">
         <div className="flex h-full flex-col">
           {/* Logo */}
-          <div className="flex h-16 items-center px-6">
-            <Link href="/" className="flex items-center gap-3">
-              <div className="h-10 w-10 rounded-xl bg-primary flex items-center justify-center shadow-lg">
-                <span className="text-primary-foreground font-bold text-xl">N</span>
-              </div>
-              <span className="text-2xl font-bold spotify-gradient-text">
-                Next Portal
-              </span>
-            </Link>
+          <div className="flex h-14 items-center px-5 gap-3">
+            <div className="h-7 w-7 rounded-lg bg-primary flex items-center justify-center shadow-sm text-white font-bold text-sm">N</div>
+            <span className="text-lg font-semibold tracking-tight text-foreground">Portal</span>
           </div>
-          
-          <nav className="flex-1 px-4 py-6 space-y-8">
-            {/* Core Navigation */}
-            <div className="space-y-2">
-              <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider px-3 mb-3">
-                Portal
-              </h3>
-              {navigation.map((item) => renderSpotifyNavigationItem(item))}
+
+          <nav className="flex-1 px-3 py-6 space-y-8">
+            <div className="space-y-1">
+              <h3 className="px-3 text-xs font-semibold text-gray-400 uppercase tracking-widest mb-2">Platform</h3>
+              {navigation.map((item) => renderAppleNavigationItem(item))}
             </div>
-            
-            {/* Spotify Premium Plugins */}
-            <div className="space-y-2">
-              <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider px-3 mb-3">
-                Spotify Premium
-              </h3>
-              {premiumPlugins.map((item) => renderSpotifyNavigationItem(item))}
+
+            <div className="space-y-1">
+              <h3 className="px-3 text-xs font-semibold text-gray-400 uppercase tracking-widest mb-2">Features</h3>
+              {premiumPlugins.map((item) => renderAppleNavigationItem(item))}
             </div>
-            
-            {/* Installed Plugins */}
-            <div className="space-y-2">
-              <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider px-3 mb-3">
-                Installed
-              </h3>
-              {installedPlugins.map((item) => renderSpotifyNavigationItem(item))}
+
+            <div className="space-y-1">
+              <h3 className="px-3 text-xs font-semibold text-gray-400 uppercase tracking-widest mb-2">Installed</h3>
+              {installedPlugins.map((item) => renderAppleNavigationItem(item))}
             </div>
           </nav>
-          
-          {/* User section - Spotify style */}
-          <div className="border-t border-border/50 p-4">
+
+          {/* User section */}
+          <div className="p-3 border-t border-border/50">
             <button
               onClick={() => setUserMenuOpen(!userMenuOpen)}
-              className="flex w-full items-center gap-3 rounded-xl p-3 text-sm font-medium hover:bg-muted/50 transition-colors"
+              className="flex w-full items-center gap-3 rounded-lg p-2 text-sm hover:bg-gray-200/50 dark:hover:bg-gray-800/50 transition-colors"
             >
-              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary text-primary-foreground font-semibold">
+              <div className="h-8 w-8 rounded-full bg-gray-200 dark:bg-gray-700 flex items-center justify-center text-xs font-medium">
                 {user.name.charAt(0)}
               </div>
-              <div className="flex-1 text-left">
-                <p className="font-medium text-foreground">{user.name}</p>
-                <p className="text-xs text-muted-foreground">{user.role}</p>
+              <div className="flex-1 text-left overflow-hidden">
+                <p className="font-medium text-foreground truncate">{user.name}</p>
+                <p className="text-xs text-muted-foreground truncate">{user.role}</p>
               </div>
-              <ChevronDown className="h-4 w-4 text-muted-foreground" />
+              <ChevronDown className="h-3 w-3 text-muted-foreground" />
             </button>
           </div>
         </div>
       </div>
 
       {/* Main content */}
-      <div className="lg:pl-72">
-        {/* Top header - Spotify Portal style */}
-        <header className="spotify-header sticky top-0 z-40 flex h-16 items-center gap-4 px-6">
+      <div className="lg:pl-64 flex flex-col min-h-screen">
+        {/* Top header - Clean Glass */}
+        <header className="sticky top-0 z-40 flex h-14 items-center gap-4 px-6 glass border-b border-border/50 bg-background/70 backdrop-blur-xl">
           <button
             onClick={() => setSidebarOpen(true)}
-            className="lg:hidden text-muted-foreground hover:text-foreground transition-colors"
+            className="lg:hidden text-muted-foreground hover:text-foreground"
           >
-            <Menu className="h-6 w-6" />
+            <Menu className="h-5 w-5" />
           </button>
-          
+
           <div className="flex flex-1 items-center justify-between">
-            <div className="flex items-center gap-4">
-              <h1 className="text-2xl font-bold text-foreground">
-                {getPageTitle()}
-              </h1>
-            </div>
-            
-            <div className="flex items-center gap-3">
-              {/* Search button - Spotify Portal style */}
+            <h1 className="text-lg font-semibold text-foreground tracking-tight">
+              {getPageTitle()}
+            </h1>
+
+            <div className="flex items-center gap-2">
               <button
                 onClick={commandPalette.open}
-                className="flex items-center gap-2 rounded-xl spotify-input px-4 py-2 text-sm transition-all hover:border-primary/30"
+                className="flex items-center gap-2 rounded-lg bg-gray-100 dark:bg-gray-800 px-3 py-1.5 text-sm hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
               >
-                <Search className="h-4 w-4 text-muted-foreground" />
-                <span className="hidden sm:inline text-muted-foreground">Search Portal...</span>
-                <kbd className="hidden sm:inline-flex items-center gap-1 rounded-md bg-muted px-2 py-1 text-xs text-muted-foreground">
+                <Search className="h-3.5 w-3.5 text-gray-500" />
+                <span className="hidden sm:inline text-gray-500 text-xs font-medium">Search</span>
+                <kbd className="hidden sm:inline-flex items-center gap-1 rounded bg-white dark:bg-black px-1.5 text-[10px] font-medium text-gray-500 border border-gray-200 dark:border-gray-700">
                   ⌘K
                 </kbd>
               </button>
-              
-              {/* Dark mode toggle */}
+
+              <div className="h-4 w-px bg-gray-200 dark:bg-gray-800 mx-2" />
+
               <button
                 onClick={toggleDarkMode}
-                className="rounded-xl p-2 text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-all"
+                className="rounded-full p-2 text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800 transition-all"
               >
-                {darkMode ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
+                {darkMode ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
               </button>
-              
-              {/* Notifications */}
+
               <button
                 onClick={() => setNotificationCenterOpen(!notificationCenterOpen)}
-                className="relative rounded-xl p-2 text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-all"
+                className="relative rounded-full p-2 text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800 transition-all"
               >
-                <Bell className="h-5 w-5" />
+                <Bell className="h-4 w-4" />
                 {notificationCount > 0 && (
-                  <span className="absolute -top-1 -right-1 flex h-5 w-5 items-center justify-center rounded-full bg-primary text-xs text-primary-foreground font-semibold">
-                    {notificationCount > 9 ? '9+' : notificationCount}
-                  </span>
+                  <span className="absolute top-1.5 right-1.5 h-2 w-2 rounded-full bg-red-500 ring-2 ring-white dark:ring-black" />
                 )}
-              </button>
-              
-              {/* User avatar */}
-              <button
-                onClick={() => setUserMenuOpen(!userMenuOpen)}
-                className="flex items-center gap-2 rounded-xl p-2 hover:bg-muted/50 transition-all"
-              >
-                <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-primary-foreground font-semibold text-sm">
-                  {user.name.charAt(0)}
-                </div>
               </button>
             </div>
           </div>
         </header>
-        
+
         {/* Page content */}
-        <main className="spotify-main-content">
-          {children}
+        <main className="flex-1 p-8 bg-gray-50/30 dark:bg-black">
+          <div className="max-w-7xl mx-auto space-y-6">
+            {children}
+          </div>
         </main>
       </div>
 
       {/* Command Palette */}
       <CommandPalette isOpen={commandPalette.isOpen} onClose={commandPalette.close} />
-      
+
       {/* Global Search */}
       <GlobalSearch isOpen={isSearchOpen} onClose={closeSearch} />
-      
+
       {/* Notification Center */}
-      <NotificationCenter 
-        isOpen={notificationCenterOpen} 
-        onClose={() => setNotificationCenterOpen(false)} 
+      <NotificationCenter
+        isOpen={notificationCenterOpen}
+        onClose={() => setNotificationCenterOpen(false)}
       />
 
       {/* User menu dropdown */}
@@ -691,7 +578,7 @@ export const AppShell = ({ children }: { children: React.ReactNode }) => {
                 Preferences
               </button>
               <div className="my-1 border-t border-gray-200 dark:border-gray-700" />
-              <button 
+              <button
                 onClick={() => {
                   toast.success('Logged out successfully');
                   router.push('/login');

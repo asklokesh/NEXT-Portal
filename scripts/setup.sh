@@ -353,6 +353,14 @@ setup_database() {
 
     cd "$PROJECT_DIR"
 
+    # Load environment variables from .env.local for Prisma
+    if [[ -f "$ENV_FILE" ]]; then
+        log_info "Loading environment variables from $ENV_FILE..."
+        set -a
+        source "$ENV_FILE"
+        set +a
+    fi
+
     log_info "Running database migrations..."
     npx prisma db push --accept-data-loss
     log_success "Database migrations completed"

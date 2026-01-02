@@ -113,7 +113,7 @@ const customJestConfig = {
   '^.+\\.(ts|tsx)$': ['ts-jest', {
    tsconfig: '<rootDir>/tsconfig.jest.json',
   }],
-  '^.+\\.(js|jsx)$': 'babel-jest',
+  '^.+\\.(js|jsx)$': ['babel-jest', { configFile: './babel.config.jest.js' }],
  },
  testEnvironmentOptions: {
   url: 'http://localhost:4400',
@@ -153,7 +153,7 @@ const customJestConfig = {
     '^.+\\.(ts|tsx)$': ['ts-jest', {
      tsconfig: '<rootDir>/tsconfig.jest.json',
     }],
-    '^.+\\.(js|jsx)$': 'babel-jest',
+    '^.+\\.(js|jsx)$': ['babel-jest', { configFile: './babel.config.jest.js' }],
    },
   },
   {
@@ -178,7 +178,7 @@ const customJestConfig = {
     '^.+\\.(ts|tsx)$': ['ts-jest', {
      tsconfig: '<rootDir>/tsconfig.jest.json',
     }],
-    '^.+\\.(js|jsx)$': 'babel-jest',
+    '^.+\\.(js|jsx)$': ['babel-jest', { configFile: './babel.config.jest.js' }],
    },
   },
   {
@@ -202,7 +202,7 @@ const customJestConfig = {
      tsconfig: '<rootDir>/tsconfig.jest.json',
      isolatedModules: true,
     }],
-    '^.+\\.(js|jsx)$': 'babel-jest',
+    '^.+\\.(js|jsx)$': ['babel-jest', { configFile: './babel.config.jest.js' }],
    },
   },
  ],

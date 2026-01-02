@@ -1,812 +1,294 @@
 'use client';
 
-import { useState } from 'react';
+import React, { useState } from 'react';
 import { 
- GitBranch, 
- Cloud, 
- Database, 
- Shield, 
- Mail,
- MessageSquare,
- Activity,
- Package,
- Zap,
- CheckCircle,
- XCircle,
- AlertCircle,
- Loader2,
- ExternalLink,
- Settings,
- Play,
- Pause,
- RefreshCw,
- Key,
- Link,
- Unlink,
+  Github, 
+  Gitlab, 
+  Box, 
+  Container, 
+  Database,
+  Cloud,
+  LayoutGrid,
+  Settings,
+  CheckCircle,
+  AlertTriangle,
+  Plus,
+  ArrowRight
 } from 'lucide-react';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import {
- Dialog,
- DialogContent,
- DialogDescription,
- DialogFooter,
- DialogHeader,
- DialogTitle,
-} from '@/components/ui/dialog';
-import { Progress } from '@/components/ui/progress';
-import { Switch } from '@/components/ui/switch';
-import { toast } from 'sonner';
+import { motion } from 'framer-motion';
 
-interface Integration {
- id: string;
- name: string;
- description: string;
- category: string;
- icon: React.ReactNode;
- status: 'connected' | 'disconnected' | 'error' | 'configuring';
- enabled: boolean;
- documentation?: string;
- requiredFields: IntegrationField[];
- optionalFields?: IntegrationField[];
- features?: string[];
- health?: {
- status: 'healthy' | 'degraded' | 'unhealthy';
- lastChecked: Date;
- message?: string;
- };
-}
-
-interface IntegrationField {
- id: string;
- label: string;
- type: 'text' | 'secret' | 'select' | 'boolean';
- placeholder?: string;
- description?: string;
- required?: boolean;
- options?: { label: string; value: string }[];
- value?: any;
-}
-
-interface IntegrationStep {
- id: string;
- name: string;
- status: 'pending' | 'running' | 'completed' | 'failed';
- message?: string;
-}
-
-const INTEGRATIONS: Integration[] = [
- // Version Control
- {
- id: 'github',
- name: 'GitHub',
- description: 'Connect to GitHub for source code management and collaboration',
- category: 'Version Control',
- icon: <GitBranch className="h-5 w-5" />,
- status: 'connected',
- enabled: true,
- documentation: 'https://backstage.io/docs/integrations/github',
- requiredFields: [
- {
- id: 'token',
- label: 'Personal Access Token',
- type: 'secret',
- placeholder: 'ghp_xxxxxxxxxxxx',
- description: 'GitHub PAT with repo and user scopes',
- required: true,
- },
- ],
- optionalFields: [
- {
- id: 'enterprise_url',
- label: 'GitHub Enterprise URL',
- type: 'text',
- placeholder: 'https://github.enterprise.com',
- description: 'For GitHub Enterprise instances',
- },
- ],
- features: [
- 'Repository discovery',
- 'Pull request integration',
- 'GitHub Actions support',
- 'User and team sync',
- ],
- health: {
- status: 'healthy',
- lastChecked: new Date(),
- },
- },
- {
- id: 'gitlab',
- name: 'GitLab',
- description: 'Integrate with GitLab for DevOps lifecycle management',
- category: 'Version Control',
- icon: <GitBranch className="h-5 w-5" />,
- status: 'disconnected',
- enabled: false,
- requiredFields: [
- {
- id: 'token',
- label: 'Personal Access Token',
- type: 'secret',
- placeholder: 'glpat-xxxxxxxxxxxx',
- description: 'GitLab PAT with api scope',
- required: true,
- },
- {
- id: 'host',
- label: 'GitLab Host',
- type: 'text',
- placeholder: 'gitlab.com',
- description: 'GitLab instance hostname',
- required: true,
- value: 'gitlab.com',
- },
- ],
- features: [
- 'Project discovery',
- 'Merge request integration',
- 'GitLab CI/CD support',
- 'User and group sync',
- ],
- },
-
- // Cloud Providers
- {
- id: 'aws',
- name: 'Amazon Web Services',
- description: 'Monitor and manage AWS resources',
- category: 'Cloud Providers',
- icon: <Cloud className="h-5 w-5" />,
- status: 'connected',
- enabled: true,
- requiredFields: [
- {
- id: 'access_key_id',
- label: 'Access Key ID',
- type: 'text',
- placeholder: 'AKIAXXXXXXXXX',
- required: true,
- },
- {
- id: 'secret_access_key',
- label: 'Secret Access Key',
- type: 'secret',
- placeholder: '********',
- required: true,
- },
- {
- id: 'region',
- label: 'Default Region',
- type: 'select',
- options: [
- { label: 'US East 1', value: 'us-east-1' },
- { label: 'US West 2', value: 'us-west-2' },
- { label: 'EU West 1', value: 'eu-west-1' },
- ],
- required: true,
- value: 'us-east-1',
- },
- ],
- features: [
- 'EC2 instance discovery',
- 'S3 bucket management',
- 'Cost tracking',
- 'CloudWatch metrics',
- ],
- health: {
- status: 'healthy',
- lastChecked: new Date(),
- },
- },
- {
- id: 'azure',
- name: 'Microsoft Azure',
- description: 'Integrate with Azure cloud services',
- category: 'Cloud Providers',
- icon: <Cloud className="h-5 w-5" />,
- status: 'disconnected',
- enabled: false,
- requiredFields: [
- {
- id: 'tenant_id',
- label: 'Tenant ID',
- type: 'text',
- required: true,
- },
- {
- id: 'client_id',
- label: 'Client ID',
- type: 'text',
- required: true,
- },
- {
- id: 'client_secret',
- label: 'Client Secret',
- type: 'secret',
- required: true,
- },
- {
- id: 'subscription_id',
- label: 'Subscription ID',
- type: 'text',
- required: true,
- },
- ],
- features: [
- 'Resource discovery',
- 'Azure DevOps integration',
- 'Cost management',
- 'Azure Monitor metrics',
- ],
- },
-
- // Monitoring
- {
- id: 'datadog',
- name: 'Datadog',
- description: 'Application performance monitoring and analytics',
- category: 'Monitoring',
- icon: <Activity className="h-5 w-5" />,
- status: 'connected',
- enabled: true,
- requiredFields: [
- {
- id: 'api_key',
- label: 'API Key',
- type: 'secret',
- required: true,
- },
- {
- id: 'app_key',
- label: 'Application Key',
- type: 'secret',
- required: true,
- },
- {
- id: 'site',
- label: 'Datadog Site',
- type: 'select',
- options: [
- { label: 'US1 (datadoghq.com)', value: 'datadoghq.com' },
- { label: 'EU1 (datadoghq.eu)', value: 'datadoghq.eu' },
- { label: 'US3 (us3.datadoghq.com)', value: 'us3.datadoghq.com' },
- ],
- value: 'datadoghq.com',
- },
- ],
- features: [
- 'Real-time metrics',
- 'Log aggregation',
- 'APM traces',
- 'Custom dashboards',
- ],
- health: {
- status: 'healthy',
- lastChecked: new Date(),
- },
- },
- {
- id: 'prometheus',
- name: 'Prometheus',
- description: 'Open-source monitoring and alerting toolkit',
- category: 'Monitoring',
- icon: <Activity className="h-5 w-5" />,
- status: 'disconnected',
- enabled: false,
- requiredFields: [
- {
- id: 'url',
- label: 'Prometheus URL',
- type: 'text',
- placeholder: 'http://prometheus:9090',
- required: true,
- },
- ],
- optionalFields: [
- {
- id: 'auth_token',
- label: 'Authentication Token',
- type: 'secret',
- description: 'If authentication is enabled',
- },
- ],
- features: [
- 'Time-series metrics',
- 'PromQL queries',
- 'Alert manager integration',
- 'Service discovery',
- ],
- },
-
- // Communication
- {
- id: 'slack',
- name: 'Slack',
- description: 'Team communication and notifications',
- category: 'Communication',
- icon: <MessageSquare className="h-5 w-5" />,
- status: 'connected',
- enabled: true,
- requiredFields: [
- {
- id: 'bot_token',
- label: 'Bot User OAuth Token',
- type: 'secret',
- placeholder: 'xoxb-xxxxxxxxxxxx',
- required: true,
- },
- {
- id: 'signing_secret',
- label: 'Signing Secret',
- type: 'secret',
- required: true,
- },
- ],
- features: [
- 'Notifications',
- 'Slash commands',
- 'Interactive messages',
- 'Channel integration',
- ],
- health: {
- status: 'healthy',
- lastChecked: new Date(),
- },
- },
- {
- id: 'teams',
- name: 'Microsoft Teams',
- description: 'Collaborate with Microsoft Teams',
- category: 'Communication',
- icon: <MessageSquare className="h-5 w-5" />,
- status: 'disconnected',
- enabled: false,
- requiredFields: [
- {
- id: 'webhook_url',
- label: 'Incoming Webhook URL',
- type: 'text',
- placeholder: 'https://outlook.office.com/webhook/...',
- required: true,
- },
- ],
- features: [
- 'Channel notifications',
- 'Adaptive cards',
- 'Bot framework',
- 'Connectors',
- ],
- },
-];
-
-const INTEGRATION_CATEGORIES = [
- 'All',
- 'Version Control',
- 'Cloud Providers',
- 'Monitoring',
- 'Communication',
- 'Databases',
- 'Security',
+// Mock data (will be real later)
+const AVAILABLE_INTEGRATIONS = [
+  {
+    id: 'github',
+    name: 'GitHub',
+    description: 'Sync Repositories, Teams, and Actions',
+    icon: Github,
+    category: 'VCS',
+    color: 'bg-black text-white'
+  },
+  {
+    id: 'gitlab',
+    name: 'GitLab',
+    description: 'Pipeline status and Repo discovery',
+    icon: Gitlab,
+    category: 'VCS',
+    color: 'bg-orange-600 text-white'
+  },
+  {
+    id: 'kubernetes',
+    name: 'Kubernetes',
+    description: 'Multi-cluster visibility and health',
+    icon: Container,
+    category: 'Infrastructure',
+    color: 'bg-blue-600 text-white'
+  },
+  {
+    id: 'jira',
+    name: 'Jira',
+    description: 'Issue tracking and project management',
+    icon: LayoutGrid,
+    category: 'Project Mgmt',
+    color: 'bg-blue-500 text-white'
+  },
+  {
+    id: 'harness',
+    name: 'Harness',
+    description: 'CI/CD Pipelines and Feature Flags',
+    icon: ArrowRight,
+    category: 'CI/CD',
+    color: 'bg-blue-400 text-white'
+  },
+  {
+    id: 'argocd',
+    name: 'ArgoCD',
+    description: 'GitOps application status',
+    icon: Box,
+    category: 'CD',
+    color: 'bg-orange-500 text-white'
+  },
+  {
+    id: 'aws',
+    name: 'AWS',
+    description: 'Cloud resources and cost tracking',
+    icon: Cloud,
+    category: 'Cloud',
+    color: 'bg-yellow-500 text-black'
+  },
+  {
+    id: 'servicenow',
+    name: 'ServiceNow',
+    description: 'ITSM and Change Management',
+    icon: Database,
+    category: 'ITSM',
+    color: 'bg-green-700 text-white'
+  }
 ];
 
 export default function IntegrationsPage() {
- const [integrations, setIntegrations] = useState(INTEGRATIONS);
- const [selectedIntegration, setSelectedIntegration] = useState<Integration | null>(null);
- const [showConfigDialog, setShowConfigDialog] = useState(false);
- const [configValues, setConfigValues] = useState<Record<string, any>>({});
- const [isConfiguring, setIsConfiguring] = useState(false);
- const [configSteps, setConfigSteps] = useState<IntegrationStep[]>([]);
- const [selectedCategory, setSelectedCategory] = useState('All');
- const [searchQuery, setSearchQuery] = useState('');
+  const [filter, setFilter] = useState('All');
+  const [searchQuery, setSearchQuery] = useState('');
+  
+  const [activeIntegrations, setActiveIntegrations] = useState<any[]>([]);
+  const [selectedProvider, setSelectedProvider] = useState<any | null>(null);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isConnecting, setIsConnecting] = useState(false);
 
- const filteredIntegrations = integrations.filter(integration => {
- const matchesCategory = selectedCategory === 'All' || integration.category === selectedCategory;
- const matchesSearch = searchQuery === '' || 
- integration.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
- integration.description.toLowerCase().includes(searchQuery.toLowerCase());
- return matchesCategory && matchesSearch;
- });
+  // Load existing integrations
+  React.useEffect(() => {
+    fetch('/api/integrations')
+      .then(res => res.json())
+      .then(data => {
+        if (Array.isArray(data)) setActiveIntegrations(data);
+      })
+      .catch(err => console.error(err));
+  }, []);
 
- const handleConfigure = (integration: Integration) => {
- setSelectedIntegration(integration);
- setShowConfigDialog(true);
- 
- // Initialize config values
- const initialValues: Record<string, any> = {};
- [...integration.requiredFields, ...(integration.optionalFields || [])].forEach(field => {
- initialValues[field.id] = field.value || '';
- });
- setConfigValues(initialValues);
- };
+  const handleConnect = async (formData: any) => {
+    setIsConnecting(true);
+    try {
+      const res = await fetch('/api/integrations', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          provider: selectedProvider.id.toUpperCase(),
+          name: `${selectedProvider.name} Integration`,
+          credentials: formData
+        })
+      });
+      
+      if (res.ok) {
+        const newInt = await res.json();
+        setActiveIntegrations(prev => [newInt, ...prev]);
+        setIsModalOpen(false);
+      }
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsConnecting(false);
+    }
+  };
 
- const handleConnect = async () => {
- if (!selectedIntegration) return;
- 
- setIsConfiguring(true);
- 
- const steps: IntegrationStep[] = [
- { id: 'validate', name: 'Validating credentials', status: 'pending' },
- { id: 'test', name: 'Testing connection', status: 'pending' },
- { id: 'configure', name: 'Configuring integration', status: 'pending' },
- { id: 'sync', name: 'Initial synchronization', status: 'pending' },
- ];
- 
- setConfigSteps(steps);
- 
- // Simulate configuration process
- for (let i = 0; i < steps.length; i++) {
- setConfigSteps(prev => prev.map((step, index) => 
- index === i ? { ...step, status: 'running' } : step
- ));
- 
- await new Promise(resolve => setTimeout(resolve, 1500));
- 
- // Simulate occasional failures
- if (Math.random() > 0.9 && i === 1) {
- setConfigSteps(prev => prev.map((step, index) => 
- index === i ? { 
- ...step, 
- status: 'failed',
- message: 'Authentication failed. Please check your credentials.'
- } : step
- ));
- break;
- }
- 
- setConfigSteps(prev => prev.map((step, index) => 
- index === i ? { ...step, status: 'completed' } : step
- ));
- }
- 
- const allCompleted = configSteps.every(step => step.status === 'completed');
- if (allCompleted) {
- setIntegrations(prev => prev.map(integration => 
- integration.id === selectedIntegration.id 
- ? { ...integration, status: 'connected', enabled: true }
- : integration
- ));
- toast.success(`${selectedIntegration.name} connected successfully!`);
- setShowConfigDialog(false);
- }
- 
- setIsConfiguring(false);
- };
+  const openConnectModal = (integration: any) => {
+    setSelectedProvider(integration);
+    setIsModalOpen(true);
+  };
 
- const handleDisconnect = async (integration: Integration) => {
- setIntegrations(prev => prev.map(i => 
- i.id === integration.id 
- ? { ...i, status: 'disconnected', enabled: false }
- : i
- ));
- toast.success(`${integration.name} disconnected`);
- };
+  const isConnected = (id: string) => activeIntegrations.some(i => i.provider === id.toUpperCase());
 
- const handleToggle = async (integration: Integration) => {
- const newEnabled = !integration.enabled;
- setIntegrations(prev => prev.map(i => 
- i.id === integration.id ? { ...i, enabled: newEnabled } : i
- ));
- toast.success(`${integration.name} ${newEnabled ? 'enabled' : 'disabled'}`);
- };
+  const filteredIntegrations = AVAILABLE_INTEGRATIONS.filter(integration => {
+    const matchesCategory = filter === 'All' || integration.category === filter;
+    const matchesSearch = integration.name.toLowerCase().includes(searchQuery.toLowerCase());
+    return matchesCategory && matchesSearch;
+  });
 
- const testConnection = async (integration: Integration) => {
- toast.success(`Connection to ${integration.name} is healthy`);
- };
+  const categories = ['All', ...Array.from(new Set(AVAILABLE_INTEGRATIONS.map(i => i.category)))];
 
- const calculateProgress = () => {
- const completed = configSteps.filter(step => step.status === 'completed').length;
- return (completed / configSteps.length) * 100;
- };
+  return (
+    <div className="space-y-8 animate-in fade-in duration-500">
+      {/* Header */}
+      <div className="flex flex-col gap-2">
+        <h1 className="text-3xl font-bold tracking-tight text-gray-900 dark:text-gray-100">
+          Integration Hub
+        </h1>
+        <p className="text-gray-500 dark:text-gray-400 text-lg">
+          Connect your tools to automatically populate your catalog and dashboards.
+        </p>
+      </div>
 
- const getStatusColor = (status: Integration['status']) => {
- switch (status) {
- case 'connected':
- return 'success';
- case 'disconnected':
- return 'secondary';
- case 'error':
- return 'destructive';
- case 'configuring':
- return 'warning';
- default:
- return 'secondary';
- }
- };
+      {/* Filters */}
+      <div className="flex flex-col sm:flex-row gap-4 items-center justify-between">
+        <div className="flex items-center gap-2 overflow-x-auto pb-2 sm:pb-0 w-full sm:w-auto no-scrollbar">
+          {categories.map(cat => (
+            <button
+              key={cat}
+              onClick={() => setFilter(cat)}
+              className={`px-4 py-2 rounded-full text-sm font-medium transition-all ${
+                filter === cat
+                  ? 'bg-blue-600 text-white shadow-md'
+                  : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 border border-gray-200 dark:border-gray-700'
+              }`}
+            >
+              {cat}
+            </button>
+          ))}
+        </div>
+        
+        <div className="relative w-full sm:w-64">
+           <input
+            type="text"
+            placeholder="Search integrations..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="w-full px-4 py-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 focus:ring-2 focus:ring-blue-500 outline-none"
+           />
+        </div>
+      </div>
 
- const getHealthIcon = (health?: Integration['health']) => {
- if (!health) return null;
- 
- switch (health.status) {
- case 'healthy':
- return <CheckCircle className="h-4 w-4 text-green-600" />;
- case 'degraded':
- return <AlertCircle className="h-4 w-4 text-yellow-600" />;
- case 'unhealthy':
- return <XCircle className="h-4 w-4 text-red-600" />;
- }
- };
+      {/* Grid */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+        {filteredIntegrations.map((integration, idx) => (
+          <motion.div
+            key={integration.id}
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: idx * 0.05 }}
+            onClick={() => openConnectModal(integration)}
+            className={`group relative bg-white dark:bg-gray-800 rounded-2xl p-6 border transition-all duration-300 cursor-pointer ${
+              isConnected(integration.id) 
+                ? 'border-green-500 ring-1 ring-green-500 shadow-md' 
+                : 'border-gray-200 dark:border-gray-700 hover:shadow-xl hover:-translate-y-1'
+            }`}
+          >
+            {/* Icon Header */}
+            <div className="flex items-start justify-between mb-4">
+              <div className={`p-3 rounded-xl ${integration.color} shadow-lg`}>
+                <integration.icon className="w-8 h-8" />
+              </div>
+               {isConnected(integration.id) ? (
+                 <span className="flex items-center gap-1 px-2 py-1 text-xs font-bold bg-green-100 text-green-700 rounded-full">
+                   <CheckCircle className="w-3 h-3" /> Active
+                 </span>
+               ) : (
+                <span className="px-2 py-1 text-xs font-semibold bg-gray-100 dark:bg-gray-700 rounded-md text-gray-500 dark:text-gray-400">
+                  {integration.category}
+                </span>
+               )}
+            </div>
 
- return (
- <div className="space-y-6">
- <div>
- <h1 className="text-3xl font-bold">Integrations</h1>
- <p className="text-gray-600 mt-2">
- Connect Backstage to your tools and services with one click
- </p>
- </div>
+            {/* Content */}
+            <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-2">
+              {integration.name}
+            </h3>
+            <p className="text-gray-500 dark:text-gray-400 text-sm mb-6 line-clamp-2">
+              {integration.description}
+            </p>
 
- <Alert>
- <Zap className="h-4 w-4" />
- <AlertTitle>One-Click Integration</AlertTitle>
- <AlertDescription>
- Simply enter your credentials and we'll handle all the configuration. 
- No manual YAML editing or complex setup required.
- </AlertDescription>
- </Alert>
+            {/* Action Area */}
+            <div className="flex items-center justify-between mt-auto">
+               <span className="text-xs text-green-600 font-medium flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                 {isConnected(integration.id) ? 'Manage Configuration' : 'Click to Connect'}
+               </span>
+               <div className={`w-8 h-8 rounded-full flex items-center justify-center transition-colors ${
+                 isConnected(integration.id) ? 'bg-green-100 text-green-600' : 'bg-gray-100 dark:bg-gray-700 group-hover:bg-blue-600 group-hover:text-white'
+               }`}>
+                 <ArrowRight className="w-4 h-4" />
+               </div>
+            </div>
+          </motion.div>
+        ))}
+      </div>
 
- <Tabs value={selectedCategory} onValueChange={setSelectedCategory}>
- <TabsList>
- {INTEGRATION_CATEGORIES.map(category => (
- <TabsTrigger key={category} value={category}>
- {category}
- </TabsTrigger>
- ))}
- </TabsList>
-
- <div className="mt-6 grid gap-4 md:grid-cols-2 lg:grid-cols-3">
- {filteredIntegrations.map(integration => (
- <Card key={integration.id} className="hover:shadow-lg transition-shadow">
- <CardHeader>
- <div className="flex items-start justify-between">
- <div className="flex items-center gap-3">
- <div className="p-2 bg-gray-100 rounded-lg">
- {integration.icon}
- </div>
- <div>
- <CardTitle className="text-lg">{integration.name}</CardTitle>
- <div className="flex items-center gap-2 mt-1">
- <Badge variant={getStatusColor(integration.status)}>
- {integration.status}
- </Badge>
- {integration.health && getHealthIcon(integration.health)}
- </div>
- </div>
- </div>
- </div>
- </CardHeader>
- <CardContent className="space-y-4">
- <CardDescription>{integration.description}</CardDescription>
- 
- {integration.features && (
- <div className="space-y-1">
- {integration.features.slice(0, 3).map((feature, index) => (
- <div key={index} className="flex items-center gap-2 text-sm text-gray-600">
- <CheckCircle className="h-3 w-3 text-green-600" />
- {feature}
- </div>
- ))}
- </div>
- )}
- 
- <div className="flex gap-2">
- {integration.status === 'connected' ? (
- <>
- <Button
- size="sm"
- variant="outline"
- className="flex-1"
- onClick={() => handleToggle(integration)}
- >
- {integration.enabled ? (
- <>
- <Pause className="h-4 w-4 mr-2" />
- Disable
- </>
- ) : (
- <>
- <Play className="h-4 w-4 mr-2" />
- Enable
- </>
- )}
- </Button>
- <Button
- size="sm"
- variant="outline"
- onClick={() => testConnection(integration)}
- >
- <RefreshCw className="h-4 w-4" />
- </Button>
- <Button
- size="sm"
- variant="outline"
- onClick={() => handleConfigure(integration)}
- >
- <Settings className="h-4 w-4" />
- </Button>
- </>
- ) : (
- <Button
- size="sm"
- className="w-full"
- onClick={() => handleConfigure(integration)}
- >
- <Link className="h-4 w-4 mr-2" />
- Connect
- </Button>
- )}
- </div>
- 
- {integration.documentation && (
- <a
- href={integration.documentation}
- target="_blank"
- rel="noopener noreferrer"
- className="flex items-center gap-1 text-sm text-blue-600 hover:underline"
- >
- <ExternalLink className="h-3 w-3" />
- Documentation
- </a>
- )}
- </CardContent>
- </Card>
- ))}
- </div>
- </Tabs>
-
- {/* Configuration Dialog */}
- <Dialog open={showConfigDialog} onOpenChange={setShowConfigDialog}>
- <DialogContent className="max-w-2xl">
- <DialogHeader>
- <DialogTitle>Configure {selectedIntegration?.name}</DialogTitle>
- <DialogDescription>
- Enter your credentials to connect {selectedIntegration?.name} to Backstage
- </DialogDescription>
- </DialogHeader>
-
- {!isConfiguring ? (
- <div className="space-y-4">
- {/* Required Fields */}
- {selectedIntegration?.requiredFields.map(field => (
- <div key={field.id} className="space-y-2">
- <Label htmlFor={field.id}>
- {field.label}
- <span className="text-red-500 ml-1">*</span>
- </Label>
- {field.type === 'select' ? (
- <Select
- value={configValues[field.id] || field.value}
- onValueChange={(value) => setConfigValues(prev => ({
- ...prev,
- [field.id]: value
- }))}
- >
- <SelectTrigger>
- <SelectValue />
- </SelectTrigger>
- <SelectContent>
- {field.options?.map(option => (
- <SelectItem key={option.value} value={option.value}>
- {option.label}
- </SelectItem>
- ))}
- </SelectContent>
- </Select>
- ) : (
- <Input
- id={field.id}
- type={field.type === 'secret' ? 'password' : 'text'}
- placeholder={field.placeholder}
- value={configValues[field.id] || ''}
- onChange={(e) => setConfigValues(prev => ({
- ...prev,
- [field.id]: e.target.value
- }))}
- />
- )}
- {field.description && (
- <p className="text-sm text-gray-600">{field.description}</p>
- )}
- </div>
- ))}
- 
- {/* Optional Fields */}
- {selectedIntegration?.optionalFields && selectedIntegration.optionalFields.length > 0 && (
- <>
- <Separator className="my-4" />
- <h4 className="font-medium">Optional Settings</h4>
- {selectedIntegration.optionalFields.map(field => (
- <div key={field.id} className="space-y-2">
- <Label htmlFor={field.id}>{field.label}</Label>
- <Input
- id={field.id}
- type={field.type === 'secret' ? 'password' : 'text'}
- placeholder={field.placeholder}
- value={configValues[field.id] || ''}
- onChange={(e) => setConfigValues(prev => ({
- ...prev,
- [field.id]: e.target.value
- }))}
- />
- {field.description && (
- <p className="text-sm text-gray-600">{field.description}</p>
- )}
- </div>
- ))}
- </>
- )}
- </div>
- ) : (
- <div className="space-y-4">
- {/* Configuration Progress */}
- <div className="space-y-2">
- <div className="flex items-center justify-between">
- <span className="text-sm font-medium">Configuration Progress</span>
- <span className="text-sm text-gray-600">
- {Math.round(calculateProgress())}%
- </span>
- </div>
- <Progress value={calculateProgress()} />
- </div>
-
- {/* Configuration Steps */}
- <div className="space-y-2">
- {configSteps.map(step => (
- <div key={step.id} className="flex items-center gap-3 p-3 rounded-lg bg-gray-50">
- {step.status === 'completed' && (
- <CheckCircle className="h-5 w-5 text-green-600" />
- )}
- {step.status === 'running' && (
- <Loader2 className="h-5 w-5 text-blue-600 animate-spin" />
- )}
- {step.status === 'failed' && (
- <XCircle className="h-5 w-5 text-red-600" />
- )}
- {step.status === 'pending' && (
- <div className="h-5 w-5 rounded-full border-2 border-gray-300" />
- )}
- <div className="flex-1">
- <p className="text-sm font-medium">{step.name}</p>
- {step.message && (
- <p className="text-xs text-red-600 mt-1">{step.message}</p>
- )}
- </div>
- </div>
- ))}
- </div>
- </div>
- )}
-
- <DialogFooter>
- {!isConfiguring ? (
- <>
- <Button variant="outline" onClick={() => setShowConfigDialog(false)}>
- Cancel
- </Button>
- <Button 
- onClick={handleConnect}
- disabled={selectedIntegration?.requiredFields.some(
- field => !configValues[field.id]
- )}
- >
- <Link className="h-4 w-4 mr-2" />
- Connect
- </Button>
- </>
- ) : (
- <Button disabled>
- <Loader2 className="h-4 w-4 mr-2 animate-spin" />
- Configuring...
- </Button>
- )}
- </DialogFooter>
- </DialogContent>
- </Dialog>
- </div>
- );
+      {/* Connection Modal */}
+      {isModalOpen && selectedProvider && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+          <div className="bg-white dark:bg-gray-900 rounded-2xl w-full max-w-md p-6 shadow-2xl border border-gray-200 dark:border-gray-800">
+            <h2 className="text-2xl font-bold mb-4 flex items-center gap-2">
+              <selectedProvider.icon className="w-6 h-6" />
+              Connect {selectedProvider.name}
+            </h2>
+            <p className="text-sm text-gray-500 mb-6">
+              Enter your API Token or Credentials to enable <strong>{selectedProvider.name}</strong> integration.
+            </p>
+            
+            <form onSubmit={(e) => {
+              e.preventDefault();
+              const formData = new FormData(e.currentTarget);
+              handleConnect({ token: formData.get('token') });
+            }}>
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium mb-1">API Token / key</label>
+                  <input 
+                    name="token"
+                    type="password" 
+                    required
+                    className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-transparent focus:ring-2 focus:ring-blue-500 outline-none"
+                    placeholder={`e.g. ${selectedProvider.id}_pat_...`}
+                  />
+                </div>
+                
+                <div className="flex justify-end gap-3 pt-4">
+                  <button 
+                    type="button" 
+                    onClick={() => setIsModalOpen(false)}
+                    className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-100 rounded-lg"
+                  >
+                    Cancel
+                  </button>
+                  <button 
+                    type="submit"
+                    disabled={isConnecting}
+                    className="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg disabled:opacity-50"
+                  >
+                    {isConnecting ? 'Verifying...' : 'Connect & Sync'}
+                  </button>
+                </div>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }

@@ -1,90 +1,68 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { prisma } from '@/lib/prisma';
 
 export async function GET() {
- try {
- const backstageUrl = process.env.BACKSTAGE_API_URL || 'http://localhost:7007';
- 
- // Fetch entities from Backstage catalog
- try {
- const response = await fetch(`${backstageUrl}/api/catalog/entities`, {
- headers: {
- 'Accept': 'application/json',
- },
- });
+    try {
+        // 1. Total Services
+        const total = await prisma.service.count();
 
- if (response.ok) {
- const data = await response.json();
- const entities = data.items || [];
+        // 2. Count by Type (Kind)
+        const byType = await prisma.service.groupBy({
+            by: ['type'],
+            _count: {
+                type: true
+            }
+        });
 
- // Calculate statistics
- const stats = {
- total: entities.length,
- byKind: {},
- byLifecycle: {},
- healthScore: 0,
- complianceScore: 0,
- };
+        const byKind = byType.reduce((acc, curr) => {
+            acc[curr.type] = curr._count.type;
+            return acc;
+        }, {} as Record<string, number>);
 
- // Count by kind
- entities.forEach((entity: any) => {
- const kind = entity.kind || 'Unknown';
- stats.byKind[kind] = (stats.byKind[kind] || 0) + 1;
- 
- // Count by lifecycle
- const lifecycle = entity.spec?.lifecycle || 'unknown';
- stats.byLifecycle[lifecycle] = (stats.byLifecycle[lifecycle] || 0) + 1;
- });
+        // 3. Count by Lifecycle
+        const byLifecycleGroup = await prisma.service.groupBy({
+            by: ['lifecycle'],
+            _count: {
+                lifecycle: true
+            }
+        });
 
- // Calculate health score based on metadata completeness
- let healthPoints = 0;
- let compliancePoints = 0;
- 
- entities.forEach((entity: any) => {
- // Health checks
- if (entity.metadata?.description) healthPoints += 1;
- if (entity.metadata?.tags?.length > 0) healthPoints += 1;
- if (entity.spec?.owner) healthPoints += 1;
- if (entity.metadata?.links?.length > 0) healthPoints += 1;
- 
- // Compliance checks
- if (entity.spec?.lifecycle !== 'deprecated') compliancePoints += 1;
- if (entity.metadata?.annotations?.['backstage.io/managed-by-location']) compliancePoints += 1;
- });
+        const byLifecycle = byLifecycleGroup.reduce((acc, curr) => {
+            acc[curr.lifecycle] = curr._count.lifecycle;
+            return acc;
+        }, {} as Record<string, number>);
 
- stats.healthScore = Math.round((healthPoints / (entities.length * 4)) * 100) || 0;
- stats.complianceScore = Math.round((compliancePoints / (entities.length * 2)) * 100) || 0;
+        // 4. Calculate Health Score
+        // Simplified health score based on basic metadata
+        const allServices = await prisma.service.findMany({
+            take: 100 // limit sample size for perf
+        });
 
- return NextResponse.json(stats);
- }
- } catch (error) {
- console.log('Backstage not available, returning mock data');
- }
+        let healthPoints = 0;
+        const maxPoints = Math.max(1, allServices.length * 3);
 
- // Return mock data if Backstage is not available
- return NextResponse.json({
- total: 142,
- byKind: {
- Component: 78,
- API: 23,
- System: 12,
- Domain: 8,
- Resource: 15,
- Group: 6,
- },
- byLifecycle: {
- production: 67,
- experimental: 45,
- deprecated: 12,
- development: 18,
- },
- healthScore: 87,
- complianceScore: 92,
- });
- } catch (error) {
- console.error('Catalog stats error:', error);
- return NextResponse.json(
- { error: 'Failed to fetch catalog statistics' },
- { status: 500 }
- );
- }
+        allServices.forEach(svc => {
+            if (svc.description) healthPoints++;
+            if (svc.ownerId) healthPoints++;
+            if (svc.tags && svc.tags.length > 0) healthPoints++;
+        });
+
+        const healthScore = Math.round((healthPoints / maxPoints) * 100);
+        const complianceScore = 95; // Mock/Placeholder
+
+        return NextResponse.json({
+            total,
+            byKind,
+            byLifecycle,
+            healthScore,
+            complianceScore
+        });
+
+    } catch (error) {
+        console.error('Catalog stats error:', error);
+        return NextResponse.json(
+            { error: 'Failed to fetch catalog statistics' },
+            { status: 500 }
+        );
+    }
 }

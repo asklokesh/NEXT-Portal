@@ -2969,3 +2969,137 @@ enum EvaluationJobStatus {
   TIMEOUT
   RETRY
 }
+
+// ============================================================================
+// Scorecard System Models
+// ============================================================================
+
+model Scorecard {
+  id          String            @id @default(cuid())
+  name        String
+  description String?
+  owner       String
+  entityTypes String[]
+  checks      Json              // Store checks as JSON for flexibility
+  levels      Json?             // Store levels as JSON
+  schedule    Json?             // Store schedule config as JSON
+  metadata    Json?
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+  results     ScorecardResult[]
+  tenantId    String?           // For multi-tenancy support
+
+  @@map("scorecards")
+  @@index([tenantId])
+}
+
+model ScorecardResult {
+  id           String    @id @default(cuid())
+  scorecardId  String
+  entityRef    String
+  score        Float
+  maxScore     Float
+  percentage   Float
+  level        String?
+  checkResults Json      // Array of CheckResult
+  evaluatedAt  DateTime  @default(now())
+  trend        Json?
+  scorecard    Scorecard @relation(fields: [scorecardId], references: [id], onDelete: Cascade)
+  tenantId     String?   // For multi-tenancy support
+
+  @@map("scorecard_results")
+  @@index([scorecardId, entityRef])
+  @@index([entityRef])
+  @@index([tenantId])
+}
+
+// -- No-Code Integration Hub Models --
+
+model Integration {
+  id              String             @id @default(cuid())
+  tenantId        String             // Multi-tenant support
+  provider        IntegrationProvider // GITHUB, JIRA, KUBERNETES, etc.
+  name            String             // User-friendly name e.g. "Main GitHub"
+  description     String?
+  
+  // Configuration
+  config          Json               // Stores non-sensitive config (urls, project keys)
+  credentials     String?            // Encrypted credentials or token references
+  isShared        Boolean            @default(false) // Shared across tenant
+  
+  // Status
+  status          IntegrationStatus  @default(disconnected)
+  error           String?
+  lastSyncAt      DateTime?
+  nextSyncAt      DateTime?
+  
+  // Relations
+  catalogSyncs    CatalogSync[]      // Entities created from this integration
+  events          IntegrationEvent[] // Audit log of events
+  
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+
+  @@index([tenantId, provider])
+  @@map("integrations")
+}
+
+model CatalogSync {
+  id              String         @id @default(cuid())
+  integrationId   String
+  serviceId       String?        // Link to created Service (if any)
+  
+  entityRef       String         // External ID (e.g. repo URL, k8s UID)
+  syncstatus      SyncStatus     @default(PENDING)
+  lastSyncedAt    DateTime       @default(now())
+  errorMessage    String?
+  
+  integration     Integration    @relation(fields: [integrationId], references: [id], onDelete: Cascade)
+
+  @@index([integrationId, syncstatus])
+  @@map("catalog_syncs")
+}
+
+model IntegrationEvent {
+  id              String         @id @default(cuid())
+  integrationId   String
+  type            String         // SYNC_STARTED, SYNC_COMPLETED, ERROR
+  message         String?
+  metadata        Json?
+  timestamp       DateTime       @default(now())
+  
+  integration     Integration    @relation(fields: [integrationId], references: [id], onDelete: Cascade)
+
+  @@index([integrationId, timestamp])
+  @@map("integration_events")
+}
+
+enum IntegrationProvider {
+  GITHUB
+  GITLAB
+  BITBUCKET
+  JIRA
+  KUBERNETES
+  ARGOCD
+  HARNESS
+  DATADOG
+  PAGERDUTY
+  SERVICENOW
+  AZURE_DEVOPS
+  SLACK
+  CUSTOM
+}
+
+enum IntegrationStatus {
+  connected
+  disconnected
+  error
+  syncing
+}
+
+enum SyncStatus {
+  PENDING
+  SUCCESS
+  FAILED
+  SKIPPED
+}

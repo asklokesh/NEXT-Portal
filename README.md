@@ -1,228 +1,233 @@
-# NEXT Portal - Enterprise Internal Developer Portal
+# NEXT Portal
 
-<p align="center">
-  <img src="public/logo.svg" alt="NEXT Portal Logo" width="200" />
-</p>
+**Enterprise-Grade Internal Developer Platform**
 
-<p align="center">
-  <strong>A Modern, Enterprise-Grade Internal Developer Portal</strong>
-</p>
-
-<p align="center">
-  <a href="#features">Features</a> •
-  <a href="#quick-start">Quick Start</a> •
-  <a href="#installation">Installation</a> •
-  <a href="#configuration">Configuration</a> •
-  <a href="#architecture">Architecture</a> •
-  <a href="#contributing">Contributing</a>
-</p>
+A modern, AI-powered Internal Developer Platform (IDP) designed to compete with Spotify Backstage, Harness IDP, and Cortex. Built for Fortune 500 scale with enterprise security, multi-tenant architecture, and comprehensive developer experience optimization.
 
 ---
 
 ## Overview
 
-NEXT Portal is a comprehensive Internal Developer Portal (IDP) designed to compete with Spotify Portal (AiKA) and Harness IDP. Built on top of Backstage, it provides a seamless, no-code experience for developers and platform teams.
+NEXT Portal is a comprehensive Internal Developer Platform that provides:
 
-### Key Differentiators
-
-- **AI-Powered Knowledge Assistant** - Natural language interface for documentation, troubleshooting, and code assistance
-- **No-Code Portal Builder** - Drag-and-drop page creation without writing code
-- **DORA Metrics & Analytics** - Built-in DevOps performance tracking
-- **Enterprise Security** - RBAC, SSO/SAML, audit logging, and compliance
-- **Self-Service Actions** - One-click deployments, scaling, and operations
-- **Golden Path Templates** - Standardized service scaffolding
+- **Service Catalog** - Centralized discovery and management of all services, APIs, and resources
+- **Software Templates** - Golden path templates for rapid service scaffolding
+- **Integration Hub** - No-code integration with GitHub, GitLab, Jira, Kubernetes, and more
+- **Quality Scorecards** - Automated service quality scoring and compliance tracking
+- **Cost Management** - FinOps integration with cloud cost visibility and optimization
+- **Real-time Dashboard** - Customizable widgets with WebSocket-powered live updates
+- **Plugin Marketplace** - Extensible architecture with 1,000+ plugin support
 
 ---
 
-## Features
+## Tech Stack
 
-### Phase 1: AI Knowledge Assistant
-- Conversational AI for documentation Q&A
-- Code explanation and troubleshooting
-- RAG-based knowledge retrieval
-- Multi-model support (GPT, Claude)
-
-### Phase 2: No-Code Portal Builder
-- Drag-and-drop page editor
-- 50+ pre-built widgets
-- Theme customization
-- Responsive design tools
-
-### Phase 3: Service Health & Scorecards
-- Real-time health monitoring
-- Custom scorecards (security, reliability, documentation)
-- SLO/SLI tracking
-- Incident management integration
-
-### Phase 4: Golden Paths & Templates
-- Software templates with wizard UI
-- Multi-language support (Node.js, Python, Go, Java, etc.)
-- Template execution engine
-- GitHub/GitLab integration
-
-### Phase 5: Self-Service Actions
-- One-click deployments
-- Scale, restart, rollback operations
-- Approval workflows
-- Audit trail
-
-### Phase 6: Software Catalog Enhancements
-- 13 entity types (Component, API, Resource, etc.)
-- Dependency graph visualization
-- Faceted search
-- Entity lifecycle management
-
-### Phase 7: Data & Analytics
-- DORA metrics dashboard
-- Cost analytics and optimization
-- Developer productivity metrics
-- Custom dashboards
-
-### Phase 8: Enterprise Security
-- Role-Based Access Control (RBAC)
-- SSO/SAML/OIDC support
-- MFA enrollment
-- Comprehensive audit logging
-- SOC2, GDPR, HIPAA compliance
-
-### Phase 9: Developer Experience
-- CLI tool for portal operations
-- Auto-generated API documentation
-- SDK generation (TypeScript, Python)
-- IDE integrations
+| Category | Technology |
+|----------|-----------|
+| **Framework** | Next.js 15.4.4 (App Router) |
+| **Language** | TypeScript 5.3.3 |
+| **Database** | PostgreSQL 15 + Prisma ORM 6.12 |
+| **Cache** | Redis 7 / ioredis |
+| **UI** | Radix UI + Tailwind CSS 3.4 |
+| **State** | Zustand + React Query 5 |
+| **Real-time** | Socket.io 4.8 / WebSocket |
+| **API** | REST + GraphQL (Apollo) |
+| **Auth** | NextAuth 4.24 (OAuth/SAML/MFA) |
+| **Visualization** | D3.js + Recharts + React Force Graph |
+| **Observability** | OpenTelemetry + Prometheus + Jaeger |
+| **Cloud** | AWS / Azure / GCP SDKs |
+| **Container** | Docker + Kubernetes |
 
 ---
 
 ## Quick Start
 
-### One-Click Setup (Recommended)
+### Prerequisites
+
+- Node.js >= 18.17.0
+- Docker >= 24.0.0
+- PostgreSQL 15 (or use Docker)
+- Redis 7 (or use Docker)
+
+### One-Command Setup
 
 ```bash
-# Clone the repository
 git clone https://github.com/your-org/NEXT-Portal.git
 cd NEXT-Portal
-
-# Run the setup script
 ./scripts/setup.sh
 ```
 
-This will:
-1. Check prerequisites (Node.js, Docker)
-2. Install dependencies
-3. Set up the database
-4. Start all services
-5. Open the portal in your browser
-
-### Using Docker Compose
-
-```bash
-# Start everything with Docker
-docker-compose -f docker-compose.full.yml up -d
-
-# View logs
-docker-compose -f docker-compose.full.yml logs -f
-
-# Stop everything
-docker-compose -f docker-compose.full.yml down
-```
-
-### Manual Development Setup
+### Manual Setup
 
 ```bash
 # Install dependencies
 npm install
 
-# Set up environment variables
+# Configure environment
 cp .env.example .env.local
+# Edit .env.local with your settings
 
-# Set up database
-npm run db:setup
+# Start database services
+docker-compose up -d db redis
+
+# Run database migrations
+npm run db:migrate
+
+# Generate Prisma client
+npm run db:generate
 
 # Start development server
 npm run dev
 ```
 
-Access the portal at: **http://localhost:4400**
+Access the portal at **http://localhost:4400**
 
 ---
 
-## Installation
+## Project Structure
 
-### Prerequisites
-
-| Software | Version | Required |
-|----------|---------|----------|
-| Node.js | >= 18.17.0 | ✅ Yes |
-| npm | >= 9.0.0 | ✅ Yes |
-| Docker | >= 24.0.0 | ✅ Yes |
-| Docker Compose | >= 2.20.0 | ✅ Yes |
-| PostgreSQL | >= 15 | Optional (Docker included) |
-| Redis | >= 7 | Optional (Docker included) |
-
-### Step-by-Step Installation
-
-#### 1. Clone the Repository
-
-```bash
-git clone https://github.com/your-org/NEXT-Portal.git
-cd NEXT-Portal
+```
+NEXT-Portal/
+├── src/
+│   ├── app/                    # Next.js App Router pages & API routes
+│   │   ├── api/               # 80+ REST API endpoints
+│   │   ├── dashboard/         # Dashboard page
+│   │   ├── catalog/           # Service catalog
+│   │   ├── create/            # Service scaffolding
+│   │   ├── plugins/           # Plugin management
+│   │   ├── kubernetes/        # K8s cluster management
+│   │   └── ...
+│   ├── components/            # React components
+│   │   ├── ui/               # Base UI components (Radix)
+│   │   ├── dashboard/        # Dashboard widgets
+│   │   ├── catalog/          # Catalog components
+│   │   └── ...
+│   ├── services/             # Business logic services
+│   │   ├── integrations/     # Integration providers
+│   │   ├── scorecards/       # Quality scoring engine
+│   │   ├── cost/             # Cost management
+│   │   ├── scaffolder/       # Template execution
+│   │   └── analytics/        # DORA metrics
+│   ├── lib/                  # Shared utilities
+│   │   ├── auth/             # Authentication
+│   │   ├── prisma.ts         # Database client
+│   │   └── websocket/        # Real-time services
+│   └── middleware/           # Edge middleware
+├── prisma/
+│   ├── schema.prisma         # Database schema (50+ models)
+│   └── migrations/           # Database migrations
+├── infrastructure/           # Kubernetes & cloud configs
+├── scripts/                  # Utility scripts
+├── tests/                    # Test suites
+└── docs/                     # Documentation
 ```
 
-#### 2. Environment Configuration
+---
 
-```bash
-# Copy the example environment file
-cp .env.example .env.local
+## Core Features
 
-# Edit the configuration
-nano .env.local
+### Service Catalog
+
+- 7 entity types: Service, Website, Library, Documentation, Tool, Database, Infrastructure
+- Dependency graph visualization with D3/Force Graph
+- Automated health monitoring with configurable checks
+- Full-text search with advanced filtering
+- Lifecycle management (experimental, development, production, deprecated)
+
+### Software Templates (Scaffolder)
+
+- Parameterized templates with JSON Schema validation
+- Multi-step wizard UI
+- GitHub/GitLab repository creation
+- Automatic catalog registration
+- Job status tracking with real-time updates
+
+### Integration Hub
+
+Built-in providers:
+- **GitHub** - Repository sync, PR automation
+- **GitLab** - Project sync, CI/CD integration
+- **Jira** - Issue tracking, workflow automation
+- **Kubernetes** - Cluster management, workload discovery
+- **ArgoCD** - GitOps deployment tracking
+- **Datadog** - Monitoring integration
+- **Slack** - Notifications and alerts
+
+### Quality Scorecards
+
+- Configurable rule engine with weighted scoring
+- Levels: Gold, Silver, Bronze, Failing
+- Built-in checks: ownership, documentation, health, security, lifecycle
+- Historical trend tracking
+- Team-level aggregation
+
+### Dashboard & Analytics
+
+- Real-time WebSocket updates
+- Customizable widget grid (React Grid Layout)
+- Built-in widgets: Cluster Status, Cost Overview, Service Counts, Deployment Status
+- DORA metrics: Deployment Frequency, Lead Time, MTTR, Change Failure Rate
+- Executive dashboards with cost visibility
+
+### Multi-Tenant Architecture
+
+- Row-level security with tenant isolation
+- Edge middleware for tenant context
+- Per-tenant configuration and branding
+- Team-based access control (RBAC)
+
+---
+
+## API Reference
+
+### Authentication
+```
+POST /api/auth/login
+POST /api/auth/logout
+GET  /api/auth/me
 ```
 
-#### 3. Database Setup
-
-**Option A: Using Docker (Recommended)**
-```bash
-# Start PostgreSQL and Redis
-docker-compose up -d db redis
-
-# Run migrations
-npm run db:migrate
-
-# Seed sample data
-npm run db:seed
+### Service Catalog
+```
+GET    /api/catalog/entities
+POST   /api/catalog/entities
+GET    /api/catalog/entities/:id
+PUT    /api/catalog/entities/:id
+DELETE /api/catalog/entities/:id
+GET    /api/catalog/stats
 ```
 
-**Option B: Using Existing Database**
-```bash
-# Set your database URL in .env.local
-DATABASE_URL="postgresql://user:password@host:5432/database"
-
-# Run migrations
-npm run db:migrate
+### Templates & Scaffolding
+```
+GET  /api/templates
+POST /api/templates
+GET  /api/scaffolder/templates
+POST /api/scaffolder/jobs
+GET  /api/scaffolder/jobs/:id
 ```
 
-#### 4. Install Dependencies
-
-```bash
-# Install Node.js packages
-npm install
-
-# Generate Prisma client
-npm run db:generate
+### Integrations
+```
+GET  /api/integrations
+POST /api/integrations
+POST /api/integrations/:id/sync
 ```
 
-#### 5. Start the Application
-
-**Development Mode:**
-```bash
-npm run dev
+### Scorecards
+```
+GET  /api/scorecards
+POST /api/scorecards
+GET  /api/scorecards/:id
+POST /api/scorecards/:id/evaluate
 ```
 
-**Production Mode:**
-```bash
-npm run build
-npm run start
+### Dashboard
 ```
+GET  /api/dashboard/widget
+POST /api/dashboard/widget
+```
+
+Full API documentation available at `/api/docs` when running locally.
 
 ---
 
@@ -230,283 +235,100 @@ npm run start
 
 ### Environment Variables
 
-Create a `.env.local` file with the following variables:
-
 ```env
-# =============================================================================
-# Core Application Settings
-# =============================================================================
+# Core
 NODE_ENV=development
 PORT=4400
 NEXT_PUBLIC_APP_URL=http://localhost:4400
 
-# =============================================================================
-# Database Configuration
-# =============================================================================
+# Database
 DATABASE_URL=postgresql://postgres:postgres@localhost:5432/next_portal
-USE_MOCK_DB=false
-USE_MOCK_DATA=false
-
-# =============================================================================
-# Redis Configuration
-# =============================================================================
 REDIS_URL=redis://localhost:6379
-REDIS_PASSWORD=
-REDIS_TLS_ENABLED=false
 
-# =============================================================================
 # Authentication
-# =============================================================================
 NEXTAUTH_URL=http://localhost:4400
-NEXTAUTH_SECRET=your-super-secret-key-change-in-production
+NEXTAUTH_SECRET=your-secret-key
 
-# SSO/SAML Configuration (optional)
-SSO_ENABLED=false
-SAML_ENTITY_ID=
-SAML_SSO_URL=
-SAML_CERTIFICATE=
-
-# OAuth Providers (optional)
+# OAuth (optional)
 GITHUB_CLIENT_ID=
 GITHUB_CLIENT_SECRET=
-GITLAB_CLIENT_ID=
-GITLAB_CLIENT_SECRET=
 GOOGLE_CLIENT_ID=
 GOOGLE_CLIENT_SECRET=
 
-# =============================================================================
-# External Integrations
-# =============================================================================
-# Backstage
-BACKSTAGE_API_URL=http://localhost:7007
-BACKSTAGE_API_TOKEN=
-
-# Git Providers
+# Integrations (optional)
 GITHUB_TOKEN=
 GITLAB_TOKEN=
-BITBUCKET_TOKEN=
+JIRA_URL=
+JIRA_TOKEN=
 
-# CI/CD
-JENKINS_URL=
-JENKINS_USER=
-JENKINS_TOKEN=
-ARGOCD_URL=
-ARGOCD_TOKEN=
-
-# Monitoring
-PROMETHEUS_URL=http://localhost:9090
-GRAFANA_URL=http://localhost:3000
-GRAFANA_API_KEY=
-DATADOG_API_KEY=
-DATADOG_APP_KEY=
-
-# Incident Management
-PAGERDUTY_API_KEY=
-OPSGENIE_API_KEY=
-
-# =============================================================================
-# Cloud Providers
-# =============================================================================
-# AWS
+# Cloud Providers (optional)
 AWS_ACCESS_KEY_ID=
 AWS_SECRET_ACCESS_KEY=
-AWS_REGION=us-east-1
-
-# Azure
 AZURE_SUBSCRIPTION_ID=
-AZURE_TENANT_ID=
-AZURE_CLIENT_ID=
-AZURE_CLIENT_SECRET=
-
-# GCP
 GCP_PROJECT_ID=
-GCP_SERVICE_ACCOUNT_KEY=
 
-# =============================================================================
 # Feature Flags
-# =============================================================================
-ENABLE_AI_ASSISTANT=true
-ENABLE_PORTAL_BUILDER=true
-ENABLE_SCORECARDS=true
-ENABLE_TEMPLATES=true
-ENABLE_ACTIONS=true
-ENABLE_ANALYTICS=true
-ENABLE_ENTERPRISE=true
 ENABLE_WEBSOCKET=true
-ENABLE_NOTIFICATIONS=true
-ENABLE_AUDIT_LOGS=true
 ENABLE_COST_TRACKING=true
-
-# =============================================================================
-# AI Configuration
-# =============================================================================
-OPENAI_API_KEY=
-ANTHROPIC_API_KEY=
-AI_MODEL=gpt-4
-AI_MAX_TOKENS=4096
-
-# =============================================================================
-# Performance & Limits
-# =============================================================================
-API_RATE_LIMIT=100
-API_RATE_LIMIT_WINDOW=60
-MAX_UPLOAD_SIZE=10mb
-```
-
----
-
-## Architecture
-
-### High-Level Architecture
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                        Load Balancer                             │
-└─────────────────────────────┬───────────────────────────────────┘
-                              │
-┌─────────────────────────────▼───────────────────────────────────┐
-│                      NEXT Portal (Next.js)                       │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐              │
-│  │   Pages &   │  │     API     │  │  WebSocket  │              │
-│  │ Components  │  │   Routes    │  │   Server    │              │
-│  └─────────────┘  └─────────────┘  └─────────────┘              │
-└─────────────────────────────┬───────────────────────────────────┘
-                              │
-    ┌─────────────────────────┼─────────────────────────┐
-    │                         │                         │
-┌───▼───┐               ┌─────▼─────┐             ┌─────▼─────┐
-│ Redis │               │PostgreSQL │             │ Backstage │
-│ Cache │               │  Database │             │  Backend  │
-└───────┘               └───────────┘             └───────────┘
-```
-
-### Service Components
-
-| Service | Port | Description |
-|---------|------|-------------|
-| NEXT Portal | 4400 | Main application |
-| PostgreSQL | 5432 | Primary database |
-| Redis | 6379 | Caching & sessions |
-| WebSocket | 3001 | Real-time updates |
-| Backstage | 7007 | Catalog backend |
-| Prometheus | 9090 | Metrics collection |
-| Grafana | 3000 | Dashboards |
-
-### Directory Structure
-
-```
-NEXT-Portal/
-├── src/
-│   ├── app/                    # Next.js App Router
-│   │   ├── api/               # API routes
-│   │   ├── (dashboard)/       # Dashboard pages
-│   │   └── layout.tsx         # Root layout
-│   ├── components/            # React components
-│   │   ├── ui/               # Base UI components
-│   │   ├── catalog/          # Catalog components
-│   │   ├── templates/        # Template components
-│   │   ├── actions/          # Action components
-│   │   ├── analytics/        # Analytics dashboards
-│   │   └── portal-builder/   # Portal builder components
-│   ├── services/             # Business logic
-│   │   ├── ai/              # AI assistant service
-│   │   ├── catalog/         # Catalog service
-│   │   ├── templates/       # Template service
-│   │   ├── actions/         # Action service
-│   │   ├── analytics/       # Analytics service
-│   │   ├── enterprise/      # Enterprise features
-│   │   │   ├── rbac/       # Role-based access control
-│   │   │   ├── audit/      # Audit logging
-│   │   │   └── sso/        # SSO integration
-│   │   └── developer-experience/
-│   │       ├── cli/        # CLI tool
-│   │       └── docs/       # API documentation
-│   ├── lib/                  # Shared utilities
-│   └── hooks/                # React hooks
-├── prisma/                   # Database schema
-├── public/                   # Static assets
-├── scripts/                  # Setup & utility scripts
-├── tests/                    # Test suites
-├── docker-compose.yml        # Docker configuration
-└── package.json              # Project manifest
+ENABLE_ANALYTICS=true
 ```
 
 ---
 
 ## Development
 
-### Running Tests
+### Available Scripts
 
 ```bash
-# Unit tests
-npm run test
+# Development
+npm run dev              # Start dev server on port 4400
+npm run dev:all          # Start with WebSocket server
 
-# E2E tests
-npm run test:e2e
+# Building
+npm run build            # Production build
+npm run build:analyze    # Build with bundle analysis
+npm run start            # Start production server
 
-# Visual regression tests
-npm run test:visual
+# Database
+npm run db:migrate       # Run migrations
+npm run db:generate      # Generate Prisma client
+npm run db:seed          # Seed sample data
+npm run db:studio        # Open Prisma Studio
 
-# All tests
+# Testing
+npm run test             # Unit tests (Jest)
+npm run test:e2e         # E2E tests (Playwright)
+npm run test:visual      # Visual regression tests
+npm run test:coverage    # Coverage report
+
+# Code Quality
+npm run lint             # ESLint
+npm run lint:fix         # Auto-fix lint issues
+npm run typecheck        # TypeScript check
+npm run format           # Prettier format
+```
+
+### Testing
+
+```bash
+# Run all tests
 npm run test:all
-```
 
-### Code Quality
-
-```bash
-# Lint code
-npm run lint
-
-# Fix lint issues
-npm run lint:fix
-
-# Format code
-npm run format
-
-# Type check
-npm run typecheck
-```
-
-### Database Operations
-
-```bash
-# Generate Prisma client
-npm run db:generate
-
-# Run migrations
-npm run db:migrate
-
-# Seed database
-npm run db:seed
-
-# Reset database
-npm run db:reset
-
-# Open Prisma Studio
-npm run db:studio
-```
-
-### Building for Production
-
-```bash
-# Build the application
-npm run build
-
-# Build with bundle analysis
-npm run analyze
-
-# Start production server
-npm run start
+# Run specific test suites
+npm run test:e2e                    # End-to-end
+npm run test:visual                 # Visual regression
+npm run test:accessibility          # A11y tests
+npm run test:performance            # Load tests (k6)
 ```
 
 ---
 
 ## Deployment
 
-### Docker Deployment
+### Docker
 
 ```bash
-# Build Docker image
+# Build image
 docker build -t next-portal:latest .
 
 # Run container
@@ -516,81 +338,102 @@ docker run -p 4400:4400 \
   next-portal:latest
 ```
 
-### Kubernetes Deployment
+### Docker Compose
 
 ```bash
-# Apply Kubernetes manifests
+# Start all services
+docker-compose -f docker-compose.full.yml up -d
+
+# View logs
+docker-compose logs -f
+
+# Stop services
+docker-compose down
+```
+
+### Kubernetes
+
+```bash
+# Apply manifests
 kubectl apply -f infrastructure/kubernetes/
 
-# Check deployment status
+# Verify deployment
 kubectl get pods -n next-portal
 ```
 
-### Cloud Deployments
-
-- **AWS**: See `infrastructure/aws/README.md`
-- **Azure**: See `infrastructure/azure/README.md`
-- **GCP**: See `infrastructure/gcp/README.md`
+See `infrastructure/` directory for cloud-specific deployment guides (AWS, Azure, GCP).
 
 ---
 
-## CLI Tool
+## Architecture
 
-The NEXT Portal CLI provides command-line access to portal features:
-
-```bash
-# Install globally
-npm install -g @next-portal/cli
-
-# Login
-portal login
-
-# List catalog entities
-portal catalog list -k Component
-
-# Run a template
-portal template run nodejs-service
-
-# Execute an action
-portal action run deploy -e Component:default/api-gateway
-
-# View DORA metrics
-portal analytics dora --team platform-team
+```
+                    Load Balancer
+                         |
+            +------------+------------+
+            |                         |
+      Next.js App               WebSocket Server
+      (Port 4400)               (Port 3001)
+            |                         |
+            +------------+------------+
+                         |
+            +------------+------------+
+            |            |            |
+       PostgreSQL     Redis       Backstage
+       (Primary)     (Cache)      (Optional)
 ```
 
-See [CLI Documentation](docs/cli.md) for full reference.
+### Key Design Decisions
+
+- **App Router**: Next.js 15 with server components for optimal performance
+- **Edge Middleware**: Rate limiting, bot detection, tenant context at the edge
+- **Multi-layer Caching**: Redis for sessions/API responses, React Query for client-side
+- **Event-Driven**: WebSocket for real-time updates, avoiding polling
+- **Plugin Architecture**: Dynamic loading with security scanning and version management
 
 ---
 
-## API Documentation
+## Security
 
-API documentation is auto-generated and available at:
+- **Authentication**: OAuth 2.0, SAML/SSO, API Keys, MFA (TOTP)
+- **Authorization**: RBAC with team-based permissions
+- **Data Protection**: Encryption at rest and in transit (TLS 1.3)
+- **Multi-Tenancy**: Row-level security with tenant isolation
+- **Audit Logging**: Comprehensive activity tracking
+- **Compliance Ready**: SOC 2, GDPR, HIPAA frameworks
 
-- **Swagger UI**: http://localhost:4400/api/docs
-- **ReDoc**: http://localhost:4400/api/redoc
-- **OpenAPI Spec**: http://localhost:4400/api/openapi.json
+---
 
-### SDK Generation
+## Performance
 
-```bash
-# Generate TypeScript SDK
-portal sdk generate --language typescript --output ./sdk
+| Metric | Target |
+|--------|--------|
+| API Response (P50) | < 50ms |
+| API Response (P95) | < 200ms |
+| Concurrent Users | 10,000+ |
+| Uptime SLA | 99.99% |
+| Page Load (LCP) | < 2.5s |
 
-# Generate Python SDK
-portal sdk generate --language python --output ./sdk-python
-```
+---
+
+## Documentation
+
+Detailed documentation is available in the `docs/` directory:
+
+- [Technical Architecture](docs/TECHNICAL_ARCHITECTURE_DOCUMENTATION.md)
+- [API Reference](docs/API_REFERENCE.md)
+- [Database Schema](docs/DATABASE_SCHEMA_DOCUMENTATION.md)
+- [Deployment Guide](docs/PRODUCTION_DEPLOYMENT_GUIDE.md)
+- [Security Guide](docs/ENTERPRISE_SECURITY_AUDIT_REPORT.md)
+- [OAuth Setup](docs/OAUTH_SETUP_GUIDE.md)
 
 ---
 
 ## Contributing
 
-We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) for details.
-
-### Development Workflow
-
 1. Fork the repository
 2. Create a feature branch: `git checkout -b feature/my-feature`
-3. Make your changes
+3. Make changes and add tests
 4. Run tests: `npm run test`
 5. Commit: `git commit -m "feat: add my feature"`
 6. Push: `git push origin feature/my-feature`
@@ -603,28 +446,19 @@ We use [Conventional Commits](https://www.conventionalcommits.org/):
 - `feat:` New feature
 - `fix:` Bug fix
 - `docs:` Documentation
-- `style:` Formatting
 - `refactor:` Code refactoring
 - `test:` Tests
 - `chore:` Maintenance
 
 ---
 
-## Support
-
-- **Documentation**: [docs.next-portal.io](https://docs.next-portal.io)
-- **Issues**: [GitHub Issues](https://github.com/your-org/NEXT-Portal/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/your-org/NEXT-Portal/discussions)
-- **Slack**: [#next-portal](https://your-org.slack.com/channels/next-portal)
-
----
-
 ## License
 
-This project is licensed under the Apache 2.0 License - see the [LICENSE](LICENSE) file for details.
+Apache 2.0 License - see [LICENSE](LICENSE) for details.
 
 ---
 
-<p align="center">
-  Made with ❤️ by the Platform Team
-</p>
+## Support
+
+- [GitHub Issues](https://github.com/your-org/NEXT-Portal/issues)
+- [Documentation](docs/)

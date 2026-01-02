@@ -1,10 +1,10 @@
 /**
  * Software Templates API
- * List and create templates
+ * List and create templates via ScaffoldOrchestrator
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getTemplateEngine } from '@/services/templates';
+import { getScaffoldOrchestrator } from '@/services/scaffolding/scaffold-orchestrator';
 
 export const dynamic = 'force-dynamic';
 
@@ -15,21 +15,25 @@ export const dynamic = 'force-dynamic';
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
-    const engine = getTemplateEngine();
+    const orchestrator = getScaffoldOrchestrator();
 
-    const options = {
+    const filters = {
       category: searchParams.get('category') || undefined,
-      type: searchParams.get('type') || undefined,
-      owner: searchParams.get('owner') || undefined,
-      status: searchParams.get('status') || undefined,
+      technology: searchParams.get('technology') || undefined,
       search: searchParams.get('search') || undefined,
-      goldenPath: searchParams.get('goldenPath') === 'true' ? true : undefined,
-      tags: searchParams.get('tags')?.split(',') || undefined,
     };
 
-    const result = await engine.listTemplates(options as Parameters<typeof engine.listTemplates>[0]);
+    const templates = await orchestrator.getTemplates(filters);
 
-    return NextResponse.json(result);
+    return NextResponse.json({
+      templates,
+      total: templates.length,
+      pagination: {
+        limit: 50,
+        offset: 0,
+        hasMore: false
+      }
+    });
   } catch (error) {
     console.error('Failed to list templates:', error);
     return NextResponse.json(
@@ -46,23 +50,48 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const engine = getTemplateEngine();
+    const orchestrator = getScaffoldOrchestrator();
 
-    // Validate required fields
-    if (!body.name || !body.title || !body.steps) {
-      return NextResponse.json(
-        { error: 'Name, title, and steps are required' },
-        { status: 400 }
-      );
+    // Basic validation
+    if (!body.id || !body.name) {
+      // If ID is missing but name exists, generate ID
+      if (body.name && !body.id) {
+        body.id = body.name.toLowerCase().replace(/[^a-z0-9-]/g, '-');
+      } else if (!body.name) {
+        return NextResponse.json(
+          { error: 'Name is required' },
+          { status: 400 }
+        );
+      }
     }
 
-    const template = await engine.createTemplate(body);
+    // Add default fields if missing to match ServiceTemplate interface
+    const newTemplate = {
+      ...body,
+      description: body.description || '',
+      version: body.version || '1.0.0',
+      technology: body.technology || 'general',
+      category: body.category || 'service',
+      parameters: body.parameters || [],
+      files: body.files || [],
+      hooks: body.hooks || [],
+      dependencies: body.dependencies || [],
+      metadata: body.metadata || {
+        author: 'user',
+        created: new Date().toISOString(),
+        updated: new Date().toISOString(),
+        tags: [],
+        documentation: ''
+      }
+    };
 
-    return NextResponse.json(template, { status: 201 });
+    await orchestrator.addTemplate(newTemplate);
+
+    return NextResponse.json(newTemplate, { status: 201 });
   } catch (error) {
     console.error('Failed to create template:', error);
     return NextResponse.json(
-      { error: 'Failed to create template' },
+      { error: 'Failed to create template: ' + String(error) },
       { status: 500 }
     );
   }
