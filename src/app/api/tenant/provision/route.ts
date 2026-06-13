@@ -3,12 +3,17 @@
  * Handles tenant creation, lifecycle management, and administrative operations
  */
 
-import { NextRequest, NextResponse } from 'next/server';
-import TenantProvisioningService, { TenantProvisioningRequest } from '@/services/tenant/TenantProvisioningService';
-import { validateRequestBody } from '@/lib/security/input-validation';
-import { checkSystemPermissions } from '@/lib/permissions/SystemPermissions';
-import { getTenantContext } from '@/lib/tenancy/TenantContext';
+import { Prisma } from '@prisma/client';
+import { NextResponse } from 'next/server';
+
 import { createAuditLog } from '@/lib/audit/AuditService';
+import { checkSystemPermissions } from '@/lib/permissions/SystemPermissions';
+import { validateRequestBody } from '@/lib/security/input-validation';
+import { getTenantContext } from '@/lib/tenancy/TenantContext';
+import { TenantProvisioningService } from '@/services/tenant/TenantProvisioningService';
+
+import type { TenantProvisioningRequest } from '@/services/tenant/TenantProvisioningService';
+import type { NextRequest } from 'next/server';
 
 /**
  * POST - Create new tenant
@@ -16,38 +21,51 @@ import { createAuditLog } from '@/lib/audit/AuditService';
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    
+
     // Validate request body
     const validation = validateRequestBody(body, {
       organizationName: { type: 'text', required: true, minLength: 2, maxLength: 100 },
       adminEmail: { type: 'email', required: true },
       adminName: { type: 'text', required: true, minLength: 1, maxLength: 100 },
-      tier: { type: 'text', required: true, enum: ['FREE', 'STARTER', 'PROFESSIONAL', 'ENTERPRISE'] },
+      tier: {
+        type: 'text',
+        required: true,
+        enum: ['FREE', 'STARTER', 'PROFESSIONAL', 'ENTERPRISE'],
+      },
       customDomain: { type: 'text', required: false },
       initialConfiguration: { type: 'json', required: false },
       features: { type: 'array', required: false },
-      metadata: { type: 'json', required: false }
+      metadata: { type: 'json', required: false },
     });
 
     if (!validation.valid) {
-      return NextResponse.json({
-        success: false,
-        error: 'Invalid request body',
-        details: validation.errors
-      }, { status: 400 });
+      return NextResponse.json(
+        {
+          success: false,
+          error: 'Invalid request body',
+          details: validation.errors,
+        },
+        { status: 400 },
+      );
     }
 
     // Check system permissions for tenant creation
-    const hasPermission = await checkSystemPermissions(request, ['system:tenant:create', 'admin:all']);
+    const hasPermission = await checkSystemPermissions(request, [
+      'system:tenant:create',
+      'admin:all',
+    ]);
     if (!hasPermission) {
-      return NextResponse.json({
-        success: false,
-        error: 'Insufficient permissions for tenant creation'
-      }, { status: 403 });
+      return NextResponse.json(
+        {
+          success: false,
+          error: 'Insufficient permissions for tenant creation',
+        },
+        { status: 403 },
+      );
     }
 
     const provisioningService = new TenantProvisioningService();
-    
+
     // Create provisioning request
     const provisioningRequest: TenantProvisioningRequest = {
       organizationName: validation.sanitized.organizationName,
@@ -57,18 +75,21 @@ export async function POST(request: NextRequest) {
       customDomain: validation.sanitized.customDomain,
       initialConfiguration: validation.sanitized.initialConfiguration,
       features: validation.sanitized.features || [],
-      metadata: validation.sanitized.metadata || {}
+      metadata: validation.sanitized.metadata || {},
     };
 
     // Provision tenant
     const result = await provisioningService.provisionTenant(provisioningRequest);
 
     if (!result.success) {
-      return NextResponse.json({
-        success: false,
-        error: result.error,
-        validationErrors: result.validationErrors
-      }, { status: 400 });
+      return NextResponse.json(
+        {
+          success: false,
+          error: result.error,
+          validationErrors: result.validationErrors,
+        },
+        { status: 400 },
+      );
     }
 
     // Create audit log
@@ -80,8 +101,8 @@ export async function POST(request: NextRequest) {
         organizationName: provisioningRequest.organizationName,
         adminEmail: provisioningRequest.adminEmail,
         tier: provisioningRequest.tier,
-        setupUrl: result.setupUrl
-      }
+        setupUrl: result.setupUrl,
+      },
     });
 
     // Don't expose sensitive credentials in response
@@ -93,7 +114,7 @@ export async function POST(request: NextRequest) {
         slug: result.tenant!.slug,
         tier: result.tenant!.tier,
         status: result.tenant!.status,
-        customDomain: result.tenant!.customDomain
+        customDomain: result.tenant!.customDomain,
       },
       setupUrl: result.setupUrl,
       credentials: {
@@ -101,21 +122,23 @@ export async function POST(request: NextRequest) {
         adminUserId: result.credentials!.adminUserId,
         // Don't expose actual passwords/keys in API response
         hasInitialPassword: !!result.credentials!.initialPassword,
-        apiKeyCount: result.credentials!.apiKeys.length
-      }
+        apiKeyCount: result.credentials!.apiKeys.length,
+      },
     };
 
     await provisioningService.disconnect();
-    
-    return NextResponse.json(response, { status: 201 });
 
+    return NextResponse.json(response, { status: 201 });
   } catch (error) {
     console.error('Tenant provisioning API error:', error);
-    
-    return NextResponse.json({
-      success: false,
-      error: 'Internal server error during tenant provisioning'
-    }, { status: 500 });
+
+    return NextResponse.json(
+      {
+        success: false,
+        error: 'Internal server error during tenant provisioning',
+      },
+      { status: 500 },
+    );
   }
 }
 
@@ -125,33 +148,50 @@ export async function POST(request: NextRequest) {
 export async function PATCH(request: NextRequest) {
   try {
     const body = await request.json();
-    
+
     // Validate request body
     const validation = validateRequestBody(body, {
       tenantId: { type: 'uuid', required: true },
-      operation: { type: 'text', required: true, enum: ['suspend', 'reactivate', 'upgrade', 'downgrade', 'archive'] },
+      operation: {
+        type: 'text',
+        required: true,
+        enum: ['suspend', 'reactivate', 'upgrade', 'downgrade', 'archive'],
+      },
       reason: { type: 'text', required: false },
-      newTier: { type: 'text', required: false, enum: ['FREE', 'STARTER', 'PROFESSIONAL', 'ENTERPRISE'] },
-      metadata: { type: 'json', required: false }
+      newTier: {
+        type: 'text',
+        required: false,
+        enum: ['FREE', 'STARTER', 'PROFESSIONAL', 'ENTERPRISE'],
+      },
+      metadata: { type: 'json', required: false },
     });
 
     if (!validation.valid) {
-      return NextResponse.json({
-        success: false,
-        error: 'Invalid request body',
-        details: validation.errors
-      }, { status: 400 });
+      return NextResponse.json(
+        {
+          success: false,
+          error: 'Invalid request body',
+          details: validation.errors,
+        },
+        { status: 400 },
+      );
     }
 
     const { tenantId, operation, reason, newTier, metadata } = validation.sanitized;
 
     // Check permissions
-    const hasPermission = await checkSystemPermissions(request, [`system:tenant:${operation}`, 'admin:all']);
+    const hasPermission = await checkSystemPermissions(request, [
+      `system:tenant:${operation}`,
+      'admin:all',
+    ]);
     if (!hasPermission) {
-      return NextResponse.json({
-        success: false,
-        error: `Insufficient permissions for tenant ${operation}`
-      }, { status: 403 });
+      return NextResponse.json(
+        {
+          success: false,
+          error: `Insufficient permissions for tenant ${operation}`,
+        },
+        { status: 403 },
+      );
     }
 
     const provisioningService = new TenantProvisioningService();
@@ -161,10 +201,13 @@ export async function PATCH(request: NextRequest) {
     switch (operation) {
       case 'suspend':
         if (!reason) {
-          return NextResponse.json({
-            success: false,
-            error: 'Reason is required for tenant suspension'
-          }, { status: 400 });
+          return NextResponse.json(
+            {
+              success: false,
+              error: 'Reason is required for tenant suspension',
+            },
+            { status: 400 },
+          );
         }
         result = await provisioningService.suspendTenant(tenantId, reason, currentUser);
         break;
@@ -175,10 +218,13 @@ export async function PATCH(request: NextRequest) {
 
       case 'upgrade':
         if (!newTier) {
-          return NextResponse.json({
-            success: false,
-            error: 'New tier is required for tenant upgrade'
-          }, { status: 400 });
+          return NextResponse.json(
+            {
+              success: false,
+              error: 'New tier is required for tenant upgrade',
+            },
+            { status: 400 },
+          );
         }
         result = await provisioningService.upgradeTenantTier(tenantId, newTier, currentUser);
         break;
@@ -188,17 +234,23 @@ export async function PATCH(request: NextRequest) {
         break;
 
       default:
-        return NextResponse.json({
-          success: false,
-          error: `Unsupported operation: ${operation}`
-        }, { status: 400 });
+        return NextResponse.json(
+          {
+            success: false,
+            error: `Unsupported operation: ${operation}`,
+          },
+          { status: 400 },
+        );
     }
 
     if (!result.success) {
-      return NextResponse.json({
-        success: false,
-        error: result.error
-      }, { status: 400 });
+      return NextResponse.json(
+        {
+          success: false,
+          error: result.error,
+        },
+        { status: 400 },
+      );
     }
 
     // Create audit log
@@ -210,8 +262,8 @@ export async function PATCH(request: NextRequest) {
         operation,
         reason,
         newTier,
-        ...metadata
-      }
+        ...metadata,
+      },
     });
 
     await provisioningService.disconnect();
@@ -219,16 +271,18 @@ export async function PATCH(request: NextRequest) {
     return NextResponse.json({
       success: true,
       operation,
-      tenantId
+      tenantId,
     });
-
   } catch (error) {
     console.error('Tenant lifecycle API error:', error);
-    
-    return NextResponse.json({
-      success: false,
-      error: 'Internal server error during tenant lifecycle operation'
-    }, { status: 500 });
+
+    return NextResponse.json(
+      {
+        success: false,
+        error: 'Internal server error during tenant lifecycle operation',
+      },
+      { status: 500 },
+    );
   }
 }
 
@@ -243,31 +297,46 @@ export async function GET(request: NextRequest) {
     const includeStats = searchParams.get('includeStats') === 'true';
 
     if (!tenantId) {
-      return NextResponse.json({
-        success: false,
-        error: 'tenantId parameter is required'
-      }, { status: 400 });
+      return NextResponse.json(
+        {
+          success: false,
+          error: 'tenantId parameter is required',
+        },
+        { status: 400 },
+      );
     }
 
     // Validate tenant ID format
-    const validation = validateRequestBody({ tenantId }, {
-      tenantId: { type: 'uuid', required: true }
-    });
+    const validation = validateRequestBody(
+      { tenantId },
+      {
+        tenantId: { type: 'uuid', required: true },
+      },
+    );
 
     if (!validation.valid) {
-      return NextResponse.json({
-        success: false,
-        error: 'Invalid tenant ID format'
-      }, { status: 400 });
+      return NextResponse.json(
+        {
+          success: false,
+          error: 'Invalid tenant ID format',
+        },
+        { status: 400 },
+      );
     }
 
     // Check permissions
-    const hasPermission = await checkSystemPermissions(request, ['system:tenant:read', 'admin:all']);
+    const hasPermission = await checkSystemPermissions(request, [
+      'system:tenant:read',
+      'admin:all',
+    ]);
     if (!hasPermission) {
-      return NextResponse.json({
-        success: false,
-        error: 'Insufficient permissions for tenant information access'
-      }, { status: 403 });
+      return NextResponse.json(
+        {
+          success: false,
+          error: 'Insufficient permissions for tenant information access',
+        },
+        { status: 403 },
+      );
     }
 
     const provisioningService = new TenantProvisioningService();
@@ -279,7 +348,7 @@ export async function GET(request: NextRequest) {
       include: {
         configuration: {
           where: { isActive: true },
-          take: 1
+          take: 1,
         },
         users: {
           select: {
@@ -288,17 +357,20 @@ export async function GET(request: NextRequest) {
             name: true,
             role: true,
             isActive: true,
-            createdAt: true
-          }
-        }
-      }
+            createdAt: true,
+          },
+        },
+      },
     });
 
     if (!tenant) {
-      return NextResponse.json({
-        success: false,
-        error: 'Tenant not found'
-      }, { status: 404 });
+      return NextResponse.json(
+        {
+          success: false,
+          error: 'Tenant not found',
+        },
+        { status: 404 },
+      );
     }
 
     const response: any = {
@@ -316,8 +388,8 @@ export async function GET(request: NextRequest) {
         suspendedAt: tenant.suspendedAt,
         archivedAt: tenant.archivedAt,
         users: tenant.users,
-        configuration: tenant.configuration[0] || null
-      }
+        configuration: tenant.configuration[0] || null,
+      },
     };
 
     // Include lifecycle events if requested
@@ -325,7 +397,7 @@ export async function GET(request: NextRequest) {
       const events = await systemDb.findMany('tenantLifecycleEvent', {
         where: { tenantId },
         orderBy: { timestamp: 'desc' },
-        take: 50
+        take: 50,
       });
       response.events = events;
     }
@@ -339,14 +411,16 @@ export async function GET(request: NextRequest) {
     await provisioningService.disconnect();
 
     return NextResponse.json(response);
-
   } catch (error) {
     console.error('Tenant information API error:', error);
-    
-    return NextResponse.json({
-      success: false,
-      error: 'Internal server error retrieving tenant information'
-    }, { status: 500 });
+
+    return NextResponse.json(
+      {
+        success: false,
+        error: 'Internal server error retrieving tenant information',
+      },
+      { status: 500 },
+    );
   }
 }
 
@@ -356,48 +430,63 @@ export async function GET(request: NextRequest) {
 export async function DELETE(request: NextRequest) {
   try {
     const body = await request.json();
-    
+
     // Validate request body with strict confirmation
     const validation = validateRequestBody(body, {
       tenantId: { type: 'uuid', required: true },
       confirmationText: { type: 'text', required: true },
       reason: { type: 'text', required: true, minLength: 10 },
-      systemKey: { type: 'text', required: true }
+      systemKey: { type: 'text', required: true },
     });
 
     if (!validation.valid) {
-      return NextResponse.json({
-        success: false,
-        error: 'Invalid request body',
-        details: validation.errors
-      }, { status: 400 });
+      return NextResponse.json(
+        {
+          success: false,
+          error: 'Invalid request body',
+          details: validation.errors,
+        },
+        { status: 400 },
+      );
     }
 
     const { tenantId, confirmationText, reason, systemKey } = validation.sanitized;
 
     // Verify system key
     if (systemKey !== process.env.SYSTEM_API_KEY) {
-      return NextResponse.json({
-        success: false,
-        error: 'Invalid system key'
-      }, { status: 403 });
+      return NextResponse.json(
+        {
+          success: false,
+          error: 'Invalid system key',
+        },
+        { status: 403 },
+      );
     }
 
     // Verify confirmation text
     if (confirmationText !== 'PERMANENTLY DELETE TENANT DATA') {
-      return NextResponse.json({
-        success: false,
-        error: 'Invalid confirmation text'
-      }, { status: 400 });
+      return NextResponse.json(
+        {
+          success: false,
+          error: 'Invalid confirmation text',
+        },
+        { status: 400 },
+      );
     }
 
     // Check ultra-high permissions for deletion
-    const hasPermission = await checkSystemPermissions(request, ['system:tenant:delete', 'super-admin:all']);
+    const hasPermission = await checkSystemPermissions(request, [
+      'system:tenant:delete',
+      'super-admin:all',
+    ]);
     if (!hasPermission) {
-      return NextResponse.json({
-        success: false,
-        error: 'Insufficient permissions for tenant deletion'
-      }, { status: 403 });
+      return NextResponse.json(
+        {
+          success: false,
+          error: 'Insufficient permissions for tenant deletion',
+        },
+        { status: 403 },
+      );
     }
 
     const provisioningService = new TenantProvisioningService();
@@ -411,21 +500,23 @@ export async function DELETE(request: NextRequest) {
         name: true,
         slug: true,
         tier: true,
-        adminEmail: true
-      }
+        adminEmail: true,
+      },
     });
 
     if (!tenant) {
-      return NextResponse.json({
-        success: false,
-        error: 'Tenant not found'
-      }, { status: 404 });
+      return NextResponse.json(
+        {
+          success: false,
+          error: 'Tenant not found',
+        },
+        { status: 404 },
+      );
     }
 
     // Execute tenant data cleanup using the database function
     const cleanupResults = await systemDb.executeRaw(
-      'SELECT * FROM cleanup_tenant_data($1, $2)',
-      [tenantId, 'CONFIRM_DELETE_TENANT_DATA']
+      Prisma.sql`SELECT * FROM cleanup_tenant_data(${tenantId}, ${'CONFIRM_DELETE_TENANT_DATA'})`,
     );
 
     // Create final audit log before deletion
@@ -439,8 +530,8 @@ export async function DELETE(request: NextRequest) {
         adminEmail: tenant.adminEmail,
         reason,
         cleanupResults,
-        deletedAt: new Date().toISOString()
-      }
+        deletedAt: new Date().toISOString(),
+      },
     });
 
     await provisioningService.disconnect();
@@ -449,28 +540,30 @@ export async function DELETE(request: NextRequest) {
       success: true,
       message: 'Tenant deleted successfully',
       tenantId,
-      cleanupResults
+      cleanupResults,
     });
-
   } catch (error) {
     console.error('Tenant deletion API error:', error);
-    
-    return NextResponse.json({
-      success: false,
-      error: 'Internal server error during tenant deletion'
-    }, { status: 500 });
+
+    return NextResponse.json(
+      {
+        success: false,
+        error: 'Internal server error during tenant deletion',
+      },
+      { status: 500 },
+    );
   }
 }
 
 // OPTIONS handler for CORS
-export async function OPTIONS(request: NextRequest) {
+export async function OPTIONS(_request: NextRequest) {
   return new NextResponse(null, {
     status: 200,
     headers: {
       'Access-Control-Allow-Origin': process.env.ALLOWED_ORIGINS || '*',
       'Access-Control-Allow-Methods': 'GET, POST, PATCH, DELETE, OPTIONS',
       'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-System-Key',
-      'Access-Control-Allow-Credentials': 'true'
-    }
+      'Access-Control-Allow-Credentials': 'true',
+    },
   });
 }

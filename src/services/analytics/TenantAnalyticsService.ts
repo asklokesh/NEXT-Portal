@@ -3,11 +3,12 @@
  * Comprehensive analytics and usage tracking for multi-tenant SaaS platform
  */
 
-import { PrismaClient } from '@prisma/client';
+import { Prisma } from '@prisma/client';
+
 import { TenantAwareDatabase } from '@/lib/database/TenantAwareDatabase';
-import { createAuditLog } from '@/lib/audit/AuditService';
-import { getTenantContext, TenantContext } from '@/lib/tenancy/TenantContext';
-import { NextRequest } from 'next/server';
+import { getTenantContext } from '@/lib/tenancy/TenantContext';
+
+import type { NextRequest } from 'next/server';
 
 export interface UsageMetric {
   id: string;
@@ -189,7 +190,7 @@ export class TenantAnalyticsService {
       tenantId: tenantContext.tenant.id,
       userId: tenantContext.user?.id,
       userPermissions: tenantContext.permissions,
-      isSystemOperation: false
+      isSystemOperation: false,
     };
 
     this.tenantDb.setTenantContext(dbContext);
@@ -208,7 +209,7 @@ export class TenantAnalyticsService {
     value: number,
     unit: string = 'count',
     metadata?: Record<string, any>,
-    aggregationPeriod: 'HOURLY' | 'DAILY' | 'WEEKLY' | 'MONTHLY' = 'HOURLY'
+    aggregationPeriod: 'HOURLY' | 'DAILY' | 'WEEKLY' | 'MONTHLY' = 'HOURLY',
   ): Promise<void> {
     try {
       // Map MetricType to ResourceType if possible, or store custom
@@ -223,14 +224,13 @@ export class TenantAnalyticsService {
           metadata: {
             ...metadata,
             unit,
-            aggregationPeriod
-          }
-        }
+            aggregationPeriod,
+          },
+        },
       });
 
       // Update real-time aggregations (skipped for simplicity/schema compatibility)
       // await this.updateRealTimeAggregations(tenantId, metricType, value);
-
     } catch (error) {
       console.error('Failed to record metric:', error);
     }
@@ -243,7 +243,7 @@ export class TenantAnalyticsService {
   private async getMetricSum(
     tenantId: string,
     metricType: MetricType,
-    timeRange: { start: Date; end: Date }
+    timeRange: { start: Date; end: Date },
   ): Promise<number> {
     // We use 'resourceUsage' model
     const result = await this.systemDb.getPrismaClient().resourceUsage.aggregate({
@@ -252,10 +252,10 @@ export class TenantAnalyticsService {
         resourceType: metricType as any,
         period: {
           gte: timeRange.start,
-          lte: timeRange.end
-        }
+          lte: timeRange.end,
+        },
       },
-      _sum: { quantity: true }
+      _sum: { quantity: true },
     });
 
     return result._sum.quantity || 0;
@@ -264,7 +264,7 @@ export class TenantAnalyticsService {
   private async getMetricAverage(
     tenantId: string,
     metricType: MetricType,
-    timeRange: { start: Date; end: Date }
+    timeRange: { start: Date; end: Date },
   ): Promise<number> {
     const result = await this.systemDb.getPrismaClient().resourceUsage.aggregate({
       where: {
@@ -272,10 +272,10 @@ export class TenantAnalyticsService {
         resourceType: metricType as any,
         period: {
           gte: timeRange.start,
-          lte: timeRange.end
-        }
+          lte: timeRange.end,
+        },
       },
-      _avg: { quantity: true }
+      _avg: { quantity: true },
     });
 
     return result._avg.quantity || 0;
@@ -285,15 +285,15 @@ export class TenantAnalyticsService {
     tenantId: string,
     metricType: MetricType,
     percentile: number,
-    timeRange: { start: Date; end: Date }
+    timeRange: { start: Date; end: Date },
   ): Promise<number> {
     // Raw SQL for percentile calculation
-    const result = await this.systemDb.executeRaw(`
-      SELECT PERCENTILE_CONT($4) WITHIN GROUP (ORDER BY value) as percentile_value
+    const result = await this.systemDb.executeRaw(Prisma.sql`
+      SELECT PERCENTILE_CONT(${percentile / 100}) WITHIN GROUP (ORDER BY value) as percentile_value
       FROM usage_metrics
-      WHERE tenant_id = $1 AND metric_type = $2 
-      AND timestamp >= $3 AND timestamp <= $5
-    `, [tenantId, metricType, timeRange.start, percentile / 100, timeRange.end]);
+      WHERE tenant_id = ${tenantId} AND metric_type = ${metricType}
+      AND timestamp >= ${timeRange.start} AND timestamp <= ${timeRange.end}
+    `);
 
     return result[0]?.percentile_value || 0;
   }
@@ -305,14 +305,14 @@ export class TenantAnalyticsService {
   }> {
     const tenant = await this.systemDb.findUnique('organization', {
       where: { id: tenantId },
-      select: { tier: true }
+      select: { tier: true },
     });
 
     const tierLimits = {
       FREE: { storage: 5, apiCalls: 10000, users: 5 },
       STARTER: { storage: 50, apiCalls: 100000, users: 25 },
       PROFESSIONAL: { storage: 500, apiCalls: 1000000, users: 100 },
-      ENTERPRISE: { storage: -1, apiCalls: -1, users: -1 }
+      ENTERPRISE: { storage: -1, apiCalls: -1, users: -1 },
     };
 
     return tierLimits[tenant?.tier as keyof typeof tierLimits] || tierLimits.FREE;
@@ -321,7 +321,7 @@ export class TenantAnalyticsService {
   private async updateRealTimeAggregations(
     tenantId: string,
     metricType: MetricType,
-    value: number
+    value: number,
   ): Promise<void> {
     // Update real-time aggregation tables for faster queries
     const now = new Date();
@@ -333,13 +333,13 @@ export class TenantAnalyticsService {
           tenantId_metricType_hourKey: {
             tenantId,
             metricType,
-            hourKey
-          }
+            hourKey,
+          },
         },
         update: {
           value: { increment: value },
           count: { increment: 1 },
-          lastUpdated: now
+          lastUpdated: now,
         },
         create: {
           tenantId,
@@ -348,8 +348,8 @@ export class TenantAnalyticsService {
           value,
           count: 1,
           timestamp: now,
-          lastUpdated: now
-        }
+          lastUpdated: now,
+        },
       });
     } catch (error) {
       // Fail silently for aggregations to not block main operations
@@ -360,163 +360,174 @@ export class TenantAnalyticsService {
   // Additional helper method implementations would go here...
   // For brevity, I'm including placeholders for the remaining methods
 
-  private async getRequestMetrics(tenantId: string, timeRange: any): Promise<any> {
+  private async getRequestMetrics(_tenantId: string, _timeRange: any): Promise<any> {
     // Implementation for request metrics
     return { total: 0, successful: 0, failed: 0 };
   }
 
-  private async getUptimeMetrics(tenantId: string, timeRange: any): Promise<any> {
+  private async getUptimeMetrics(_tenantId: string, _timeRange: any): Promise<any> {
     // Implementation for uptime metrics
     return { percentage: 99.9, downtime: 0 };
   }
 
-  private async calculateErrorRate(tenantId: string, timeRange: any): Promise<number> {
+  private async calculateErrorRate(_tenantId: string, _timeRange: any): Promise<number> {
     // Implementation for error rate calculation
     return 0.1;
   }
 
-  private async calculateThroughput(tenantId: string, timeRange: any): Promise<number> {
+  private async calculateThroughput(_tenantId: string, _timeRange: any): Promise<number> {
     // Implementation for throughput calculation
     return 100;
   }
 
-  private async calculateAvailability(tenantId: string, timeRange: any): Promise<number> {
+  private async calculateAvailability(_tenantId: string, _timeRange: any): Promise<number> {
     // Implementation for availability calculation
     return 99.9;
   }
 
-  private async calculateMRR(tenantId: string): Promise<number> {
+  private async calculateMRR(_tenantId: string): Promise<number> {
     // Implementation for MRR calculation
     return 0;
   }
 
-  private async calculateCLV(tenantId: string): Promise<number> {
+  private async calculateCLV(_tenantId: string): Promise<number> {
     // Implementation for CLV calculation
     return 0;
   }
 
-  private async calculateChurnRisk(tenantId: string): Promise<number> {
+  private async calculateChurnRisk(_tenantId: string): Promise<number> {
     // Implementation for churn risk calculation
     return 0;
   }
 
-  private async getFeatureAdoption(tenantId: string, timeRange: any): Promise<Record<string, number>> {
+  private async getFeatureAdoption(
+    _tenantId: string,
+    _timeRange: any,
+  ): Promise<Record<string, number>> {
     // Implementation for feature adoption metrics
     return {};
   }
 
-  private async getSupportMetrics(tenantId: string, timeRange: any): Promise<any> {
+  private async getSupportMetrics(_tenantId: string, _timeRange: any): Promise<any> {
     // Implementation for support metrics
     return { open: 0, resolved: 0, averageTime: 0 };
   }
 
-  private async getNPSMetrics(tenantId: string, timeRange: any): Promise<any> {
+  private async getNPSMetrics(_tenantId: string, _timeRange: any): Promise<any> {
     // Implementation for NPS metrics
     return { score: 0, responses: 0 };
   }
 
   private async getTotalUsers(tenantId: string): Promise<number> {
-    return await this.systemDb.count('user', { where: { tenantId } });
+    return this.systemDb.count('user', { where: { tenantId } });
   }
 
-  private async getActiveUsers(tenantId: string, period: string): Promise<number> {
+  private async getActiveUsers(_tenantId: string, _period: string): Promise<number> {
     // Implementation for active users calculation
     return 0;
   }
 
-  private async getUserGrowthRate(tenantId: string, timeRange: any): Promise<number> {
+  private async getUserGrowthRate(_tenantId: string, _timeRange: any): Promise<number> {
     // Implementation for user growth rate
     return 0;
   }
 
-  private async getAverageSessionDuration(tenantId: string, timeRange: any): Promise<number> {
+  private async getAverageSessionDuration(_tenantId: string, _timeRange: any): Promise<number> {
     // Implementation for session duration
     return 0;
   }
 
-  private async getAverageLoginFrequency(tenantId: string, timeRange: any): Promise<number> {
+  private async getAverageLoginFrequency(_tenantId: string, _timeRange: any): Promise<number> {
     // Implementation for login frequency
     return 0;
   }
 
-  private async getUserFeatureUsage(tenantId: string, timeRange: any): Promise<Record<string, number>> {
+  private async getUserFeatureUsage(
+    _tenantId: string,
+    _timeRange: any,
+  ): Promise<Record<string, number>> {
     // Implementation for user feature usage
     return {};
   }
 
   private async getTotalPlugins(tenantId: string): Promise<number> {
-    return await this.systemDb.count('plugin', { where: { tenantId } });
+    return this.systemDb.count('plugin', { where: { tenantId } });
   }
 
   private async getActivePlugins(tenantId: string): Promise<number> {
-    return await this.systemDb.count('plugin', {
-      where: { tenantId, isEnabled: true }
+    return this.systemDb.count('plugin', {
+      where: { tenantId, isEnabled: true },
     });
   }
 
-  private async getPluginHealth(tenantId: string): Promise<Record<string, number>> {
+  private async getPluginHealth(_tenantId: string): Promise<Record<string, number>> {
     // Implementation for plugin health metrics
     return {};
   }
 
-  private async getPluginInstallationRate(tenantId: string, timeRange: any): Promise<number> {
+  private async getPluginInstallationRate(_tenantId: string, _timeRange: any): Promise<number> {
     // Implementation for plugin installation rate
     return 0;
   }
 
-  private async getPluginUninstallationRate(tenantId: string, timeRange: any): Promise<number> {
+  private async getPluginUninstallationRate(_tenantId: string, _timeRange: any): Promise<number> {
     // Implementation for plugin uninstallation rate
     return 0;
   }
 
-  private async getMostUsedPlugins(tenantId: string, timeRange: any): Promise<Array<{ name: string; usage: number }>> {
+  private async getMostUsedPlugins(
+    _tenantId: string,
+    _timeRange: any,
+  ): Promise<Array<{ name: string; usage: number }>> {
     // Implementation for most used plugins
     return [];
   }
 
-  private async getActiveIntegrations(tenantId: string): Promise<number> {
+  private async getActiveIntegrations(_tenantId: string): Promise<number> {
     // Implementation for active integrations count
     return 0;
   }
 
-  private async getIntegrationHealth(tenantId: string): Promise<Record<string, 'HEALTHY' | 'WARNING' | 'ERROR'>> {
+  private async getIntegrationHealth(
+    _tenantId: string,
+  ): Promise<Record<string, 'HEALTHY' | 'WARNING' | 'ERROR'>> {
     // Implementation for integration health
     return {};
   }
 
-  private async getDataSyncMetrics(tenantId: string, timeRange: any): Promise<any> {
+  private async getDataSyncMetrics(_tenantId: string, _timeRange: any): Promise<any> {
     // Implementation for data sync metrics
     return { successful: 0, failed: 0 };
   }
 
-  private async getWebhookDeliveryMetrics(tenantId: string, timeRange: any): Promise<any> {
+  private async getWebhookDeliveryMetrics(_tenantId: string, _timeRange: any): Promise<any> {
     // Implementation for webhook delivery metrics
     return { successful: 0, failed: 0 };
   }
 
-  private async getUsageTrends(tenantId: string, timeRange: any): Promise<TrendData[]> {
+  private async getUsageTrends(_tenantId: string, _timeRange: any): Promise<TrendData[]> {
     // Implementation for usage trends
     return [];
   }
 
-  private async getGrowthMetrics(tenantId: string, timeRange: any): Promise<GrowthMetrics> {
+  private async getGrowthMetrics(_tenantId: string, _timeRange: any): Promise<GrowthMetrics> {
     // Implementation for growth metrics
     return {
       userGrowthRate: 0,
       revenueGrowthRate: 0,
       featureAdoptionRate: 0,
-      retentionRate: 0
+      retentionRate: 0,
     };
   }
 
-  private async getHealthMetrics(tenantId: string, timeRange: any): Promise<HealthMetrics> {
+  private async getHealthMetrics(_tenantId: string, _timeRange: any): Promise<HealthMetrics> {
     // Implementation for health metrics
     return {
       overallScore: 85,
       availability: 99.9,
       performance: 90,
       userSatisfaction: 80,
-      securityScore: 95
+      securityScore: 95,
     };
   }
 
@@ -524,10 +535,7 @@ export class TenantAnalyticsService {
    * Cleanup and disconnect
    */
   async disconnect(): Promise<void> {
-    await Promise.all([
-      this.systemDb.disconnect(),
-      this.tenantDb.disconnect()
-    ]);
+    await Promise.all([this.systemDb.disconnect(), this.tenantDb.disconnect()]);
   }
 }
 
