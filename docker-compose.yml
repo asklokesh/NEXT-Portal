@@ -1,17 +1,17 @@
 services:
-  # Main IDP Platform Application (production runner)
+  # Main IDP Platform Application (development target - production build requires >8GB RAM)
   idp-platform:
     build:
       context: .
       dockerfile: Dockerfile
-      target: runner
+      target: development
       args:
         NEXT_PUBLIC_BACKSTAGE_API_URL: ${NEXT_PUBLIC_BACKSTAGE_API_URL:-http://localhost:4402}
         NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:-http://localhost:4400}
     ports:
       - '4400:4400'
     environment:
-      - NODE_ENV=${NODE_ENV:-production}
+      - NODE_ENV=${NODE_ENV:-development}
       - PORT=4400
       - NEXT_PUBLIC_APP_URL=${NEXT_PUBLIC_APP_URL:-http://localhost:4400}
       - BACKSTAGE_API_URL=${BACKSTAGE_API_URL:-http://localhost:4402}
@@ -26,9 +26,9 @@ services:
       - SESSION_SECRET=${SESSION_SECRET:-development-session-secret-32-chars-minimum-required}
       - ENCRYPTION_KEY=${ENCRYPTION_KEY:-dev-encryption-key-32-chars-min!}
       - CORS_ORIGIN=${CORS_ORIGIN:-http://localhost:4400}
-      - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY:-sk_test_replace_with_your_stripe_test_key}
-      - STRIPE_PUBLISHABLE_KEY=${STRIPE_PUBLISHABLE_KEY:-pk_test_replace_with_your_stripe_test_key}
-      - STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET:-whsec_replace_with_your_stripe_webhook_secret}
+      - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY:-sk_test_placeholder_not_configured}
+      - STRIPE_PUBLISHABLE_KEY=${STRIPE_PUBLISHABLE_KEY:-pk_test_placeholder_not_configured}
+      - STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET:-whsec_placeholder_not_configured}
     depends_on:
       - db
       - redis
@@ -77,9 +77,9 @@ services:
       - SESSION_SECRET=${SESSION_SECRET:-development-session-secret-32-chars-minimum-required}
       - ENCRYPTION_KEY=${ENCRYPTION_KEY:-dev-encryption-key-32-chars-min!}
       - CORS_ORIGIN=${CORS_ORIGIN:-http://localhost:4400}
-      - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY:-sk_test_replace_with_your_stripe_test_key}
-      - STRIPE_PUBLISHABLE_KEY=${STRIPE_PUBLISHABLE_KEY:-pk_test_replace_with_your_stripe_test_key}
-      - STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET:-whsec_replace_with_your_stripe_webhook_secret}
+      - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY:-sk_test_placeholder_not_configured}
+      - STRIPE_PUBLISHABLE_KEY=${STRIPE_PUBLISHABLE_KEY:-pk_test_placeholder_not_configured}
+      - STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET:-whsec_placeholder_not_configured}
     depends_on:
       - db
       - redis
