@@ -1,10 +1,14 @@
-import { NextRequest, NextResponse } from 'next/server';
+import crypto from 'crypto';
+
 import { compare } from 'bcryptjs';
+import { NextResponse } from 'next/server';
 import { z } from 'zod';
+
 import { jwtSecurity } from '@/lib/auth/jwt-security-enhanced';
 import { enhancedSessionManager } from '@/lib/auth/session-security-enhanced';
 import { db } from '@/lib/database/simple-client';
-import crypto from 'crypto';
+
+import type { NextRequest } from 'next/server';
 
 // Input validation schema
 const loginSchema = z.object({
@@ -12,29 +16,40 @@ const loginSchema = z.object({
   password: z.string().min(1).max(128),
   rememberMe: z.boolean().optional(),
   mfaToken: z.string().optional(),
-  organizationSlug: z.string().optional() // For multi-tenant login
+  organizationSlug: z.string().optional(), // For multi-tenant login
 });
 
 // Login attempt tracking with automatic cleanup
 const loginAttempts = new Map<string, { count: number; lastAttempt: Date; lockedUntil?: Date }>();
 
-// Cleanup old attempts every 5 minutes
-setInterval(() => {
-  const now = new Date();
-  for (const [key, attempts] of loginAttempts.entries()) {
-    if (attempts.lockedUntil && attempts.lockedUntil < now) {
-      loginAttempts.delete(key);
-    } else if (now.getTime() - attempts.lastAttempt.getTime() > 30 * 60 * 1000) { // 30 minutes
-      loginAttempts.delete(key);
-    }
+/** Clears in-memory lockout state — for tests only (parallel Jest workers share module scope). */
+export function __resetLoginAttemptsForTests(): void {
+  if (process.env.NODE_ENV === 'test') {
+    loginAttempts.clear();
   }
-}, 5 * 60 * 1000);
+}
+
+// Cleanup old attempts every 5 minutes
+setInterval(
+  () => {
+    const now = new Date();
+    for (const [key, attempts] of loginAttempts.entries()) {
+      if (attempts.lockedUntil && attempts.lockedUntil < now) {
+        loginAttempts.delete(key);
+      } else if (now.getTime() - attempts.lastAttempt.getTime() > 30 * 60 * 1000) {
+        // 30 minutes
+        loginAttempts.delete(key);
+      }
+    }
+  },
+  5 * 60 * 1000,
+);
 
 function getClientInfo(request: NextRequest) {
   const userAgent = request.headers.get('user-agent') || 'unknown';
   const acceptLanguage = request.headers.get('accept-language') || '';
   const acceptEncoding = request.headers.get('accept-encoding') || '';
-  const ipAddress = 
+  const ipAddress =
     request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ||
     request.headers.get('x-real-ip') ||
     request.headers.get('cf-connecting-ip') ||
@@ -43,34 +58,42 @@ function getClientInfo(request: NextRequest) {
   const deviceFingerprint = jwtSecurity.generateDeviceFingerprint(
     userAgent,
     acceptLanguage,
-    acceptEncoding
+    acceptEncoding,
   );
 
   return {
     ipAddress,
     userAgent,
     deviceFingerprint,
-    platform: userAgent.includes('Windows') ? 'Windows' : 
-              userAgent.includes('Mac') ? 'macOS' : 
-              userAgent.includes('Linux') ? 'Linux' : 'Unknown',
-    browser: userAgent.includes('Chrome') ? 'Chrome' :
-             userAgent.includes('Firefox') ? 'Firefox' :
-             userAgent.includes('Safari') && !userAgent.includes('Chrome') ? 'Safari' : 'Unknown'
+    platform: userAgent.includes('Windows')
+      ? 'Windows'
+      : userAgent.includes('Mac')
+        ? 'macOS'
+        : userAgent.includes('Linux')
+          ? 'Linux'
+          : 'Unknown',
+    browser: userAgent.includes('Chrome')
+      ? 'Chrome'
+      : userAgent.includes('Firefox')
+        ? 'Firefox'
+        : userAgent.includes('Safari') && !userAgent.includes('Chrome')
+          ? 'Safari'
+          : 'Unknown',
   };
 }
 
 function checkAccountLockout(email: string): { locked: boolean; remainingTime?: number } {
   const attempts = loginAttempts.get(email);
-  
+
   if (!attempts) {
     return { locked: false };
   }
-  
+
   if (attempts.lockedUntil && attempts.lockedUntil > new Date()) {
     const remainingTime = Math.ceil((attempts.lockedUntil.getTime() - Date.now()) / 1000);
     return { locked: true, remainingTime };
   }
-  
+
   return { locked: false };
 }
 
@@ -78,7 +101,7 @@ function recordFailedLogin(email: string): void {
   const attempts = loginAttempts.get(email) || { count: 0, lastAttempt: new Date() };
   attempts.count++;
   attempts.lastAttempt = new Date();
-  
+
   // Progressive lockout: 5 attempts = 5 min, 10 = 15 min, 15+ = 30 min
   if (attempts.count >= 15) {
     attempts.lockedUntil = new Date(Date.now() + 30 * 60 * 1000); // 30 minutes
@@ -87,7 +110,7 @@ function recordFailedLogin(email: string): void {
   } else if (attempts.count >= 5) {
     attempts.lockedUntil = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes
   }
-  
+
   loginAttempts.set(email, attempts);
 }
 
@@ -95,55 +118,55 @@ export async function POST(request: NextRequest) {
   const startTime = Date.now();
   const clientInfo = getClientInfo(request);
   const requestId = crypto.randomUUID();
-  
+
   try {
     // Parse and validate input
     const body = await request.json();
     const validation = loginSchema.safeParse(body);
-    
+
     if (!validation.success) {
       return NextResponse.json(
-        { 
-          success: false, 
+        {
+          success: false,
           error: 'Invalid input format',
-          requestId
+          requestId,
         },
-        { status: 400 }
+        { status: 400 },
       );
     }
-    
-    const { email, password, rememberMe, mfaToken, organizationSlug } = validation.data;
+
+    const { email, password, rememberMe, mfaToken: _mfaToken, organizationSlug } = validation.data;
     const sanitizedEmail = email.toLowerCase().trim();
-    
+
     // Check account lockout
     const lockoutStatus = checkAccountLockout(sanitizedEmail);
     if (lockoutStatus.locked) {
       return NextResponse.json(
-        { 
-          success: false, 
+        {
+          success: false,
           error: `Account temporarily locked. Try again in ${lockoutStatus.remainingTime} seconds.`,
           accountLocked: true,
           retryAfter: lockoutStatus.remainingTime,
-          requestId
+          requestId,
         },
-        { status: 403 }
+        { status: 403 },
       );
     }
-    
+
     // Find user by email
     const user = await db.findUnique('user', {
-      where: { email: sanitizedEmail }
+      where: { email: sanitizedEmail },
     });
 
     if (!user) {
       recordFailedLogin(sanitizedEmail);
-      
+
       // Constant time delay to prevent timing attacks
-      await new Promise(resolve => setTimeout(resolve, 100 + Math.random() * 100));
-      
+      await new Promise((resolve) => setTimeout(resolve, 100 + Math.random() * 100));
+
       return NextResponse.json(
         { success: false, error: 'Invalid email or password', requestId },
-        { status: 401 }
+        { status: 401 },
       );
     }
 
@@ -151,7 +174,7 @@ export async function POST(request: NextRequest) {
     if (!user.isActive) {
       return NextResponse.json(
         { success: false, error: 'Account is deactivated', requestId },
-        { status: 401 }
+        { status: 401 },
       );
     }
 
@@ -159,36 +182,38 @@ export async function POST(request: NextRequest) {
     if (!user.password) {
       return NextResponse.json(
         { success: false, error: 'Password login not available for this account', requestId },
-        { status: 401 }
+        { status: 401 },
       );
     }
 
     const isValidPassword = await compare(password, user.password);
     if (!isValidPassword) {
       recordFailedLogin(sanitizedEmail);
-      
+
       // Log failed attempt
-      await db.create('auditLog', {
-        data: {
-          userId: user.id,
-          action: 'LOGIN_FAILED',
-          resource: 'auth',
-          metadata: {
-            email: sanitizedEmail,
-            reason: 'INVALID_PASSWORD',
-            ipAddress: clientInfo.ipAddress,
-            userAgent: clientInfo.userAgent,
-            requestId
-          }
-        }
-      }).catch(console.error);
-      
+      await db
+        .create('auditLog', {
+          data: {
+            userId: user.id,
+            action: 'LOGIN_FAILED',
+            resource: 'auth',
+            metadata: {
+              email: sanitizedEmail,
+              reason: 'INVALID_PASSWORD',
+              ipAddress: clientInfo.ipAddress,
+              userAgent: clientInfo.userAgent,
+              requestId,
+            },
+          },
+        })
+        .catch(console.error);
+
       return NextResponse.json(
         { success: false, error: 'Invalid email or password', requestId },
-        { status: 401 }
+        { status: 401 },
       );
     }
-    
+
     // Clear login attempts on successful authentication
     loginAttempts.delete(sanitizedEmail);
 
@@ -200,18 +225,15 @@ export async function POST(request: NextRequest) {
       // Find the organization
       organization = await db.findFirst('organization', {
         where: {
-          OR: [
-            { slug: organizationSlug.toLowerCase() },
-            { name: organizationSlug.toLowerCase() }
-          ],
-          status: 'ACTIVE'
-        }
+          OR: [{ slug: organizationSlug.toLowerCase() }, { name: organizationSlug.toLowerCase() }],
+          status: 'ACTIVE',
+        },
       });
 
       if (!organization) {
         return NextResponse.json(
           { success: false, error: 'Organization not found', requestId },
-          { status: 404 }
+          { status: 404 },
         );
       }
 
@@ -223,9 +245,9 @@ export async function POST(request: NextRequest) {
             error: 'SSO login is required for this organization',
             ssoRequired: true,
             ssoProvider: organization.ssoProvider,
-            requestId
+            requestId,
           },
-          { status: 403 }
+          { status: 403 },
         );
       }
 
@@ -234,8 +256,8 @@ export async function POST(request: NextRequest) {
         where: {
           organizationId: organization.id,
           userId: user.id,
-          isActive: true
-        }
+          isActive: true,
+        },
       });
 
       if (!orgMembership) {
@@ -248,9 +270,9 @@ export async function POST(request: NextRequest) {
             {
               success: false,
               error: 'You are not a member of this organization',
-              requestId
+              requestId,
             },
-            { status: 403 }
+            { status: 403 },
           );
         }
 
@@ -261,8 +283,8 @@ export async function POST(request: NextRequest) {
             userId: user.id,
             role: 'MEMBER',
             isActive: true,
-            joinedAt: new Date()
-          }
+            joinedAt: new Date(),
+          },
         });
       }
     } else {
@@ -270,26 +292,26 @@ export async function POST(request: NextRequest) {
       orgMembership = await db.findFirst('organizationMember', {
         where: {
           userId: user.id,
-          isActive: true
+          isActive: true,
         },
         orderBy: {
-          joinedAt: 'asc' // First joined org is primary
-        }
+          joinedAt: 'asc', // First joined org is primary
+        },
       });
 
       if (orgMembership) {
         organization = await db.findFirst('organization', {
           where: {
             id: orgMembership.organizationId,
-            status: 'ACTIVE'
-          }
+            status: 'ACTIVE',
+          },
         });
       }
     }
 
     // Initialize JWT security
     await jwtSecurity.initialize();
-    
+
     // Create enhanced session with race condition protection
     const session = await enhancedSessionManager.createSession(
       user.id,
@@ -300,17 +322,17 @@ export async function POST(request: NextRequest) {
         userAgent: clientInfo.userAgent,
         ipAddress: clientInfo.ipAddress,
         platform: clientInfo.platform,
-        browser: clientInfo.browser
+        browser: clientInfo.browser,
       },
       {
         loginMethod: 'password',
         mfaVerified: false,
         riskScore: 0,
-        anomalyDetected: false
+        anomalyDetected: false,
       },
-      organization?.id || undefined // Use organization ID as tenant context
+      organization?.id || user.tenantId || undefined, // Org context, legacy tenant fallback
     );
-    
+
     // Generate secure tokens with anti-replay protection
     const accessToken = await jwtSecurity.generateAccessToken(
       user.id,
@@ -322,22 +344,22 @@ export async function POST(request: NextRequest) {
         deviceFingerprint: clientInfo.deviceFingerprint,
         clientId: 'web-app',
         scope: 'full',
-        authMethods: ['password']
-      }
+        authMethods: ['password'],
+      },
     );
-    
+
     const refreshToken = await jwtSecurity.generateRefreshToken(
       user.id,
       session.id,
-      clientInfo.deviceFingerprint
+      clientInfo.deviceFingerprint,
     );
 
     // Update last login
     await db.update('user', {
       where: { id: user.id },
       data: {
-        lastLogin: new Date()
-      }
+        lastLogin: new Date(),
+      },
     });
 
     // Set httpOnly cookie with secure tokens
@@ -347,21 +369,23 @@ export async function POST(request: NextRequest) {
         id: user.id,
         email: user.email,
         name: user.name,
-        role: user.role
+        role: user.role,
       },
-      organization: organization ? {
-        id: organization.id,
-        slug: organization.slug,
-        name: organization.name,
-        displayName: organization.displayName,
-        environment: organization.environment,
-        role: orgMembership?.role || 'MEMBER'
-      } : null,
+      organization: organization
+        ? {
+            id: organization.id,
+            slug: organization.slug,
+            name: organization.name,
+            displayName: organization.displayName,
+            environment: organization.environment,
+            role: orgMembership?.role || 'MEMBER',
+          }
+        : null,
       session: {
         id: session.id,
-        expiresAt: session.expiresAt.toISOString()
+        expiresAt: session.expiresAt.toISOString(),
       },
-      requestId
+      requestId,
     });
 
     // Set secure cookies
@@ -369,45 +393,47 @@ export async function POST(request: NextRequest) {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'lax' as const,
-      path: '/'
+      path: '/',
     };
-    
+
     response.cookies.set('access-token', accessToken, {
       ...cookieOptions,
-      maxAge: 15 * 60 // 15 minutes
+      maxAge: 15 * 60, // 15 minutes
     });
-    
+
     response.cookies.set('refresh-token', refreshToken, {
       ...cookieOptions,
       maxAge: rememberMe ? 30 * 24 * 60 * 60 : 7 * 24 * 60 * 60, // 30 days or 7 days
-      path: '/api/auth/refresh' // Restrict refresh token to refresh endpoint
+      path: '/api/auth/refresh', // Restrict refresh token to refresh endpoint
     });
-    
+
     response.cookies.set('session-id', session.id, {
       ...cookieOptions,
-      maxAge: 24 * 60 * 60 // 24 hours
+      maxAge: 24 * 60 * 60, // 24 hours
     });
 
     // Log successful login for audit
-    await db.create('auditLog', {
-      data: {
-        userId: user.id,
-        action: 'LOGIN_SUCCESS',
-        resource: 'auth',
-        metadata: {
-          email: user.email,
-          provider: 'local',
-          sessionId: session.id,
-          ipAddress: clientInfo.ipAddress,
-          userAgent: clientInfo.userAgent,
-          platform: clientInfo.platform,
-          browser: clientInfo.browser,
-          requestId,
-          loginTime: Date.now() - startTime
-        }
-      }
-    }).catch(console.error);
-    
+    await db
+      .create('auditLog', {
+        data: {
+          userId: user.id,
+          action: 'LOGIN_SUCCESS',
+          resource: 'auth',
+          metadata: {
+            email: user.email,
+            provider: 'local',
+            sessionId: session.id,
+            ipAddress: clientInfo.ipAddress,
+            userAgent: clientInfo.userAgent,
+            platform: clientInfo.platform,
+            browser: clientInfo.browser,
+            requestId,
+            loginTime: Date.now() - startTime,
+          },
+        },
+      })
+      .catch(console.error);
+
     // Add security headers
     response.headers.set('X-Content-Type-Options', 'nosniff');
     response.headers.set('X-Frame-Options', 'DENY');
@@ -416,27 +442,28 @@ export async function POST(request: NextRequest) {
     response.headers.set('X-Request-ID', requestId);
 
     return response;
-
   } catch (error) {
     console.error('Login error:', error);
-    
+
     // Log error
-    await db.create('auditLog', {
-      data: {
-        action: 'LOGIN_ERROR',
-        resource: 'auth',
-        metadata: {
-          error: error instanceof Error ? error.message : 'Unknown error',
-          ipAddress: clientInfo.ipAddress,
-          userAgent: clientInfo.userAgent,
-          requestId
-        }
-      }
-    }).catch(console.error);
+    await db
+      .create('auditLog', {
+        data: {
+          action: 'LOGIN_ERROR',
+          resource: 'auth',
+          metadata: {
+            error: error instanceof Error ? error.message : 'Unknown error',
+            ipAddress: clientInfo.ipAddress,
+            userAgent: clientInfo.userAgent,
+            requestId,
+          },
+        },
+      })
+      .catch(console.error);
 
     return NextResponse.json(
       { success: false, error: 'An error occurred during login', requestId },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

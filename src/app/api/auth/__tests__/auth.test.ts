@@ -9,6 +9,7 @@ jest.mock('bcryptjs', () => ({
 
 // Mock the database client - using the correct API pattern (method-based)
 const mockDbFindUnique = jest.fn();
+const mockDbFindFirst = jest.fn();
 const mockDbCreate = jest.fn();
 const mockDbUpdate = jest.fn();
 const mockDbFindMany = jest.fn();
@@ -16,6 +17,7 @@ const mockDbFindMany = jest.fn();
 jest.mock('@/lib/database/simple-client', () => ({
   db: {
     findUnique: (...args: any[]) => mockDbFindUnique(...args),
+    findFirst: (...args: any[]) => mockDbFindFirst(...args),
     create: (...args: any[]) => mockDbCreate(...args),
     update: (...args: any[]) => mockDbUpdate(...args),
     findMany: (...args: any[]) => mockDbFindMany(...args),
@@ -83,19 +85,23 @@ const { compare } = require('bcryptjs');
 
 describe('Authentication API Endpoints', () => {
   beforeEach(() => {
+    const { __resetLoginAttemptsForTests } = require('@/app/api/auth/login/route');
+    __resetLoginAttemptsForTests();
     jest.clearAllMocks();
     // Reset all mock implementations
     mockDbFindUnique.mockReset();
+    mockDbFindFirst.mockReset();
     mockDbCreate.mockReset();
     mockDbUpdate.mockReset();
     mockDbFindMany.mockReset();
 
     // Default implementations
+    mockDbFindFirst.mockResolvedValue(null);
     mockDbCreate.mockImplementation((model: string, args: any) =>
-      Promise.resolve({ id: 'created-id', ...args.data })
+      Promise.resolve({ id: 'created-id', ...args.data }),
     );
     mockDbUpdate.mockImplementation((model: string, args: any) =>
-      Promise.resolve({ id: args.where?.id || 'updated', ...args.data })
+      Promise.resolve({ id: args.where?.id || 'updated', ...args.data }),
     );
 
     // Reset session manager
@@ -436,7 +442,7 @@ describe('Authentication API Endpoints', () => {
             action: 'LOGIN_SUCCESS',
             userId: 'user-123',
           }),
-        })
+        }),
       );
     });
 
@@ -477,7 +483,7 @@ describe('Authentication API Endpoints', () => {
           data: expect.objectContaining({
             action: 'LOGIN_FAILED',
           }),
-        })
+        }),
       );
     });
   });
@@ -580,7 +586,7 @@ describe('Authentication API Endpoints', () => {
           where: expect.objectContaining({
             email: 'user@company.com', // Should be lowercase
           }),
-        })
+        }),
       );
     });
   });
@@ -627,7 +633,7 @@ describe('Authentication API Endpoints', () => {
         'user',
         expect.any(Object), // device info
         expect.any(Object), // security context
-        'tenant-123'
+        'tenant-123',
       );
     });
 
@@ -670,7 +676,7 @@ describe('Authentication API Endpoints', () => {
           data: expect.objectContaining({
             lastLogin: expect.any(Date),
           }),
-        })
+        }),
       );
     });
   });

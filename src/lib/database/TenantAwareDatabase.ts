@@ -3,10 +3,14 @@
  * Provides complete tenant data isolation and context-aware database operations
  */
 
-import { PrismaClient, Prisma } from '@prisma/client';
-import { getTenantContext, TenantContext } from '@/lib/tenancy/TenantContext';
+import { PrismaClient } from '@prisma/client';
+
 import { validateInput } from '@/lib/security/input-validation';
-import { NextRequest } from 'next/server';
+import { getTenantContext } from '@/lib/tenancy/TenantContext';
+
+import type { TenantContext } from '@/lib/tenancy/TenantContext';
+import type { Prisma } from '@prisma/client';
+import type { NextRequest } from 'next/server';
 
 // Type definitions for tenant-aware operations
 export interface TenantAwareQueryOptions {
@@ -38,10 +42,12 @@ export class TenantAwareDatabase {
   private context: DatabaseContext | null = null;
 
   constructor(prisma?: PrismaClient) {
-    this.prisma = prisma || new PrismaClient({
-      log: ['error', 'warn'],
-      errorFormat: 'pretty',
-    });
+    this.prisma =
+      prisma ||
+      new PrismaClient({
+        log: ['error', 'warn'],
+        errorFormat: 'pretty',
+      });
 
     // Enable Prisma middleware for tenant filtering
     this.setupTenantMiddleware();
@@ -65,7 +71,7 @@ export class TenantAwareDatabase {
         tenantId: tenantContext.tenant.id,
         userId: tenantContext.user?.id,
         userPermissions: tenantContext.permissions,
-        isSystemOperation: false
+        isSystemOperation: false,
       };
     }
   }
@@ -77,7 +83,7 @@ export class TenantAwareDatabase {
     this.context = {
       tenantId: 'system',
       userPermissions: ['*'],
-      isSystemOperation: true
+      isSystemOperation: true,
     };
   }
 
@@ -87,7 +93,7 @@ export class TenantAwareDatabase {
   private validateAndFilterQuery<T extends Record<string, any>>(
     args: T,
     modelName: string,
-    options: TenantAwareQueryOptions = {}
+    options: TenantAwareQueryOptions = {},
   ): T {
     if (!this.context && !options.skipPermissionCheck) {
       throw new Error('Database operation requires tenant context');
@@ -115,7 +121,7 @@ export class TenantAwareDatabase {
   private addTenantFilter<T extends Record<string, any>>(
     args: T,
     modelName: string,
-    options: TenantAwareQueryOptions
+    options: TenantAwareQueryOptions,
   ): T {
     if (!this.context || options.includeTenantFilter === false) {
       return args;
@@ -133,7 +139,7 @@ export class TenantAwareDatabase {
     if (filteredArgs.where) {
       filteredArgs.where = {
         ...filteredArgs.where,
-        ...tenantFilter
+        ...tenantFilter,
       };
     } else {
       filteredArgs.where = tenantFilter;
@@ -154,28 +160,28 @@ export class TenantAwareDatabase {
       'Organization',
       'Subscription',
       'Scorecard',
-      'ScorecardResult'
+      'ScorecardResult',
     ];
 
     // Models with tenant relationship through other models
     const indirectTenantModels: Record<string, string> = {
-      'PluginVersion': 'plugin.tenantId',
-      'PluginConfiguration': 'plugin.tenantId',
-      'PluginOperation': 'plugin.tenantId',
-      'PluginMetrics': 'plugin.tenantId',
-      'PluginConfig': 'plugin.tenantId',
-      'PluginDependency': 'plugin.tenantId',
-      'PluginBackup': 'plugin.tenantId',
-      'PluginApproval': 'plugin.tenantId',
-      'PluginAlert': 'plugin.tenantId',
-      'PluginWorkflow': 'plugin.tenantId',
-      'PluginTestResult': 'plugin.tenantId',
-      'PluginVulnerability': 'plugin.tenantId',
-      'PluginPerformance': 'plugin.tenantId',
-      'PluginEnvironment': 'plugin.tenantId',
-      'ResourceUsage': 'organization.id',
-      'Invoice': 'organization.id',
-      'Payment': 'organization.id'
+      PluginVersion: 'plugin.tenantId',
+      PluginConfiguration: 'plugin.tenantId',
+      PluginOperation: 'plugin.tenantId',
+      PluginMetrics: 'plugin.tenantId',
+      PluginConfig: 'plugin.tenantId',
+      PluginDependency: 'plugin.tenantId',
+      PluginBackup: 'plugin.tenantId',
+      PluginApproval: 'plugin.tenantId',
+      PluginAlert: 'plugin.tenantId',
+      PluginWorkflow: 'plugin.tenantId',
+      PluginTestResult: 'plugin.tenantId',
+      PluginVulnerability: 'plugin.tenantId',
+      PluginPerformance: 'plugin.tenantId',
+      PluginEnvironment: 'plugin.tenantId',
+      ResourceUsage: 'organization.id',
+      Invoice: 'organization.id',
+      Payment: 'organization.id',
     };
 
     if (directTenantModels.includes(modelName)) {
@@ -200,7 +206,7 @@ export class TenantAwareDatabase {
 
     const [relation, ...rest] = relationPath;
     return {
-      [relation]: this.buildNestedFilter(rest, tenantId)
+      [relation]: this.buildNestedFilter(rest, tenantId),
     };
   }
 
@@ -232,21 +238,22 @@ export class TenantAwareDatabase {
 
     // Permission-based access control
     const permissionMap: Record<string, string[]> = {
-      'Plugin': ['plugin:read', 'plugin:write', 'plugin:manage'],
-      'PluginConfiguration': ['plugin:configure', 'plugin:manage'],
-      'PluginOperation': ['plugin:operate', 'plugin:manage'],
-      'Organization': ['tenant:manage', 'billing:read'],
-      'Subscription': ['billing:read', 'billing:manage'],
-      'User': ['user:read', 'user:manage'],
-      'Team': ['team:read', 'team:manage']
+      Plugin: ['plugin:read', 'plugin:write', 'plugin:manage'],
+      PluginConfiguration: ['plugin:configure', 'plugin:manage'],
+      PluginOperation: ['plugin:operate', 'plugin:manage'],
+      Organization: ['tenant:manage', 'billing:read'],
+      Subscription: ['billing:read', 'billing:manage'],
+      User: ['user:read', 'user:manage'],
+      Team: ['team:read', 'team:manage'],
     };
 
     const requiredPermissions = permissionMap[modelName];
     if (requiredPermissions) {
-      const hasPermission = requiredPermissions.some(perm =>
-        permissions.includes(perm) ||
-        permissions.includes('*') ||
-        permissions.includes('admin:all')
+      const hasPermission = requiredPermissions.some(
+        (perm) =>
+          permissions.includes(perm) ||
+          permissions.includes('*') ||
+          permissions.includes('admin:all'),
       );
 
       if (!hasPermission) {
@@ -269,12 +276,14 @@ export class TenantAwareDatabase {
       if (['findMany', 'findFirst', 'findUnique', 'count', 'aggregate'].includes(params.action)) {
         params.args = this.validateAndFilterQuery(params.args, params.model || '', {
           includeTenantFilter: true,
-          validateTenantAccess: true
+          validateTenantAccess: true,
         });
       }
 
       // Apply tenant validation for write operations
-      if (['create', 'update', 'upsert', 'delete', 'deleteMany', 'updateMany'].includes(params.action)) {
+      if (
+        ['create', 'update', 'upsert', 'delete', 'deleteMany', 'updateMany'].includes(params.action)
+      ) {
         this.validateWriteOperation(params);
       }
 
@@ -291,7 +300,10 @@ export class TenantAwareDatabase {
     const modelName = params.model || '';
 
     // Ensure tenant ID is set for create operations
-    if (params.action === 'create' && this.getTenantFilterForModel(modelName, this.context.tenantId)) {
+    if (
+      params.action === 'create' &&
+      this.getTenantFilterForModel(modelName, this.context.tenantId)
+    ) {
       if (!params.args.data.tenantId && modelName === 'Plugin') {
         params.args.data.tenantId = this.context.tenantId;
       }
@@ -301,7 +313,7 @@ export class TenantAwareDatabase {
     if (['update', 'delete', 'upsert'].includes(params.action)) {
       params.args = this.validateAndFilterQuery(params.args, modelName, {
         includeTenantFilter: true,
-        validateTenantAccess: true
+        validateTenantAccess: true,
       });
     }
   }
@@ -316,7 +328,7 @@ export class TenantAwareDatabase {
   async findMany<T extends keyof PrismaClient>(
     model: T,
     args: any,
-    options: TenantAwareQueryOptions = {}
+    options: TenantAwareQueryOptions = {},
   ): Promise<any[]> {
     const filteredArgs = this.validateAndFilterQuery(args, model as string, options);
     return (this.prisma[model] as any).findMany(filteredArgs);
@@ -328,7 +340,7 @@ export class TenantAwareDatabase {
   async findUnique<T extends keyof PrismaClient>(
     model: T,
     args: any,
-    options: TenantAwareQueryOptions = {}
+    options: TenantAwareQueryOptions = {},
   ): Promise<any> {
     const filteredArgs = this.validateAndFilterQuery(args, model as string, options);
     return (this.prisma[model] as any).findUnique(filteredArgs);
@@ -340,12 +352,15 @@ export class TenantAwareDatabase {
   async create<T extends keyof PrismaClient>(
     model: T,
     args: any,
-    options: TenantAwareQueryOptions = {}
+    options: TenantAwareQueryOptions = {},
   ): Promise<any> {
     // Add tenant ID to data if applicable
     if (this.context && !this.context.isSystemOperation) {
       const modelName = model as string;
-      if (this.getTenantFilterForModel(modelName, this.context.tenantId) && modelName === 'Plugin') {
+      if (
+        this.getTenantFilterForModel(modelName, this.context.tenantId) &&
+        modelName === 'Plugin'
+      ) {
         args.data.tenantId = this.context.tenantId;
       }
     }
@@ -360,7 +375,7 @@ export class TenantAwareDatabase {
   async update<T extends keyof PrismaClient>(
     model: T,
     args: any,
-    options: TenantAwareQueryOptions = {}
+    options: TenantAwareQueryOptions = {},
   ): Promise<any> {
     const filteredArgs = this.validateAndFilterQuery(args, model as string, options);
     return (this.prisma[model] as any).update(filteredArgs);
@@ -372,7 +387,7 @@ export class TenantAwareDatabase {
   async delete<T extends keyof PrismaClient>(
     model: T,
     args: any,
-    options: TenantAwareQueryOptions = {}
+    options: TenantAwareQueryOptions = {},
   ): Promise<any> {
     const filteredArgs = this.validateAndFilterQuery(args, model as string, options);
     return (this.prisma[model] as any).delete(filteredArgs);
@@ -384,7 +399,7 @@ export class TenantAwareDatabase {
   async count<T extends keyof PrismaClient>(
     model: T,
     args: any = {},
-    options: TenantAwareQueryOptions = {}
+    options: TenantAwareQueryOptions = {},
   ): Promise<number> {
     const filteredArgs = this.validateAndFilterQuery(args, model as string, options);
     return (this.prisma[model] as any).count(filteredArgs);
@@ -393,20 +408,19 @@ export class TenantAwareDatabase {
   /**
    * Execute raw query with tenant context validation
    */
-  async executeRaw(
-    query: string,
-    params: any[] = [],
-    options: { allowCrossTenant?: boolean } = {}
-  ): Promise<any> {
+  async executeRaw(query: Prisma.Sql, options: { allowCrossTenant?: boolean } = {}): Promise<any> {
+    const queryText = query.strings.join('?').toLowerCase();
+
     if (!options.allowCrossTenant && this.context && !this.context.isSystemOperation) {
-      // Validate that raw queries don't bypass tenant security
-      const sanitizedQuery = query.toLowerCase();
-      if (sanitizedQuery.includes('select') && !sanitizedQuery.includes('tenant_id')) {
-        console.warn('Raw query may bypass tenant isolation:', query);
+      if (queryText.includes('select') && !queryText.includes('tenant_id')) {
+        throw new Error(
+          'Raw query blocked: tenant_id filter is required for tenant-scoped operations. ' +
+            'Add a tenant_id WHERE clause or pass { allowCrossTenant: true } to bypass.',
+        );
       }
     }
 
-    return this.prisma.$executeRawUnsafe(query, ...params);
+    return this.prisma.$queryRaw(query);
   }
 
   /**
@@ -426,28 +440,28 @@ export class TenantAwareDatabase {
           organizationId: tenantId,
           resourceType: 'STORAGE_GB',
           period: {
-            gte: new Date(new Date().getFullYear(), new Date().getMonth(), 1)
-          }
+            gte: new Date(new Date().getFullYear(), new Date().getMonth(), 1),
+          },
         },
-        _sum: { quantity: true }
+        _sum: { quantity: true },
       }),
       this.prisma.resourceUsage.aggregate({
         where: {
           organizationId: tenantId,
           resourceType: 'API_CALLS',
           period: {
-            gte: new Date(new Date().getFullYear(), new Date().getMonth(), 1)
-          }
+            gte: new Date(new Date().getFullYear(), new Date().getMonth(), 1),
+          },
         },
-        _sum: { quantity: true }
-      })
+        _sum: { quantity: true },
+      }),
     ]);
 
     return {
       pluginCount: stats[0],
       userCount: stats[1],
       storageUsed: Number(stats[2]._sum.quantity || 0),
-      apiCallsThisMonth: Number(stats[3]._sum.quantity || 0)
+      apiCallsThisMonth: Number(stats[3]._sum.quantity || 0),
     };
   }
 
@@ -457,19 +471,19 @@ export class TenantAwareDatabase {
   async bulkCreate<T extends keyof PrismaClient>(
     model: T,
     data: any[],
-    options: TenantAwareQueryOptions = {}
+    _options: TenantAwareQueryOptions = {},
   ): Promise<any> {
     if (!this.context?.isSystemOperation && this.context?.tenantId) {
       // Add tenant ID to all records if applicable
-      data = data.map(item => ({
+      data = data.map((item) => ({
         ...item,
-        tenantId: this.context!.tenantId
+        tenantId: this.context!.tenantId,
       }));
     }
 
     return (this.prisma[model] as any).createMany({
       data,
-      skipDuplicates: true
+      skipDuplicates: true,
     });
   }
 
@@ -478,7 +492,7 @@ export class TenantAwareDatabase {
    */
   async transaction<T>(
     operations: (client: TenantAwareDatabase) => Promise<T>,
-    options: { timeout?: number; isolationLevel?: Prisma.TransactionIsolationLevel } = {}
+    options: { timeout?: number; isolationLevel?: Prisma.TransactionIsolationLevel } = {},
   ): Promise<T> {
     return this.prisma.$transaction(async (prisma) => {
       const tenantAwareClient = new TenantAwareDatabase(prisma as PrismaClient);
@@ -520,12 +534,15 @@ export function createTenantDatabase(context: DatabaseContext): TenantAwareDatab
 /**
  * Utility function to create database context from tenant context
  */
-export function createDatabaseContext(tenantContext: TenantContext, userId?: string): DatabaseContext {
+export function createDatabaseContext(
+  tenantContext: TenantContext,
+  userId?: string,
+): DatabaseContext {
   return {
     tenantId: tenantContext.tenant.id,
     userId: userId || tenantContext.user?.id,
     userPermissions: tenantContext.permissions,
-    isSystemOperation: false
+    isSystemOperation: false,
   };
 }
 
@@ -555,7 +572,7 @@ export class TenantQueryBuilder {
     return {
       ...baseWhere,
       ...tenantFilter,
-      ...visibilityFilter
+      ...visibilityFilter,
     };
   }
 
@@ -581,7 +598,7 @@ export class TenantQueryBuilder {
   buildResourceUsageQuery(baseWhere: any = {}): any {
     return {
       ...baseWhere,
-      organizationId: this.tenantId
+      organizationId: this.tenantId,
     };
   }
 }

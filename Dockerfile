@@ -71,13 +71,13 @@ RUN chown -R nextjs:nodejs /app
 # Switch to non-root user
 USER nextjs
 
-# Expose port
-EXPOSE 3000
-ENV PORT 3000
+# Expose port (compose sets PORT=4400)
+EXPOSE 4400
+ENV PORT=4400
 
 # Health check
-HEALTHCHECK --interval=30s --timeout=3s --start-period=40s --retries=3 \
-  CMD node -e "require('http').get('http://localhost:3000/api/health', (res) => { process.exit(res.statusCode === 200 ? 0 : 1); })"
+HEALTHCHECK --interval=30s --timeout=3s --start-period=120s --retries=3 \
+  CMD node -e "const p=process.env.PORT||4400; require('http').get('http://localhost:'+p+'/api/health', (res) => { process.exit(res.statusCode === 200 ? 0 : 1); })"
 
 # Start the application
 CMD ["node", "server.js"]
@@ -99,12 +99,16 @@ RUN npm ci
 # Copy source code
 COPY . .
 
+# Generate Prisma client (required before dev server / API routes load @prisma/client)
+RUN npx prisma generate
+
 # Expose ports
-EXPOSE 3000
+EXPOSE 4400
 EXPOSE 6006
 
 # Set development environment
 ENV NODE_ENV development
+ENV PORT=4400
 ENV NEXT_TELEMETRY_DISABLED 1
 
 # Development command

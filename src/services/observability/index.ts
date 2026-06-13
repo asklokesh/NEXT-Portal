@@ -1,49 +1,39 @@
 /**
  * Observability and SRE Automation System
- * 
+ *
  * Production-ready observability platform with comprehensive monitoring,
  * SRE automation, incident management, and performance optimization.
- * 
+ *
  * @author Claude Code Assistant
  * @version 1.0.0
  */
 
+import { validateConfig } from './observability-config';
+import { ObservabilityOrchestrator } from './observability-orchestrator';
+
+import type { ObservabilityConfig } from './observability-config';
+
 // Core configuration
-export { 
+export {
   ObservabilityConfig,
   getDefaultConfig,
   validateConfig,
-  loadConfig
+  loadConfig,
 } from './observability-config';
 
 // Main orchestrator
-export { 
+export {
   ObservabilityOrchestrator,
   ObservabilityEvent,
-  HealthStatus
+  HealthStatus,
 } from './observability-orchestrator';
 
 // Core observability services
-export {
-  MetricsCollector,
-  Metric,
-  MetricSeries,
-  AggregatedMetric
-} from './metrics-collector';
+export { MetricsCollector, Metric, MetricSeries, AggregatedMetric } from './metrics-collector';
 
-export {
-  LoggingEngine,
-  LogEntry,
-  LogAnalysisResult,
-  LogFilter
-} from './logging-engine';
+export { LoggingEngine, LogEntry, LogAnalysisResult, LogFilter } from './logging-engine';
 
-export {
-  TracingManager,
-  TraceSpan,
-  TraceAnalysis,
-  TracingMetrics
-} from './tracing-manager';
+export { TracingManager, TraceSpan, TraceAnalysis, TracingMetrics } from './tracing-manager';
 
 // SRE automation
 export {
@@ -54,7 +44,7 @@ export {
   SLOViolation,
   BurnRateAlert,
   SREMetrics,
-  Runbook
+  Runbook,
 } from './sre-automation';
 
 // Incident management
@@ -65,7 +55,7 @@ export {
   IncidentTemplate,
   EscalationPolicy,
   PostMortem,
-  IncidentMetrics
+  IncidentMetrics,
 } from './incident-manager';
 
 // Intelligent alerting
@@ -76,7 +66,7 @@ export {
   AlertGroup,
   Silence,
   NotificationChannel,
-  AlertingMetrics
+  AlertingMetrics,
 } from './alerting-engine';
 
 // Capacity planning
@@ -87,7 +77,7 @@ export {
   CapacityRecommendation,
   AutoScalingPolicy,
   CostOptimization,
-  CapacityMetrics
+  CapacityMetrics,
 } from './capacity-planner';
 
 // Performance analysis
@@ -95,28 +85,27 @@ export {
   PerformanceAnalyzer,
   PerformanceProfile,
   BottleneckAnalysis,
-  PerformanceRecommendation
+  PerformanceRecommendation,
 } from './performance-analyzer';
 
 // Platform integrations
-export {
-  IntegrationAdapters,
-  IntegrationAdapter
-} from './integration-adapters';
+export { IntegrationAdapters, IntegrationAdapter } from './integration-adapters';
 
 /**
  * Initialize and configure the complete observability system
- * 
+ *
  * @param config Optional configuration overrides
  * @returns Configured ObservabilityOrchestrator instance
  */
-export function createObservabilitySystem(config?: Partial<ObservabilityConfig>): ObservabilityOrchestrator {
+export function createObservabilitySystem(
+  config?: Partial<ObservabilityConfig>,
+): ObservabilityOrchestrator {
   return new ObservabilityOrchestrator(config);
 }
 
 /**
  * Quick start function for development environments
- * 
+ *
  * @returns Pre-configured ObservabilityOrchestrator with development settings
  */
 export function createDevObservabilitySystem(): ObservabilityOrchestrator {
@@ -136,17 +125,19 @@ export function createDevObservabilitySystem(): ObservabilityOrchestrator {
       },
     },
   };
-  
+
   return new ObservabilityOrchestrator(devConfig);
 }
 
 /**
  * Production-optimized observability system
- * 
+ *
  * @param config Production-specific configuration
  * @returns Production-ready ObservabilityOrchestrator instance
  */
-export function createProductionObservabilitySystem(config: Partial<ObservabilityConfig>): ObservabilityOrchestrator {
+export function createProductionObservabilitySystem(
+  config: Partial<ObservabilityConfig>,
+): ObservabilityOrchestrator {
   const prodConfig = {
     environment: 'production' as const,
     logging: {
@@ -163,7 +154,7 @@ export function createProductionObservabilitySystem(config: Partial<Observabilit
     },
     ...config,
   };
-  
+
   return new ObservabilityOrchestrator(prodConfig);
 }
 

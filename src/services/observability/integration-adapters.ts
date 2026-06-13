@@ -1,12 +1,13 @@
 /**
  * Monitoring Platform Integration Adapters
- * 
+ *
  * Production-ready integration adapters for popular monitoring platforms
  * including Prometheus, Grafana, Jaeger, ELK Stack, Datadog, and more.
  */
 
 import { EventEmitter } from 'events';
-import { ObservabilityConfig } from './observability-config';
+
+import type { ObservabilityConfig } from './observability-config';
 
 export interface IntegrationAdapter {
   name: string;
@@ -14,7 +15,7 @@ export interface IntegrationAdapter {
   status: 'connected' | 'disconnected' | 'error';
   lastSync: Date;
   config: Record<string, any>;
-  
+
   connect(): Promise<void>;
   disconnect(): Promise<void>;
   sync(): Promise<void>;
@@ -30,15 +31,15 @@ export class IntegrationAdapters extends EventEmitter {
   constructor(config: ObservabilityConfig) {
     super();
     this.config = config;
-    
+
     this.initializeAdapters();
   }
 
   async start(): Promise<void> {
     if (this.isRunning) return;
-    
+
     this.isRunning = true;
-    
+
     // Connect all adapters
     for (const adapter of this.adapters.values()) {
       try {
@@ -47,25 +48,25 @@ export class IntegrationAdapters extends EventEmitter {
         this.emit('adapter-connection-error', { adapter: adapter.name, error });
       }
     }
-    
+
     // Start sync interval
-    this.syncInterval = setInterval(async () => {
-      await this.syncAllAdapters();
+    this.syncInterval = setInterval(() => {
+      void this.syncAllAdapters();
     }, 300000); // Every 5 minutes
-    
+
     this.emit('started', { timestamp: new Date() });
     console.log('🔌 Integration Adapters started');
   }
 
   async stop(): Promise<void> {
     if (!this.isRunning) return;
-    
+
     this.isRunning = false;
-    
+
     if (this.syncInterval) {
       clearInterval(this.syncInterval);
     }
-    
+
     // Disconnect all adapters
     for (const adapter of this.adapters.values()) {
       try {
@@ -74,7 +75,7 @@ export class IntegrationAdapters extends EventEmitter {
         this.emit('adapter-disconnection-error', { adapter: adapter.name, error });
       }
     }
-    
+
     this.emit('stopped', { timestamp: new Date() });
     console.log('🔌 Integration Adapters stopped');
   }
@@ -88,22 +89,22 @@ export class IntegrationAdapters extends EventEmitter {
     if (this.config.integrations.prometheus.enabled) {
       this.adapters.set('prometheus', new PrometheusAdapter(this.config));
     }
-    
+
     // Grafana adapter
     if (this.config.integrations.grafana.enabled) {
       this.adapters.set('grafana', new GrafanaAdapter(this.config));
     }
-    
+
     // Jaeger adapter
     if (this.config.integrations.jaeger.enabled) {
       this.adapters.set('jaeger', new JaegerAdapter(this.config));
     }
-    
+
     // Elasticsearch adapter
     if (this.config.integrations.elasticsearch.enabled) {
       this.adapters.set('elasticsearch', new ElasticsearchAdapter(this.config));
     }
-    
+
     // Datadog adapter
     if (this.config.integrations.datadog.enabled) {
       this.adapters.set('datadog', new DatadogAdapter(this.config));
@@ -122,23 +123,22 @@ export class IntegrationAdapters extends EventEmitter {
 
   async getHealth(): Promise<{ status: string; lastCheck: Date; details?: string }> {
     const adapterHealths = await Promise.all(
-      Array.from(this.adapters.values()).map(async adapter => {
-        return await adapter.getHealth();
-      })
+      Array.from(this.adapters.values()).map((adapter) => adapter.getHealth()),
     );
-    
-    const unhealthyAdapters = adapterHealths.filter(h => h.status !== 'healthy');
-    
+
+    const unhealthyAdapters = adapterHealths.filter((h) => h.status !== 'healthy');
+
     return {
       status: unhealthyAdapters.length === 0 ? 'healthy' : 'degraded',
       lastCheck: new Date(),
-      details: unhealthyAdapters.length > 0 ? `${unhealthyAdapters.length} adapters unhealthy` : undefined,
+      details:
+        unhealthyAdapters.length > 0 ? `${unhealthyAdapters.length} adapters unhealthy` : undefined,
     };
   }
 
   async updateConfig(config: ObservabilityConfig): Promise<void> {
     this.config = config;
-    
+
     // Reinitialize adapters with new config
     this.adapters.clear();
     this.initializeAdapters();
@@ -149,7 +149,7 @@ export class IntegrationAdapters extends EventEmitter {
 class PrometheusAdapter implements IntegrationAdapter {
   name = 'prometheus';
   type = 'metrics' as const;
-  status = 'disconnected' as const;
+  status: IntegrationAdapter['status'] = 'disconnected';
   lastSync = new Date();
   config: Record<string, any>;
 
