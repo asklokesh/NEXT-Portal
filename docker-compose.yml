@@ -1,7 +1,5 @@
-version: '3.8'
-
 services:
-  # Main IDP Platform Application
+  # Main IDP Platform Application (production runner)
   idp-platform:
     build:
       context: .
@@ -13,12 +11,24 @@ services:
     ports:
       - '4400:4400'
     environment:
-      - NODE_ENV=production
+      - NODE_ENV=${NODE_ENV:-production}
       - PORT=4400
+      - NEXT_PUBLIC_APP_URL=${NEXT_PUBLIC_APP_URL:-http://localhost:4400}
       - BACKSTAGE_API_URL=${BACKSTAGE_API_URL:-http://localhost:4402}
       - BACKSTAGE_BACKEND_URL=${BACKSTAGE_BACKEND_URL:-http://localhost:7007}
-      - DATABASE_URL=${DATABASE_URL:-postgresql://postgres:postgres@db:5432/idp_wrapper}
+      - DATABASE_URL=${DATABASE_URL:-postgresql://postgres:postgres@db:5432/next_portal}
       - REDIS_URL=${REDIS_URL:-redis://redis:6379}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - NEXTAUTH_URL=${NEXTAUTH_URL:-http://localhost:4400}
+      - NEXTAUTH_SECRET=${NEXTAUTH_SECRET:-development-nextauth-secret-min-32-chars-long}
+      - JWT_SECRET=${JWT_SECRET:-development-jwt-secret-key-32-chars-minimum-required-here}
+      - SESSION_SECRET=${SESSION_SECRET:-development-session-secret-32-chars-minimum-required}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY:-dev-encryption-key-32-chars-min!}
+      - CORS_ORIGIN=${CORS_ORIGIN:-http://localhost:4400}
+      - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY:-sk_test_replace_with_your_stripe_test_key}
+      - STRIPE_PUBLISHABLE_KEY=${STRIPE_PUBLISHABLE_KEY:-pk_test_replace_with_your_stripe_test_key}
+      - STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET:-whsec_replace_with_your_stripe_webhook_secret}
     depends_on:
       - db
       - redis
@@ -26,11 +36,68 @@ services:
       - idp-network
     restart: unless-stopped
     healthcheck:
-      test: ['CMD', 'wget', '--quiet', '--tries=1', '--spider', 'http://localhost:4400/api/health']
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "const p=process.env.PORT||4400; require('http').get('http://localhost:'+p+'/api/health', (res) => { process.exit(res.statusCode === 200 ? 0 : 1); }).on('error', () => process.exit(1));",
+        ]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 40s
+      start_period: 120s
+
+  # Development variant - opt-in via: docker compose --profile dev up idp-platform-dev
+  idp-platform-dev:
+    profiles:
+      - dev
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: development
+      args:
+        NEXT_PUBLIC_BACKSTAGE_API_URL: ${NEXT_PUBLIC_BACKSTAGE_API_URL:-http://localhost:4402}
+        NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:-http://localhost:4400}
+    ports:
+      - '4400:4400'
+    environment:
+      - NODE_ENV=development
+      - PORT=4400
+      - NEXT_PUBLIC_APP_URL=${NEXT_PUBLIC_APP_URL:-http://localhost:4400}
+      - BACKSTAGE_API_URL=${BACKSTAGE_API_URL:-http://localhost:4402}
+      - BACKSTAGE_BACKEND_URL=${BACKSTAGE_BACKEND_URL:-http://localhost:7007}
+      - DATABASE_URL=${DATABASE_URL:-postgresql://postgres:postgres@db:5432/next_portal}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - NEXTAUTH_URL=${NEXTAUTH_URL:-http://localhost:4400}
+      - NEXTAUTH_SECRET=${NEXTAUTH_SECRET:-development-nextauth-secret-min-32-chars-long}
+      - JWT_SECRET=${JWT_SECRET:-development-jwt-secret-key-32-chars-minimum-required-here}
+      - SESSION_SECRET=${SESSION_SECRET:-development-session-secret-32-chars-minimum-required}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY:-dev-encryption-key-32-chars-min!}
+      - CORS_ORIGIN=${CORS_ORIGIN:-http://localhost:4400}
+      - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY:-sk_test_replace_with_your_stripe_test_key}
+      - STRIPE_PUBLISHABLE_KEY=${STRIPE_PUBLISHABLE_KEY:-pk_test_replace_with_your_stripe_test_key}
+      - STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET:-whsec_replace_with_your_stripe_webhook_secret}
+    depends_on:
+      - db
+      - redis
+    networks:
+      - idp-network
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "const p=process.env.PORT||4400; require('http').get('http://localhost:'+p+'/api/health', (res) => { process.exit(res.statusCode === 200 ? 0 : 1); }).on('error', () => process.exit(1));",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
 
   # PostgreSQL Database
   db:
@@ -38,7 +105,7 @@ services:
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: idp_wrapper
+      POSTGRES_DB: next_portal
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
