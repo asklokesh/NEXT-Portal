@@ -1,5 +1,13 @@
+import type { ObservabilityConfig } from './observability-config';
 
-import { ObservabilityConfig } from './observability-config';
+export interface SLI {
+  id: string;
+  name: string;
+  description: string;
+  metricName: string;
+  goodEventQuery?: string;
+  validEventQuery?: string;
+}
 
 export interface SLO {
   id: string;
@@ -17,6 +25,39 @@ export interface ErrorBudget {
   goodEvents: number;
   badEvents: number;
   remainingBudget: number;
+}
+
+export interface SLOViolation {
+  sloId: string;
+  serviceName: string;
+  target: number;
+  actual: number;
+  detectedAt: Date;
+  severity: 'warning' | 'critical';
+}
+
+export interface BurnRateAlert {
+  sloId: string;
+  burnRate: number;
+  window: string;
+  budgetRemaining: number;
+  triggeredAt: Date;
+}
+
+export interface SREMetrics {
+  totalSLOs: number;
+  violatedSLOs: number;
+  averageErrorBudgetRemaining: number;
+  activeBurnRateAlerts: number;
+}
+
+export interface Runbook {
+  id: string;
+  name: string;
+  description: string;
+  triggers: string[];
+  steps: string[];
+  autoExecution: boolean;
 }
 
 export class SREAutomation {
@@ -92,7 +133,7 @@ export class SREAutomation {
 
   private updateErrorBudget(slo: SLO, errorBudget: ErrorBudget) {
     const burnRate = errorBudget.badEvents / errorBudget.totalEvents;
-    errorBudget.remainingBudget = (1 - slo.target) - burnRate;
+    errorBudget.remainingBudget = 1 - slo.target - burnRate;
   }
 
   async processIncident(incident: any): Promise<void> {
@@ -101,17 +142,17 @@ export class SREAutomation {
     // calculating the impact on the error budget.
     const sloId = incident.labels.slo_id;
     if (sloId) {
-        const errorBudget = this.errorBudgets.get(sloId);
-        if (errorBudget) {
-            // For simplicity, we'll just burn a fixed amount of budget for each incident
-            errorBudget.remainingBudget -= 0.0001;
-        }
+      const errorBudget = this.errorBudgets.get(sloId);
+      if (errorBudget) {
+        // For simplicity, we'll just burn a fixed amount of budget for each incident
+        errorBudget.remainingBudget -= 0.0001;
+      }
     }
   }
 
   async getSLOStatus(serviceName: string): Promise<any> {
     const serviceSLOs = Array.from(this.slos.values()).filter(
-      (slo) => slo.serviceName === serviceName
+      (slo) => slo.serviceName === serviceName,
     );
 
     return serviceSLOs.map((slo) => ({
