@@ -14,13 +14,10 @@ src/app/api/marketplace/plugins/route.ts
 src/app/api/monitoring/tenant-health/route.ts
 
 # Components
-src/components/plugins/PluginManagementDashboard.tsx
 src/components/catalog/VisualTemplateDesigner.tsx
 src/components/marketplace/AdvancedPluginMarketplace.tsx
 src/components/runtime/ClientSafeWrapper.tsx
 src/components/setup/UserPermissionWizard.tsx
-src/components/feedback/FeedbackPortal.tsx
-src/components/feedback/FeedbackWidget.tsx
 src/components/search/SearchBar.tsx
 src/components/dashboard/RealtimeDashboard.tsx
 src/components/notifications/LiveNotificationSystem.tsx
@@ -106,3 +103,12 @@ src/services/communications/template-engine.ts
 .next/
 out/
 node_modules/
+
+# Scripts and Tests (excluded from tsconfig, so typescript-eslint cannot parse them)
+scripts/
+tests/
+**/__tests__/
+**/*.test.ts
+**/*.test.tsx
+**/*.spec.ts
+**/*.spec.tsx

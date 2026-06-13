@@ -143,6 +143,8 @@ const customJestConfig = {
     '<rootDir>/src/lib/cost/__tests__/aggregator.test.ts',
     // Quality assessor score thresholds need calibration
     '<rootDir>/src/services/catalog/__tests__/quality-assessor.test.ts',
+    // Prisma.sql requires node environment (covered by database project)
+    '<rootDir>/src/lib/database/__tests__/parameterized-sql.test.ts',
   ],
   modulePathIgnorePatterns: ['<rootDir>/backstage/', '<rootDir>/config/docker/backstage/'],
   watchPathIgnorePatterns: [
@@ -283,7 +285,31 @@ const customJestConfig = {
         '<rootDir>/src/lib/cost/__tests__/aggregator.test.ts',
         // Quality assessor score thresholds need calibration
         '<rootDir>/src/services/catalog/__tests__/quality-assessor.test.ts',
+        // Prisma.sql requires node environment (also covered by database project)
+        '<rootDir>/src/lib/database/__tests__/parameterized-sql.test.ts',
       ],
+    },
+    {
+      displayName: 'database',
+      testMatch: [
+        '<rootDir>/tests/database/**/*.{test,spec}.{js,jsx,ts,tsx}',
+        '<rootDir>/src/lib/database/__tests__/**/*.{test,spec}.{js,jsx,ts,tsx}',
+      ],
+      testEnvironment: 'node',
+      setupFiles: ['<rootDir>/tests/setup/jest.polyfills.js'],
+      moduleNameMapper: {
+        '^@/(.*)$': '<rootDir>/src/$1',
+        '^@lib/(.*)$': '<rootDir>/src/lib/$1',
+      },
+      transform: {
+        '^.+\\.(ts|tsx)$': [
+          'ts-jest',
+          {
+            tsconfig: '<rootDir>/tsconfig.jest.json',
+          },
+        ],
+      },
+      testTimeout: 120000,
     },
     // Integration and contracts projects disabled - require external infrastructure (supertest, pact, vault)
     // Run these tests separately with proper infrastructure setup:
