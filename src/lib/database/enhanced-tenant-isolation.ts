@@ -3,9 +3,10 @@
  * Implements Row-Level Security (RLS), schema-per-tenant, and comprehensive data governance
  */
 
-import { Pool, PoolClient } from 'pg';
-import { PrismaClient } from '@prisma/client';
 import { Redis } from 'ioredis';
+import { Pool } from 'pg';
+
+import type { PoolClient } from 'pg';
 
 export interface TenantConfiguration {
   id: string;
@@ -104,11 +105,13 @@ export class EnhancedTenantIsolationManager {
   private readonly redis: Redis;
   private readonly auditLog: ComplianceAuditEntry[] = [];
   private readonly metrics: Map<string, TenantMetrics> = new Map();
-  
+
   // Performance optimization caches
   private readonly schemaCache: Map<string, boolean> = new Map();
-  private readonly permissionCache: Map<string, { permissions: string[], expires: number }> = new Map();
-  private readonly connectionCache: Map<string, { client: PoolClient, lastUsed: number }> = new Map();
+  private readonly permissionCache: Map<string, { permissions: string[]; expires: number }> =
+    new Map();
+  private readonly connectionCache: Map<string, { client: PoolClient; lastUsed: number }> =
+    new Map();
 
   constructor() {
     // Initialize master database pool (for system operations)
@@ -140,7 +143,7 @@ export class EnhancedTenantIsolationManager {
    */
   async setTenantContext(context: TenantContext): Promise<void> {
     const startTime = Date.now();
-    
+
     try {
       // Validate tenant exists and is active
       const tenant = await this.getTenantConfig(context.tenantId);
@@ -183,7 +186,6 @@ export class EnhancedTenantIsolationManager {
           complianceFlags: [],
         });
       }
-
     } catch (error) {
       await this.auditOperation({
         id: this.generateId(),
@@ -224,11 +226,11 @@ export class EnhancedTenantIsolationManager {
       resourceType: string;
       resourceId?: string;
       skipAudit?: boolean;
-    }
+    },
   ): Promise<T> {
     const startTime = Date.now();
     const tenant = await this.getTenantConfig(context.tenantId);
-    
+
     if (!tenant) {
       throw new Error(`Tenant configuration not found: ${context.tenantId}`);
     }
@@ -276,7 +278,6 @@ export class EnhancedTenantIsolationManager {
       }
 
       return result;
-
     } catch (error) {
       // Audit failed operation
       if (!options.skipAudit) {
@@ -360,8 +361,9 @@ export class EnhancedTenantIsolationManager {
         lastHealthCheck: new Date(),
       });
 
-      console.log(`Created tenant: ${config.id} with isolation strategy: ${config.isolationStrategy}`);
-
+      console.log(
+        `Created tenant: ${config.id} with isolation strategy: ${config.isolationStrategy}`,
+      );
     } catch (error) {
       console.error(`Failed to create tenant ${config.id}:`, error);
       // Cleanup on failure
@@ -375,7 +377,7 @@ export class EnhancedTenantIsolationManager {
    */
   private async setupRowLevelSecurity(tenantId: string): Promise<void> {
     const client = await this.masterPool.connect();
-    
+
     try {
       // Enable RLS on all tenant-aware tables
       const tenantTables = [
@@ -397,7 +399,7 @@ export class EnhancedTenantIsolationManager {
 
         // Create tenant-specific policy
         const policyName = `${table}_tenant_isolation_${tenantId.replace(/[^a-zA-Z0-9]/g, '_')}`;
-        
+
         await client.query(`
           DROP POLICY IF EXISTS ${policyName} ON ${table}
         `);
@@ -417,7 +419,6 @@ export class EnhancedTenantIsolationManager {
       }
 
       console.log(`Setup RLS policies for tenant: ${tenantId}`);
-
     } finally {
       client.release();
     }
@@ -429,7 +430,7 @@ export class EnhancedTenantIsolationManager {
   private async createTenantSchema(tenantId: string): Promise<void> {
     const client = await this.masterPool.connect();
     const schemaName = `tenant_${tenantId.replace(/[^a-zA-Z0-9]/g, '_')}`;
-    
+
     try {
       // Create schema
       await client.query(`CREATE SCHEMA IF NOT EXISTS ${schemaName}`);
@@ -441,7 +442,6 @@ export class EnhancedTenantIsolationManager {
       this.schemaCache.set(tenantId, true);
 
       console.log(`Created schema: ${schemaName}`);
-
     } finally {
       client.release();
     }
@@ -454,8 +454,9 @@ export class EnhancedTenantIsolationManager {
     // Check connection cache first
     const cached = this.connectionCache.get(tenantId);
     const now = Date.now();
-    
-    if (cached && (now - cached.lastUsed) < 30000) { // 30 second cache
+
+    if (cached && now - cached.lastUsed < 30000) {
+      // 30 second cache
       cached.lastUsed = now;
       return cached.client;
     }
@@ -477,10 +478,14 @@ export class EnhancedTenantIsolationManager {
    * Set database session context for RLS
    */
   private async setSessionContext(client: PoolClient, context: TenantContext): Promise<void> {
-    await client.query(`SET app.current_tenant_id = '${context.tenantId}'`);
-    await client.query(`SET app.current_user_id = '${context.userId || 'anonymous'}'`);
-    await client.query(`SET app.current_session_id = '${context.sessionId || context.requestId}'`);
-    await client.query(`SET app.client_ip = '${context.clientIP}'`);
+    await client.query(`SELECT set_config('app.current_tenant_id', $1, false)`, [context.tenantId]);
+    await client.query(`SELECT set_config('app.current_user_id', $1, false)`, [
+      context.userId || 'anonymous',
+    ]);
+    await client.query(`SELECT set_config('app.current_session_id', $1, false)`, [
+      context.sessionId || context.requestId,
+    ]);
+    await client.query(`SELECT set_config('app.client_ip', $1, false)`, [context.clientIP]);
   }
 
   /**
@@ -489,15 +494,17 @@ export class EnhancedTenantIsolationManager {
   private async validateQueryAccess(
     sql: string,
     context: TenantContext,
-    options: { operation: string; resourceType: string }
+    options: { operation: string; resourceType: string },
   ): Promise<void> {
     const tenant = await this.getTenantConfig(context.tenantId);
     if (!tenant) return;
 
     // Check for prohibited operations
-    if (sql.toLowerCase().includes('drop table') || 
-        sql.toLowerCase().includes('alter table') ||
-        sql.toLowerCase().includes('create table')) {
+    if (
+      sql.toLowerCase().includes('drop table') ||
+      sql.toLowerCase().includes('alter table') ||
+      sql.toLowerCase().includes('create table')
+    ) {
       throw new Error('DDL operations not allowed for tenant queries');
     }
 
@@ -515,11 +522,13 @@ export class EnhancedTenantIsolationManager {
       context.tenantId,
       context.userId || 'anonymous',
       options.operation,
-      options.resourceType
+      options.resourceType,
     );
 
     if (!hasPermission) {
-      throw new Error(`Insufficient permissions for ${options.operation} on ${options.resourceType}`);
+      throw new Error(
+        `Insufficient permissions for ${options.operation} on ${options.resourceType}`,
+      );
     }
   }
 
@@ -530,31 +539,35 @@ export class EnhancedTenantIsolationManager {
     tenantId: string,
     userId: string,
     operation: string,
-    resourceType: string
+    resourceType: string,
   ): Promise<boolean> {
     const cacheKey = `${tenantId}:${userId}`;
     const cached = this.permissionCache.get(cacheKey);
-    
+
     if (cached && cached.expires > Date.now()) {
-      return cached.permissions.includes(`${operation}:${resourceType}`) ||
-             cached.permissions.includes(`*:${resourceType}`) ||
-             cached.permissions.includes(`${operation}:*`) ||
-             cached.permissions.includes('*:*');
+      return (
+        cached.permissions.includes(`${operation}:${resourceType}`) ||
+        cached.permissions.includes(`*:${resourceType}`) ||
+        cached.permissions.includes(`${operation}:*`) ||
+        cached.permissions.includes('*:*')
+      );
     }
 
     // Fetch permissions from database (simplified for demo)
     const permissions = await this.fetchUserPermissions(tenantId, userId);
-    
+
     // Cache for 5 minutes
     this.permissionCache.set(cacheKey, {
       permissions,
       expires: Date.now() + 300000,
     });
 
-    return permissions.includes(`${operation}:${resourceType}`) ||
-           permissions.includes(`*:${resourceType}`) ||
-           permissions.includes(`${operation}:*`) ||
-           permissions.includes('*:*');
+    return (
+      permissions.includes(`${operation}:${resourceType}`) ||
+      permissions.includes(`*:${resourceType}`) ||
+      permissions.includes(`${operation}:*`) ||
+      permissions.includes('*:*')
+    );
   }
 
   /**
@@ -563,11 +576,11 @@ export class EnhancedTenantIsolationManager {
   private async analyzeDataAccess(
     sql: string,
     result: any,
-    operation: string
+    _operation: string,
   ): Promise<ComplianceAuditEntry['dataAccessed']> {
     const tables = this.extractTablesFromQuery(sql);
     const rowCount = result.rows ? result.rows.length : result.rowCount || 0;
-    
+
     // Check for PII/sensitive data access
     const containsPII = this.detectPIIAccess(sql, tables);
     const containsSensitive = this.detectSensitiveAccess(sql, tables);
@@ -586,7 +599,7 @@ export class EnhancedTenantIsolationManager {
   private extractTablesFromQuery(sql: string): string[] {
     const tablePattern = /(?:FROM|JOIN|INTO|UPDATE)\s+([a-zA-Z_][a-zA-Z0-9_]*)/gi;
     const matches = sql.match(tablePattern) || [];
-    return matches.map(match => match.split(/\s+/).pop()!).filter(Boolean);
+    return matches.map((match) => match.split(/\s+/).pop()!).filter(Boolean);
   }
 
   /**
@@ -595,10 +608,10 @@ export class EnhancedTenantIsolationManager {
   private detectPIIAccess(sql: string, tables: string[]): boolean {
     const piiTables = ['users', 'user_profiles', 'billing_records', 'audit_logs'];
     const piiColumns = ['email', 'phone', 'ssn', 'tax_id', 'address'];
-    
-    const hasPIITable = tables.some(table => piiTables.includes(table));
-    const hasPIIColumn = piiColumns.some(column => sql.toLowerCase().includes(column));
-    
+
+    const hasPIITable = tables.some((table) => piiTables.includes(table));
+    const hasPIIColumn = piiColumns.some((column) => sql.toLowerCase().includes(column));
+
     return hasPIITable || hasPIIColumn;
   }
 
@@ -608,10 +621,12 @@ export class EnhancedTenantIsolationManager {
   private detectSensitiveAccess(sql: string, tables: string[]): boolean {
     const sensitiveTables = ['api_keys', 'secrets', 'encryption_keys'];
     const sensitiveColumns = ['password', 'token', 'secret', 'key'];
-    
-    const hasSensitiveTable = tables.some(table => sensitiveTables.includes(table));
-    const hasSensitiveColumn = sensitiveColumns.some(column => sql.toLowerCase().includes(column));
-    
+
+    const hasSensitiveTable = tables.some((table) => sensitiveTables.includes(table));
+    const hasSensitiveColumn = sensitiveColumns.some((column) =>
+      sql.toLowerCase().includes(column),
+    );
+
     return hasSensitiveTable || hasSensitiveColumn;
   }
 
@@ -640,7 +655,7 @@ export class EnhancedTenantIsolationManager {
    */
   private async getTenantConfig(tenantId: string): Promise<TenantConfiguration | null> {
     let config = this.tenantConfigs.get(tenantId);
-    
+
     if (!config) {
       // Try to fetch from Redis cache
       const cached = await this.redis.get(`tenant:config:${tenantId}`);
@@ -649,7 +664,7 @@ export class EnhancedTenantIsolationManager {
         this.tenantConfigs.set(tenantId, config!);
       }
     }
-    
+
     return config || null;
   }
 
@@ -659,21 +674,17 @@ export class EnhancedTenantIsolationManager {
   private async updatePerformanceMetrics(
     tenantId: string,
     operation: string,
-    duration: number
+    duration: number,
   ): Promise<void> {
     const metrics = this.metrics.get(tenantId);
     if (!metrics) return;
 
     metrics.queryCount++;
     metrics.avgResponseTime = (metrics.avgResponseTime + duration) / 2;
-    
+
     // Update Redis metrics for monitoring
-    await this.redis.zadd(
-      `metrics:${tenantId}:response_times`,
-      Date.now(),
-      duration
-    );
-    
+    await this.redis.zadd(`metrics:${tenantId}:response_times`, Date.now(), duration);
+
     // Keep only last 1000 entries
     await this.redis.zremrangebyrank(`metrics:${tenantId}:response_times`, 0, -1001);
   }
@@ -684,18 +695,15 @@ export class EnhancedTenantIsolationManager {
   private async auditOperation(entry: ComplianceAuditEntry): Promise<void> {
     // Add to in-memory cache
     this.auditLog.push(entry);
-    
+
     // Keep cache bounded
     if (this.auditLog.length > 10000) {
       this.auditLog.splice(0, 5000);
     }
 
     // Store in Redis for persistence
-    await this.redis.lpush(
-      `audit:${entry.tenantId}`,
-      JSON.stringify(entry)
-    );
-    
+    await this.redis.lpush(`audit:${entry.tenantId}`, JSON.stringify(entry));
+
     // Keep audit log bounded per tenant
     await this.redis.ltrim(`audit:${entry.tenantId}`, 0, 9999);
 
@@ -709,7 +717,7 @@ export class EnhancedTenantIsolationManager {
   /**
    * Fetch user permissions (simplified)
    */
-  private async fetchUserPermissions(tenantId: string, userId: string): Promise<string[]> {
+  private async fetchUserPermissions(_tenantId: string, _userId: string): Promise<string[]> {
     // This would fetch from the database in production
     return ['SELECT:*', 'INSERT:plugins', 'UPDATE:plugins', 'DELETE:plugins'];
   }
@@ -720,7 +728,7 @@ export class EnhancedTenantIsolationManager {
   private async createTenantTables(client: PoolClient, schemaName: string): Promise<void> {
     // This would contain all table creation SQL for the tenant schema
     // For now, we'll create a few key tables
-    
+
     const tables = [
       `CREATE TABLE ${schemaName}.plugins (LIKE public.plugins INCLUDING ALL)`,
       `CREATE TABLE ${schemaName}.plugin_versions (LIKE public.plugin_versions INCLUDING ALL)`,
@@ -735,12 +743,15 @@ export class EnhancedTenantIsolationManager {
   /**
    * Create tenant-specific connection pool
    */
-  private async createTenantConnectionPool(tenantId: string, maxConnections: number): Promise<void> {
+  private async createTenantConnectionPool(
+    tenantId: string,
+    maxConnections: number,
+  ): Promise<void> {
     const config = this.tenantConfigs.get(tenantId);
     if (!config) return;
 
     let connectionString = process.env.DATABASE_URL;
-    
+
     // For schema-per-tenant, modify search_path
     if (config.isolationStrategy === 'schema_per_tenant') {
       const schemaName = `tenant_${tenantId.replace(/[^a-zA-Z0-9]/g, '_')}`;
@@ -765,7 +776,7 @@ export class EnhancedTenantIsolationManager {
     try {
       // Remove from configs
       this.tenantConfigs.delete(tenantId);
-      
+
       // Close connection pool
       const pool = this.tenantPools.get(tenantId);
       if (pool) {
@@ -780,7 +791,6 @@ export class EnhancedTenantIsolationManager {
       await this.redis.del(`tenant:config:${tenantId}`);
       await this.redis.del(`audit:${tenantId}`);
       await this.redis.del(`metrics:${tenantId}:response_times`);
-
     } catch (error) {
       console.error(`Failed to cleanup tenant ${tenantId}:`, error);
     }
@@ -860,32 +870,34 @@ export class EnhancedTenantIsolationManager {
    * Start performance monitoring
    */
   private startPerformanceMonitoring(): void {
-    setInterval(async () => {
-      for (const [tenantId, metrics] of this.metrics.entries()) {
-        // Calculate performance metrics
-        const responseTimes = await this.redis.zrange(
-          `metrics:${tenantId}:response_times`,
-          -100,
-          -1
-        );
-        
-        if (responseTimes.length > 0) {
-          const avgTime = responseTimes
-            .map(Number)
-            .reduce((sum, time) => sum + time, 0) / responseTimes.length;
-          
-          metrics.avgResponseTime = avgTime;
-        }
+    setInterval(() => {
+      void (async () => {
+        for (const [tenantId, metrics] of this.metrics.entries()) {
+          // Calculate performance metrics
+          const responseTimes = await this.redis.zrange(
+            `metrics:${tenantId}:response_times`,
+            -100,
+            -1,
+          );
 
-        // Update health score
-        metrics.complianceScore = this.calculateComplianceScore(tenantId);
-        metrics.lastHealthCheck = new Date();
+          if (responseTimes.length > 0) {
+            const avgTime =
+              responseTimes.map(Number).reduce((sum, time) => sum + time, 0) / responseTimes.length;
 
-        // Alert if performance degrades
-        if (metrics.avgResponseTime > 1000) { // 1 second threshold
-          console.warn(`Performance alert for tenant ${tenantId}: ${metrics.avgResponseTime}ms`);
+            metrics.avgResponseTime = avgTime;
+          }
+
+          // Update health score
+          metrics.complianceScore = this.calculateComplianceScore(tenantId);
+          metrics.lastHealthCheck = new Date();
+
+          // Alert if performance degrades
+          if (metrics.avgResponseTime > 1000) {
+            // 1 second threshold
+            console.warn(`Performance alert for tenant ${tenantId}: ${metrics.avgResponseTime}ms`);
+          }
         }
-      }
+      })();
     }, 30000); // Every 30 seconds
   }
 
@@ -893,13 +905,15 @@ export class EnhancedTenantIsolationManager {
    * Start compliance monitoring
    */
   private startComplianceMonitoring(): void {
-    setInterval(async () => {
-      for (const tenantId of this.tenantConfigs.keys()) {
-        const config = this.tenantConfigs.get(tenantId);
-        if (config?.complianceLevel === 'strict') {
-          await this.runComplianceCheck(tenantId);
+    setInterval(() => {
+      void (async () => {
+        for (const tenantId of this.tenantConfigs.keys()) {
+          const config = this.tenantConfigs.get(tenantId);
+          if (config?.complianceLevel === 'strict') {
+            await this.runComplianceCheck(tenantId);
+          }
         }
-      }
+      })();
     }, 3600000); // Every hour
   }
 
@@ -910,20 +924,21 @@ export class EnhancedTenantIsolationManager {
     try {
       // Get recent audit logs
       const auditLogs = await this.redis.lrange(`audit:${tenantId}`, 0, 999);
-      const entries: ComplianceAuditEntry[] = auditLogs.map(log => JSON.parse(log));
+      const entries: ComplianceAuditEntry[] = auditLogs.map((log) => JSON.parse(log));
 
       // Check for violations
-      const violations = entries.filter(entry => 
-        entry.result === 'failure' || 
-        entry.complianceFlags.length > 0
+      const violations = entries.filter(
+        (entry) => entry.result === 'failure' || entry.complianceFlags.length > 0,
       );
 
-      if (violations.length > 10) { // Threshold
-        console.warn(`Compliance alert for tenant ${tenantId}: ${violations.length} violations found`);
-        
+      if (violations.length > 10) {
+        // Threshold
+        console.warn(
+          `Compliance alert for tenant ${tenantId}: ${violations.length} violations found`,
+        );
+
         // In production, this would trigger alerts to compliance team
       }
-
     } catch (error) {
       console.error(`Compliance check failed for tenant ${tenantId}:`, error);
     }
@@ -933,19 +948,18 @@ export class EnhancedTenantIsolationManager {
    * Calculate compliance score
    */
   private calculateComplianceScore(tenantId: string): number {
-    const violations = this.auditLog.filter(entry => 
-      entry.tenantId === tenantId && 
-      (entry.result === 'failure' || entry.complianceFlags.length > 0)
+    const violations = this.auditLog.filter(
+      (entry) =>
+        entry.tenantId === tenantId &&
+        (entry.result === 'failure' || entry.complianceFlags.length > 0),
     ).length;
 
-    const totalOperations = this.auditLog.filter(entry => 
-      entry.tenantId === tenantId
-    ).length;
+    const totalOperations = this.auditLog.filter((entry) => entry.tenantId === tenantId).length;
 
     if (totalOperations === 0) return 100;
 
     const violationRate = violations / totalOperations;
-    return Math.max(0, 100 - (violationRate * 100));
+    return Math.max(0, 100 - violationRate * 100);
   }
 
   private generateId(): string {
@@ -965,10 +979,10 @@ export class EnhancedTenantIsolationManager {
   async getAuditLogs(
     tenantId: string,
     limit: number = 100,
-    offset: number = 0
+    offset: number = 0,
   ): Promise<ComplianceAuditEntry[]> {
     const logs = await this.redis.lrange(`audit:${tenantId}`, offset, offset + limit - 1);
-    return logs.map(log => JSON.parse(log));
+    return logs.map((log) => JSON.parse(log));
   }
 
   /**
