@@ -35,6 +35,12 @@ const nextConfig = {
 
   // Webpack optimizations for module loading
   webpack: (config, { dev, isServer }) => {
+    // Redirect @backstage/backend-common to a local stub (package not installed in Next.js app)
+    config.resolve.alias = {
+      ...config.resolve.alias,
+      '@backstage/backend-common': require('path').resolve(__dirname, 'src/lib/stubs/backstage-backend-common/index.ts'),
+    };
+
     // Fix for undefined module calls and node modules in browser
     if (!isServer) {
       config.resolve.fallback = {

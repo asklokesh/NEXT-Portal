@@ -543,4 +543,3 @@ async function getRealtimeMetrics(tenantId: string) {
   };
 }
 
-export { GET, POST };
