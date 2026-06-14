@@ -62,6 +62,13 @@ const nextConfig = {
       },
     });
 
+    // Ignore HTML files pulled in by @mapbox/node-pre-gyp (via @tensorflow/tfjs-node)
+    config.module.rules.push({
+      test: /\.html$/,
+      include: /node_modules/,
+      use: 'null-loader',
+    });
+
     // Better error handling for client-side chunks
     if (!isServer) {
       config.output.strictModuleErrorHandling = true;
@@ -118,6 +125,9 @@ const nextConfig = {
 
     return config;
   },
+
+  // Packages that should only run on the server and not be bundled by webpack
+  serverExternalPackages: ['@tensorflow/tfjs-node', 'sharp'],
 
   // Experimental features for better caching
   experimental: {
