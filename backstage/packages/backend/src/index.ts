@@ -42,8 +42,10 @@ backend.add(import('@backstage/plugin-catalog-backend'));
 backend.add(import('@backstage/plugin-events-backend'));
 backend.add(import('@backstage/plugin-devtools-backend'));
 backend.add(import('@backstage/plugin-kubernetes-backend'));
-backend.add(import('./rbacPolicy'));
-backend.add(import('@backstage/plugin-permission-backend'));
+// Permission/RBAC plugins disabled for local dev - causes startup crash in this Backstage version
+// Uncomment for production with proper policy configuration
+// backend.add(import('./rbacPolicy'));
+// backend.add(import('@backstage/plugin-permission-backend'));
 backend.add(import('@backstage/plugin-proxy-backend'));
 backend.add(import('@backstage/plugin-scaffolder-backend'));
 backend.add(import('@backstage/plugin-scaffolder-backend-module-github'));

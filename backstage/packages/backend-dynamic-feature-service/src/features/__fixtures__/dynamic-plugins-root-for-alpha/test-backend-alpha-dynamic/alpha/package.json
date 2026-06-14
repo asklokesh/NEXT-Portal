@@ -1,5 +1,0 @@
-{
- "name": "plugin-test-backend-alpha-dynamic__alpha",
- "version": "0.0.0",
- "main": "../dist/alpha.cjs.js"
-}

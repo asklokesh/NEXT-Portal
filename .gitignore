@@ -81,3 +81,12 @@ storybook-static
 .claude/
 .claude*
 test-*
+
+# Backstage upstream monorepo - cloned inside Docker during build, never committed here
+# Only backstage/packages/backend/src/ overlay files and backstage/app-config*.yaml belong in git
+backstage/node_modules/
+backstage/packages/*/node_modules/
+backstage/plugins/*/node_modules/
+backstage/.yarn/cache/
+backstage/.yarn/install-state.gz
+backstage/packages/*/dist/

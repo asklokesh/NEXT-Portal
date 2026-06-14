@@ -1,9 +1,2 @@
-.git
-.yarn/cache
-.yarn/install-state.gz
-docs
-microsite
-node_modules
-packages/*/src
-packages/*/node_modules
-plugins
+# Nothing to exclude from the overlay - it only contains our custom source files
+# The upstream Backstage monorepo is cloned inside the Docker build, not from here

@@ -1,8 +1,0 @@
-{
- "name": "pkg-commonjs",
- "type": "commonjs",
- "exports": {
- ".": "./main.ts",
- "./print": "./print.ts"
- }
-}

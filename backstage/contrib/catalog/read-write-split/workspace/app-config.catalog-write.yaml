@@ -1,4 +1,0 @@
-# This file should be given to the catalog write nodes.
-
-catalog:
- role: write
