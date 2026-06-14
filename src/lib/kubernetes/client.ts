@@ -55,8 +55,13 @@ export class KubernetesClient {
    */
   async getClusters(): Promise<KubernetesCluster[]> {
     try {
-      const response = await backstageClient.request('/api/kubernetes/clusters');
-      return response.items || [];
+      // Use Next.js API proxy so the browser never hits Backstage directly
+      const response = await fetch(`${this.baseUrl}/clusters`, {
+        credentials: 'include',
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const data = await response.json();
+      return data.items || [];
     } catch (error) {
       console.error('Failed to fetch Kubernetes clusters:', error);
       return [];
