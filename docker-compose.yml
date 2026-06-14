@@ -14,8 +14,8 @@ services:
       - NODE_ENV=${NODE_ENV:-development}
       - PORT=4400
       - NEXT_PUBLIC_APP_URL=${NEXT_PUBLIC_APP_URL:-http://localhost:4400}
-      - BACKSTAGE_API_URL=${BACKSTAGE_API_URL:-http://localhost:4402}
-      - BACKSTAGE_BACKEND_URL=${BACKSTAGE_BACKEND_URL:-http://localhost:7007}
+      - BACKSTAGE_API_URL=http://backstage:7007
+      - BACKSTAGE_BACKEND_URL=http://backstage:7007
       - DATABASE_URL=${DATABASE_URL:-postgresql://postgres:postgres@db:5432/next_portal}
       - REDIS_URL=${REDIS_URL:-redis://redis:6379}
       - REDIS_HOST=redis
@@ -30,8 +30,12 @@ services:
       - STRIPE_PUBLISHABLE_KEY=${STRIPE_PUBLISHABLE_KEY:-pk_test_placeholder_not_configured}
       - STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET:-whsec_placeholder_not_configured}
     depends_on:
-      - db
-      - redis
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      backstage:
+        condition: service_healthy
     networks:
       - idp-network
     restart: unless-stopped
@@ -46,6 +50,45 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+      start_period: 120s
+
+  # Backstage backend - provides catalog, scaffolder, kubernetes, search, TechDocs APIs at :7007
+  # NEXT Portal UI replaces the Backstage frontend entirely; only the backend runs here.
+  backstage:
+    build:
+      context: ./backstage
+      dockerfile: Dockerfile.backend
+    ports:
+      - '7007:7007'
+    environment:
+      - NODE_ENV=development
+      - POSTGRES_HOST=db
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=backstage
+      - GITHUB_TOKEN=${GITHUB_TOKEN:-}
+      - AUTH_GITHUB_CLIENT_ID=${AUTH_GITHUB_CLIENT_ID:-}
+      - AUTH_GITHUB_CLIENT_SECRET=${AUTH_GITHUB_CLIENT_SECRET:-}
+      - NEXT_PUBLIC_APP_URL=${NEXT_PUBLIC_APP_URL:-http://localhost:4400}
+    command:
+      - node
+      - packages/backend
+      - --config
+      - app-config.yaml
+      - --config
+      - app-config.docker.yaml
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - idp-network
+    restart: unless-stopped
+    healthcheck:
+      test: ['CMD', 'curl', '-f', 'http://localhost:7007/api/catalog/entities?limit=1']
+      interval: 15s
+      timeout: 10s
+      retries: 10
       start_period: 120s
 
   # Development variant - opt-in via: docker compose --profile dev up idp-platform-dev
@@ -65,8 +108,8 @@ services:
       - NODE_ENV=development
       - PORT=4400
       - NEXT_PUBLIC_APP_URL=${NEXT_PUBLIC_APP_URL:-http://localhost:4400}
-      - BACKSTAGE_API_URL=${BACKSTAGE_API_URL:-http://localhost:4402}
-      - BACKSTAGE_BACKEND_URL=${BACKSTAGE_BACKEND_URL:-http://localhost:7007}
+      - BACKSTAGE_API_URL=http://backstage:7007
+      - BACKSTAGE_BACKEND_URL=http://backstage:7007
       - DATABASE_URL=${DATABASE_URL:-postgresql://postgres:postgres@db:5432/next_portal}
       - REDIS_URL=${REDIS_URL:-redis://redis:6379}
       - REDIS_HOST=redis
@@ -141,3 +184,4 @@ networks:
 volumes:
   postgres_data:
   redis_data:
+  backstage_data:

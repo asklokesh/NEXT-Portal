@@ -1,0 +1,57 @@
+app:
+  title: NEXT Portal
+  baseUrl: ${NEXT_PUBLIC_APP_URL:-http://localhost:4400}
+
+backend:
+  baseUrl: http://backstage:7007
+  listen:
+    port: 7007
+    host: 0.0.0.0
+  cors:
+    origin: ${NEXT_PUBLIC_APP_URL:-http://localhost:4400}
+    methods: [GET, HEAD, PATCH, POST, PUT, DELETE]
+    credentials: true
+  database:
+    client: pg
+    connection:
+      host: ${POSTGRES_HOST:-db}
+      port: ${POSTGRES_PORT:-5432}
+      user: ${POSTGRES_USER:-postgres}
+      password: ${POSTGRES_PASSWORD:-postgres}
+      database: ${POSTGRES_DB:-backstage}
+      ssl: false
+
+auth:
+  providers:
+    guest:
+      dangerouslyAllowOutsideDevelopment: true
+
+catalog:
+  import:
+    entityFilename: catalog-info.yaml
+    pullRequestBranchName: backstage-integration
+  rules:
+    - allow: [Component, System, API, Resource, Location, Group, User, Template, Domain]
+  locations:
+    - type: file
+      target: ../../examples/entities.yaml
+    - type: file
+      target: ../../examples/template/template.yaml
+      rules:
+        - allow: [Template]
+    - type: file
+      target: ../../examples/org.yaml
+      rules:
+        - allow: [Group, User]
+
+integrations:
+  github:
+    - host: github.com
+      token: ${GITHUB_TOKEN:-}
+
+techdocs:
+  builder: local
+  generator:
+    runIn: local
+  publisher:
+    type: local
