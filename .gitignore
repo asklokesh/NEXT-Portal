@@ -82,6 +82,12 @@ storybook-static
 .claude*
 test-*
 
+# Local runtime artifacts - never commit these
+.loki/
+.lighthouseci/
+.DS_Store
+.next/
+
 # Backstage upstream monorepo - cloned inside Docker during build, never committed here
 # Only backstage/packages/backend/src/ overlay files and backstage/app-config*.yaml belong in git
 backstage/node_modules/
