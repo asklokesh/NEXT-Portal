@@ -90,8 +90,9 @@ describeIfDb('Plugin Database Operations', () => {
 
     it('should prevent duplicate plugin names within the same tenant', async () => {
       const tenantId = `tenant-${uuidv4()}`;
-      const pluginData1 = createMockPlugin({ tenantId });
-      const pluginData2 = createMockPlugin({ tenantId, displayName: 'Different Name' });
+      const sharedName = `shared-plugin-${uuidv4()}`;
+      const pluginData1 = createMockPlugin({ tenantId, name: sharedName });
+      const pluginData2 = createMockPlugin({ tenantId, name: sharedName, displayName: 'Different Name' });
 
       await prisma.plugin.create({ data: pluginData1 });
 
